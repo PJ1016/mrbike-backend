@@ -208,7 +208,11 @@ const generateBill = async (payment) => {
         const booking = await Booking.findById(payment.booking_id)
             .populate("user_id", "first_name last_name email phone")
             .populate("userBike_id", "model registration_number vin")
-            .populate("services", "name price")
+            .populate({
+              path: "services",
+              model: "AdminService",
+              select: "name price"
+            })
             .populate("additionalServices", "name price");
 
         if (!booking) {

@@ -76,7 +76,7 @@ const bookingSchema = new mongoose.Schema(
     user_id: { type: mongoose.Schema.Types.ObjectId, ref: "customers", required: true },
     dealer_id: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: true },
 
-    services: [{ type: mongoose.Schema.Types.ObjectId, ref: "service" }],
+    services: [{ type: mongoose.Schema.Types.ObjectId, ref: "AdminService" }],
     additionalServices: [{ type: mongoose.Schema.Types.ObjectId, ref: "additionalServices" }],
 
     pickupAndDropId: { type: mongoose.Schema.Types.ObjectId, ref: "PicknDrop", default: null },

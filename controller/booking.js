@@ -447,7 +447,10 @@ const getuserbookings = async (req, res) => {
     const [total, userBookings] = await Promise.all([
       booking.countDocuments(filter),
       booking.find(filter)
-        .populate("services")
+        .populate({
+          path: "services",
+          model: "AdminService"
+        })
         .populate("additionalServices")
         .populate("dealer_id")
         .populate("pickupAndDropId")
@@ -1009,7 +1012,7 @@ async function getBookingDetails(req, res) {
       })
       .populate({
         path: "services",
-        model: "service"
+        model: "AdminService"
       })
       .populate("pickupAndDropId")
       .populate("userBike_id");
@@ -1828,7 +1831,10 @@ async function getallbookings(req, res) {
     // Directly fetch bookings without auth
     const bookingresponce = await booking
       .find(req.query)
-      .populate("services")
+      .populate({
+        path: "services",
+        model: "AdminService"
+      })
       .populate("dealer_id") // Fetch dealer details
       .populate("pickupAndDropId") // Fetch pickup & drop details
       .populate("user_id") // Fetch user details
