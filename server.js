@@ -357,6 +357,7 @@ app.use("/location", require("./routes/stateAndCityRoute"));
 app.use("/service", require("./routes/serviceRoutes"));
 app.use("/bikedoctor", require("./routes/policyRoutes"));
 app.use("/testmulter", require("./routes/multerRoute"));
+app.use("/ai", require("./routes/geminiRoutes"));
 
 /* ==============================
    Database

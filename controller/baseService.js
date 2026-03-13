@@ -4,6 +4,19 @@ const jwt_decode = require("jwt-decode")
 const mongoose = require("mongoose")
 
 /**
+ * Helper: Format service with full image URL
+ */
+function formatServiceResponse(service, req) {
+  const serviceObj = service.toObject ? service.toObject() : service
+  if (serviceObj.image && !serviceObj.image.startsWith("http")) {
+    const protocol = req.protocol
+    const host = req.get("host")
+    serviceObj.image = `${protocol}://${host}/${serviceObj.image}`
+  }
+  return serviceObj
+}
+
+/**
  * CREATE BaseService (Admin Only)
  * POST /admin/base-services
  */
@@ -27,7 +40,7 @@ async function createBaseService(req, res) {
       })
     }
 
-    const { name } = req.body
+    const { name, description } = req.body
 
     /* =========================
        1. Validate name
@@ -71,13 +84,14 @@ async function createBaseService(req, res) {
     ========================== */
     const newService = await BaseService.create({
       name: name.trim(),
+      description: description?.trim(),
       image: `uploads/base-services/${req.file.filename}`,
     })
 
     return res.status(201).json({
       status: true,
       message: "Base service created successfully",
-      data: newService,
+      data: formatServiceResponse(newService, req),
     })
   } catch (error) {
     console.error("Error creating base service:", error)
@@ -99,7 +113,7 @@ async function listBaseServices(req, res) {
     return res.status(200).json({
       status: true,
       message: services.length > 0 ? "Base services fetched successfully" : "No base services found",
-      data: services,
+      data: services.map(s => formatServiceResponse(s, req)),
     })
   } catch (error) {
     console.error("Error fetching base services:", error)
@@ -137,7 +151,7 @@ async function getBaseServiceById(req, res) {
     return res.status(200).json({
       status: true,
       message: "Base service fetched successfully",
-      data: service,
+      data: formatServiceResponse(service, req),
     })
   } catch (error) {
     console.error("Error fetching base service:", error)
@@ -155,7 +169,7 @@ async function getBaseServiceById(req, res) {
 async function updateBaseService(req, res) {
   try {
     const { id } = req.params
-    const { name } = req.body
+    const { name, description } = req.body
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -190,6 +204,10 @@ async function updateBaseService(req, res) {
       name: name.trim(),
     }
 
+    if (description !== undefined) {
+      updateData.description = description?.trim()
+    }
+
     if (req.file) {
       updateData.image = `uploads/base-services/${req.file.filename}`
     }
@@ -208,7 +226,7 @@ async function updateBaseService(req, res) {
     return res.status(200).json({
       status: true,
       message: "Base service updated successfully",
-      data: updatedService,
+      data: formatServiceResponse(updatedService, req),
     })
   } catch (error) {
     console.error("Error updating base service:", error)
