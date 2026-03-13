@@ -18,6 +18,11 @@ const baseServiceSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // Service description
+    description: {
+      type: String,
+      trim: true,
+    },
   },
   {
     timestamps: true,
