@@ -285,14 +285,13 @@ const server = http.createServer(app);
 /* ==============================
    CORS
    ============================== */
-app.use(
-  cors({
-    origin: (origin, cb) => cb(null, true),
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  })
-);
-app.options("*", cors());
+const corsOptions = {
+  origin: (origin, cb) => cb(null, true),
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 /* ==============================
    Socket.IO
