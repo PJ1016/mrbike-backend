@@ -1,7 +1,6 @@
 var express = require("express")
-var multer = require("multer")
-var fs = require("fs")
 var path = require("path")
+const { createS3Upload } = require("../utils/s3Upload")
 
 var {
   servicelist,
@@ -36,73 +35,10 @@ var { PicknDrop } = require("../controller/pickupndrop")
 
 const router = express.Router()
 
-/* =====================================================
-   DEALER SERVICES → uploads/services
-===================================================== */
-const dealerServiceDir = path.join(__dirname, "../uploads/services")
-if (!fs.existsSync(dealerServiceDir)) {
-  fs.mkdirSync(dealerServiceDir, { recursive: true })
-}
-
-const dealerServiceUpload = multer({
-  storage: multer.diskStorage({
-    destination: dealerServiceDir,
-    filename: (req, file, cb) => {
-      cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`)
-    },
-  }),
-})
-
-/* =====================================================
-   ADMIN SERVICES → uploads/admin-services
-===================================================== */
-const adminServiceDir = path.join(__dirname, "../uploads/admin-services")
-if (!fs.existsSync(adminServiceDir)) {
-  fs.mkdirSync(adminServiceDir, { recursive: true })
-}
-
-const adminServiceUpload = multer({
-  storage: multer.diskStorage({
-    destination: adminServiceDir,
-    filename: (req, file, cb) => {
-      cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`)
-    },
-  }),
-})
-
-/* =====================================================
-   BASE SERVICES → uploads/base-services
-===================================================== */
-const baseServiceDir = path.join(__dirname, "../uploads/base-services")
-if (!fs.existsSync(baseServiceDir)) {
-  fs.mkdirSync(baseServiceDir, { recursive: true })
-}
-
-const baseServiceUpload = multer({
-  storage: multer.diskStorage({
-    destination: baseServiceDir,
-    filename: (req, file, cb) => {
-      cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`)
-    },
-  }),
-})
-
-/* =====================================================
-   ADDITIONAL SERVICES → uploads/additional-options
-===================================================== */
-const additionalServiceDir = path.join(__dirname, "../uploads/additional-options")
-if (!fs.existsSync(additionalServiceDir)) {
-  fs.mkdirSync(additionalServiceDir, { recursive: true })
-}
-
-const additionalServiceUpload = multer({
-  storage: multer.diskStorage({
-    destination: additionalServiceDir,
-    filename: (req, file, cb) => {
-      cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`)
-    },
-  }),
-})
+const dealerServiceUpload = createS3Upload("services")
+const adminServiceUpload = createS3Upload("admin-services")
+const baseServiceUpload = createS3Upload("base-services")
+const additionalServiceUpload = createS3Upload("additional-options")
 
 /* =====================================================
    DEALER SERVICE ROUTES

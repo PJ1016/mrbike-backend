@@ -1,8 +1,7 @@
 var express = require("express")
-const multer = require("multer")
-var fs = require("fs")
 var path = require("path")
 const Vendor = require("../models/dealerModel")
+const { createS3Upload } = require("../utils/s3Upload")
 var {
   editDealer,
   dealerList,
@@ -32,38 +31,7 @@ const { log } = require("console")
 
 const router = express.Router()
 
-const uploadDir = path.join(__dirname, "../uploads/dealer-documents")
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true })
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir)
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase()
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`)
-  },
-})
-
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = [".jpg", ".jpeg", ".png", ".pdf"]
-  const ext = path.extname(file.originalname).toLowerCase()
-
-  if (allowedTypes.includes(ext)) {
-    cb(null, true)
-  } else {
-    cb(new Error(`Invalid file type. Only ${allowedTypes.join(", ")} are allowed.`), false)
-  }
-}
-
-const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
-})
+const upload = createS3Upload("dealer-documents")
 
 router.post(
   "/addDealer",
@@ -192,7 +160,7 @@ router.post(
 
       const documents = {}
       Object.keys(requiredDocs).forEach((key) => {
-        documents[key] = `uploads/dealer-documents/${req.files[key][0].filename}`
+        documents[key] = req.files[key][0].location
       })
 
       const dealerData = {
@@ -231,7 +199,7 @@ router.post(
         commission,
         tax: taxValue,
         documents,
-        shopImages: req.files?.shopImages?.map((file) => `uploads/dealer-documents/${file.filename}`) || [],
+        shopImages: req.files?.shopImages?.map((file) => file.location) || [],
         isVerify: false,
         isProfile: true,
         isDoc: true,
@@ -462,7 +430,7 @@ router.put(
               }
             }
             // Add new file
-            updateData.documents[name] = `uploads/dealer-documents/${req.files[field][0].filename}`
+            updateData.documents[name] = req.files[field][0].location
           }
         })
       }
@@ -478,7 +446,7 @@ router.put(
 
         // Add new images
         const newImages = req.files?.shopImages
-          ? req.files.shopImages.map((file) => `uploads/dealer-documents/${file.filename}`)
+          ? req.files.shopImages.map((file) => file.location)
           : []
 
         updateData.shopImages = [...keptImages, ...newImages]

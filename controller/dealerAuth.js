@@ -2148,8 +2148,7 @@ async function updateShopDetails(req, res) {
   try {
     const { id } = req.params
     const { shopName, shopEmail, shopContact, holiday } = req.body
-    const shopImages =
-  req.files?.map(file => `uploads/vendors/${file.filename}`) || [];
+    const shopImages = req.files?.map(file => file.location) || [];
 
 
     // Validate required fields
@@ -2179,12 +2178,9 @@ async function updateShopDetails(req, res) {
       updatedAt: new Date(),
     }
 
-    // Only update images if new ones were uploaded
     if (shopImages.length > 0) {
-  updateData.$push = {
-    shopImages: { $each: shopImages }
-  };
-}
+      updateData.$push = { shopImages: { $each: shopImages } };
+    }
 
 
     const updatedVendor = await Vendor.findByIdAndUpdate(id, updateData, {
@@ -2472,30 +2468,11 @@ async function uploadDocuments(req, res) {
     }
 
     // ✅ Add uploaded file paths
-    if (files.aadharFront) {
-  updates["documents.aadharFront"] =
-    `uploads/vendors/${files.aadharFront[0].filename}`;
-}
-
-if (files.aadharBack) {
-  updates["documents.aadharBack"] =
-    `uploads/vendors/${files.aadharBack[0].filename}`;
-}
-
-if (files.panCard) {
-  updates["documents.panCardFront"] =
-    `uploads/vendors/${files.panCard[0].filename}`;
-}
-
-if (files.shopCertificate) {
-  updates["documents.shopCertificate"] =
-    `uploads/vendors/${files.shopCertificate[0].filename}`;
-}
-
-if (files.faceVerificationImage) {
-  updates["documents.faceVerificationImage"] =
-    `uploads/vendors/${files.faceVerificationImage[0].filename}`;
-}
+    if (files.aadharFront) updates["documents.aadharFront"] = files.aadharFront[0].location;
+    if (files.aadharBack) updates["documents.aadharBack"] = files.aadharBack[0].location;
+    if (files.panCard) updates["documents.panCardFront"] = files.panCard[0].location;
+    if (files.shopCertificate) updates["documents.shopCertificate"] = files.shopCertificate[0].location;
+    if (files.faceVerificationImage) updates["documents.faceVerificationImage"] = files.faceVerificationImage[0].location;
 
     // ✅ Add text fields if provided
     if (aadharCardNo) updates["aadharCardNo"] = aadharCardNo

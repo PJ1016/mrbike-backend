@@ -1517,11 +1517,8 @@ const addDealerShopDetails = async (req, res) => {
       }
     });
 
-    // Append new shopImages if provided
     if (req.files?.shopImages) {
-      const newImages = req.files.shopImages.map(
-  file => `uploads/dealer-documents/${file.filename}`
-);
+      const newImages = req.files.shopImages.map(file => file.location);
       updateData.shopImages = dealer.shopImages
         ? [...dealer.shopImages, ...newImages]
         : newImages;
@@ -1589,22 +1586,10 @@ const addDealerDocuments = async (req, res) => {
     let updateData = {};
 
     // ✅ Handle Aadhar & PAN Card Image Uploads
-    if (req.files?.adharCardFront) {
-      updateData.adharCardFront =
-  `uploads/dealer-documents/${req.files.adharCardFront[0].filename}`;
-    }
-    if (req.files?.adharCardBack) {
-     updateData.adharCardBack =
-  `uploads/dealer-documents/${req.files.adharCardBack[0].filename}`;
-    }
-    if (req.files?.panCardFront) {
-     updateData.panCardFront =
-  `uploads/dealer-documents/${req.files.panCardFront[0].filename}`;
-    }
-    if (req.files?.panCardBack) {
-      updateData.panCardBack =
-  `uploads/dealer-documents/${req.files.panCardBack[0].filename}`;
-    }
+    if (req.files?.adharCardFront) updateData.adharCardFront = req.files.adharCardFront[0].location;
+    if (req.files?.adharCardBack) updateData.adharCardBack = req.files.adharCardBack[0].location;
+    if (req.files?.panCardFront) updateData.panCardFront = req.files.panCardFront[0].location;
+    if (req.files?.panCardBack) updateData.panCardBack = req.files.panCardBack[0].location;
 
     // ✅ Set confirmation flag
     updateData.isDocumentsAdded = true;

@@ -1,8 +1,6 @@
 const express = require("express")
 const router = express.Router()
-const multer = require("multer")
-const path = require("path")
-const fs = require("fs")
+const { createS3Upload } = require("../utils/s3Upload")
 const {
   createBaseAdditionalService,
   listBaseAdditionalServices,
@@ -11,28 +9,7 @@ const {
   deleteBaseAdditionalService,
 } = require("../controller/baseAdditionalServiceController")
 
-/* =====================================================
-   BASE ADDITIONAL SERVICES → uploads/base-additional-services
-===================================================== */
-const baseAdditionalServiceDir = path.join(
-  __dirname,
-  "../uploads/base-additional-services"
-)
-if (!fs.existsSync(baseAdditionalServiceDir)) {
-  fs.mkdirSync(baseAdditionalServiceDir, { recursive: true })
-}
-
-const baseAdditionalServiceUpload = multer({
-  storage: multer.diskStorage({
-    destination: baseAdditionalServiceDir,
-    filename: (req, file, cb) => {
-      cb(
-        null,
-        `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`
-      )
-    },
-  }),
-})
+const baseAdditionalServiceUpload = createS3Upload("base-additional-services")
 
 // Admin only routes
 router.post(

@@ -326,17 +326,6 @@ app.use(cookieParser());
    🔥 STATIC FILES (IMPORTANT PART)
    ============================== */
 
-// dynamic absolute path (works local + live)
-const UPLOADS_PATH = path.join(process.cwd(), "uploads");
-
-// MUST be before routes
-app.use(
-  "/uploads",
-  express.static(UPLOADS_PATH, {
-    fallthrough: false,
-  })
-);
-
 // optional public folder
 app.use(express.static(path.join(process.cwd(), "public")));
 

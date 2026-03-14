@@ -417,7 +417,7 @@ async function addbanner(req, res) {
 
     const bannerData = {
       name,
-      banner_image: `uploads/banners/${req.file.filename}`,
+      banner_image: req.file.location,
       from_date: fromDate,
       expiry_date: expiryDate,
       status,

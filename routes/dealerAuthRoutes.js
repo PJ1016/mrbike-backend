@@ -1,22 +1,11 @@
 
 var router = require('express').Router();
-var multer = require('multer');
-var fs = require('fs-extra');
 const { verifyUser } = require("../helper/verifyAuth");
+const { createS3Upload } = require("../utils/s3Upload");
 
 var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer } = require("../controller/dealerAuth")
 
-const storage = multer.diskStorage({
-  destination: (req, file, callback) => {
-    var path = `./uploads/vendors`;
-    fs.mkdirsSync(path);
-    callback(null, path);
-  },
-  filename(req, file, callback) {
-    callback(null, Date.now() + '_' + file.originalname);
-  },
-});
-const upload = multer({ storage });
+const upload = createS3Upload("vendors");
 
 
 /* POST users listing. */
