@@ -1,0 +1,30 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy backend via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/mrbike-backend
+
+            echo "Pulling latest backend code..."
+            git fetch origin
+            git reset --hard origin/main
+
+            echo "Installing dependencies only if needed..."
+            npm ci --omit=dev || npm install
+
+            echo "Restarting backend..."
+            pm2 restart mrbike-backend
