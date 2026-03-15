@@ -39,7 +39,7 @@ router.post(
     { name: "panCardFront", maxCount: 1 },
     { name: "aadharFront", maxCount: 1 },
     { name: "aadharBack", maxCount: 1 },
-    { name: "shopImages", maxCount: 10 },
+    { name: "shopImages", maxCount: 5 },
   ]),
   async function addDealer(req, res) {
     try {
@@ -303,7 +303,7 @@ router.put(
     { name: "panCardFront", maxCount: 1 },
     { name: "aadharFront", maxCount: 1 },
     { name: "aadharBack", maxCount: 1 },
-    { name: "shopImages", maxCount: 10 },
+    { name: "shopImages", maxCount: 5 },
   ]),
   async function editDealer(req, res) {
     try {
@@ -437,17 +437,19 @@ router.put(
 
       // Handle shop images
       if (req.body.existingShopImages !== undefined || req.files?.shopImages) {
-        const imagesToKeep = Array.isArray(req.body.existingShopImages) ? req.body.existingShopImages : []
+        const imagesToKeep = Array.isArray(req.body.existingShopImages) ? req.body.existingShopImages : req.body.existingShopImages ? [req.body.existingShopImages] : [];
+        const newImages = req.files?.shopImages ? req.files.shopImages.map((file) => file.location) : [];
 
-        // Filter existing images to keep
         const keptImages = existingDealer.shopImages.filter(
-          (img) => imagesToKeep.some((keptImg) => keptImg.includes(img)), // Adjust based on how you store paths
+          (img) => imagesToKeep.some((keptImg) => keptImg.includes(img)),
         )
 
-        // Add new images
-        const newImages = req.files?.shopImages
-          ? req.files.shopImages.map((file) => file.location)
-          : []
+        if (keptImages.length + newImages.length > 5) {
+          return res.status(400).json({
+            success: false,
+            message: "Maximum 5 shop images allowed",
+          })
+        }
 
         updateData.shopImages = [...keptImages, ...newImages]
 
