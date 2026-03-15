@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 const booking = require("../models/Booking");
 const additionaloptions = require("../models/additionalOptionsModel");
 const AdditionalService = require("../models/additionalServiceSchema");
@@ -448,9 +448,14 @@ const getuserbookings = async (req, res) => {
       booking.countDocuments(filter),
       booking.find(filter)
         .populate({
-          path: "services",
-          model: "AdminService"
-        })
+        path: "services",
+        model: "AdminService",
+        populate: {
+          path: "base_service_id",
+          model: "BaseService",
+          select: "name description image",
+        },
+      })
         .populate("additionalServices")
         .populate("dealer_id")
         .populate("pickupAndDropId")
@@ -1033,7 +1038,12 @@ async function getBookingDetails(req, res) {
       })
       .populate({
         path: "services",
-        model: "AdminService"
+        model: "AdminService",
+        populate: {
+          path: "base_service_id",
+          model: "BaseService",
+          select: "name description image",
+        },
       })
       .populate("pickupAndDropId")
       .populate("userBike_id");
@@ -1854,7 +1864,12 @@ async function getallbookings(req, res) {
       .find(req.query)
       .populate({
         path: "services",
-        model: "AdminService"
+        model: "AdminService",
+        populate: {
+          path: "base_service_id",
+          model: "BaseService",
+          select: "name description image",
+        },
       })
       .populate("dealer_id") // Fetch dealer details
       .populate("pickupAndDropId") // Fetch pickup & drop details
@@ -1906,3 +1921,4 @@ module.exports = {
   sendOtpToMobile,
   verifyOtpForMobile
 }
+
