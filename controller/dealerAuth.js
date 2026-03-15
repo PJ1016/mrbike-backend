@@ -2481,7 +2481,8 @@ async function uploadDocuments(req, res) {
 
     // --- NEW BLOCK: Update document flags ---
     updates.isDoc = true // mark that documents are uploaded
-    updates["documentVerification.aadhar"] = !!(files.aadharFront && files.aadharBack)
+    updates["documentVerification.aadharFront"] = !!files.aadharFront
+    updates["documentVerification.aadharBack"] = !!files.aadharBack
     updates["documentVerification.pan"] = !!files.panCard
     updates["documentVerification.shop"] = !!files.shopCertificate
     updates["documentVerification.face"] = !!files.faceVerificationImage
@@ -2784,6 +2785,45 @@ async function getDealerDetails(req, res) {
   }
 }
 
+async function verifyDocument(req, res) {
+  try {
+    const { id } = req.params
+    const { docType, status } = req.body
+
+    const validDocTypes = ["aadharFront", "aadharBack", "pan", "shop", "face"]
+    if (!validDocTypes.includes(docType)) {
+      return res.status(400).json({ success: false, message: "Invalid document type" })
+    }
+
+    // Map frontend docType to the documentVerification field
+    const fieldMap = {
+      aadharFront: "documentVerification.aadharFront",
+      aadharBack: "documentVerification.aadharBack",
+      pan: "documentVerification.pan",
+      shop: "documentVerification.shop",
+      face: "documentVerification.face",
+    }
+
+    const vendor = await Vendor.findByIdAndUpdate(
+      id,
+      { [fieldMap[docType]]: status },
+      { new: true }
+    ).select("documentVerification")
+
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "Vendor not found" })
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Document ${status ? "approved" : "rejected"} successfully`,
+      documentVerification: vendor.documentVerification,
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error updating document status", error: error.message })
+  }
+}
+
 async function approveDealer(req, res) {
   try {
     console.log("Id:- ", req.params.id)
@@ -2971,4 +3011,5 @@ module.exports = {
   getDealerDetails,
   approveDealer,
   rejectDealer,
+  verifyDocument,
 }

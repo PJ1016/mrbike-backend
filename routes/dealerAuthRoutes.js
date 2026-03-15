@@ -3,7 +3,7 @@ var router = require('express').Router();
 const { verifyUser } = require("../helper/verifyAuth");
 const { createS3Upload } = require("../utils/s3Upload");
 
-var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer } = require("../controller/dealerAuth")
+var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
 
 const upload = createS3Upload("vendors");
 
@@ -42,5 +42,6 @@ router.get('/pending-registrations', getPendingRegistrations);
 router.get('/pending-registrations/:id', getDealerDetails);
 router.put('/approve/:id', approveDealer);
 router.put('/reject/:id', rejectDealer);
+router.put('/verify-document/:id', verifyDocument);
 
 module.exports = router;

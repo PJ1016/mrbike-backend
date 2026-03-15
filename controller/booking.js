@@ -12,6 +12,10 @@ const Role = require('../models/Roles_modal')
 const Admin = require('../models/admin_model')
 const { Notification } = require("../helper/pushNotification");
 const { handleBookingCompletion } = require("../controller/reward")
+const UserBike = require("../models/userBikeModel");
+const AdminService = require("../models/adminService");
+const Customer = require("../models/customer_model");
+const Vendor = require("../models/dealerModel");
 
 async function checkPermission(user_id, requiredPermission) {
   try {
@@ -124,7 +128,7 @@ async function addbooking(req, res) {
                 city: city.toLowerCase(),
                 address: address,
                 description: description,
-                estimated_cost: estimated_cost,
+                totalBill: estimated_cost,
                 created_by: user_id,
                 assigned_to: dealers[0].name,
                 assigned_toid: dealers[0].id,
@@ -196,7 +200,7 @@ async function addbooking(req, res) {
           city: city.toLowerCase(),
           address: address,
           description: description,
-          estimated_cost: estimated_cost,
+          totalBill: estimated_cost,
           created_by: user_id,
           assigned_to: dealers[0].name,
           assigned_toid: dealers[0].id,
@@ -384,10 +388,6 @@ async function getbooking(req, res) {
     return res.status(201).send(response);
   }
 }
-
-const Customer = require("../models/customer_model");
-const Vendor = require("../models/dealerModel");
-const UserBike = require("../models/userBikeModel");
 
 const getuserbookings = async (req, res) => {
   try {
@@ -964,6 +964,26 @@ async function createBooking(req, res) {
       return res.status(400).json({ success: false, message: "User bike is required" });
     }
 
+    // Calculate initial bill based on services and bike CC
+    let totalBill = 0;
+    try {
+      const bikeData = await UserBike.findById(userBike_id);
+      if (bikeData) {
+        const bikeCC = parseInt(bikeData.bike_cc || 0);
+        const serviceDocs = await AdminService.find({ _id: { $in: services } });
+
+        serviceDocs.forEach(svc => {
+          const matchingBike = svc.bikes?.find(b => b.cc === bikeCC);
+          if (matchingBike) {
+            totalBill += matchingBike.price;
+          }
+        });
+      }
+    } catch (priceError) {
+      console.error("Error calculating initial bill:", priceError);
+      // Fallback to 0 if calculation fails
+    }
+
     const pickupOtp = genOtp();
     const deliveryOtp = genOtp();
 
@@ -976,6 +996,7 @@ async function createBooking(req, res) {
       pickupDate: pickupDate || null,
       pickupOtp,
       deliveryOtp,
+      totalBill,
     });
 
     await newBooking.save();
@@ -1838,6 +1859,7 @@ async function getallbookings(req, res) {
       .populate("dealer_id") // Fetch dealer details
       .populate("pickupAndDropId") // Fetch pickup & drop details
       .populate("user_id") // Fetch user details
+      .populate("userBike_id") // Fetch bike details
       .sort({ "_id": -1 });
 
     if (bookingresponce.length > 0) {

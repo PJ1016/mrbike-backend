@@ -166,8 +166,11 @@ const dealerModel = new mongoose.Schema(
 
     documentVerification: {
       aadhar: { type: Boolean, default: false },
+      aadharFront: { type: Boolean, default: false },
+      aadharBack: { type: Boolean, default: false },
       pan: { type: Boolean, default: false },
       bank: { type: Boolean, default: false },
+      face: { type: Boolean, default: false },
       shop: { type: Boolean, default: false },
     },
 
