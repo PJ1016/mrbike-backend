@@ -2465,10 +2465,14 @@ async function uploadDocuments(req, res) {
       })
     }
 
+    // Fetch current vendor to check existing statuses
+    const currentVendor = await Vendor.findById(id).select("documentVerification formProgress")
+    if (!currentVendor) {
+      return res.status(404).json({ success: false, message: "Vendor not found" })
+    }
+
     const updates = {
       updatedAt: new Date(),
-      "formProgress.completedSteps.documents": true,
-      "completionTimestamps.documents": new Date(),
     }
 
     // ✅ Add uploaded file paths
@@ -2483,14 +2487,31 @@ async function uploadDocuments(req, res) {
     if (panCardNo) updates["panCardNo"] = panCardNo
     if (shopOpeningDate) updates["shopOpeningDate"] = new Date(shopOpeningDate)
 
-    // --- NEW BLOCK: Update document flags ---
-    updates.isDoc = true // mark that documents are uploaded
-    updates["documentVerification.aadharFront"] = !!files.aadharFront
-    updates["documentVerification.aadharBack"] = !!files.aadharBack
-    updates["documentVerification.pan"] = !!files.panCard
-    updates["documentVerification.shop"] = !!files.shopCertificate
-    updates["documentVerification.face"] = !!files.faceVerificationImage
-    // --- END OF BLOCK ---
+    // --- Update document flags and check for remaining rejections ---
+    const dv = currentVendor.documentVerification || {}
+    const newDV = { ...dv.toObject?.() || dv }
+
+    updates.isDoc = true
+    if (files.aadharFront) newDV.aadharFront = "pending"
+    if (files.aadharBack) newDV.aadharBack = "pending"
+    if (files.panCard) newDV.pan = "pending"
+    if (files.shopCertificate) newDV.shop = "pending"
+    if (files.faceVerificationImage) newDV.face = "pending"
+
+    // Map the new statuses back to updates
+    Object.keys(newDV).forEach(key => {
+      updates[`documentVerification.${key}`] = newDV[key]
+    })
+
+    // Check if any required doc is still "rejected"
+    const hasRejected = ["aadharFront", "aadharBack", "pan", "shop", "face"].some(k => newDV[k] === "rejected")
+
+    if (hasRejected) {
+      updates["formProgress.completedSteps.documents"] = false
+    } else {
+      updates["formProgress.completedSteps.documents"] = true
+      updates["completionTimestamps.documents"] = new Date()
+    }
 
     const updatedVendor = await Vendor.findByIdAndUpdate(id, updates, { new: true, runValidators: true }).select(
       "documents aadharCardNo panCardNo shopOpeningDate formProgress completionTimestamps isDoc documentVerification",
@@ -2799,6 +2820,16 @@ async function verifyDocument(req, res) {
       return res.status(400).json({ success: false, message: "Invalid document type" })
     }
 
+    // Map boolean status to string if necessary (for backward compatibility during transition)
+    let verificationStatus = status
+    if (status === true) verificationStatus = "verified"
+    if (status === false) verificationStatus = "rejected"
+
+    const validStatuses = ["pending", "verified", "rejected", "none"]
+    if (!validStatuses.includes(verificationStatus)) {
+      return res.status(400).json({ success: false, message: "Invalid verification status" })
+    }
+
     // Map frontend docType to the documentVerification field
     const fieldMap = {
       aadharFront: "documentVerification.aadharFront",
@@ -2808,11 +2839,27 @@ async function verifyDocument(req, res) {
       face: "documentVerification.face",
     }
 
-    const vendor = await Vendor.findByIdAndUpdate(
-      id,
-      { [fieldMap[docType]]: status },
-      { new: true }
-    ).select("documentVerification")
+    const updates = {
+      [fieldMap[docType]]: verificationStatus,
+    }
+
+    // Refresh current vendor state to check all documents
+    const currentVendor = await Vendor.findById(id).select("documentVerification formProgress")
+    const dv = currentVendor.documentVerification || {}
+    const newDV = { ...dv.toObject?.() || dv, [docType]: verificationStatus }
+
+    // If any document is rejected, mark the documents section as incomplete
+    const anyRejected = ["aadharFront", "aadharBack", "pan", "shop", "face"].some(k => newDV[k] === "rejected")
+    const allVerified = ["aadharFront", "aadharBack", "pan", "shop", "face"].every(k => newDV[k] === "verified")
+
+    if (anyRejected) {
+      updates["formProgress.completedSteps.documents"] = false
+    } else if (allVerified) {
+      updates["formProgress.completedSteps.documents"] = true
+      updates["completionTimestamps.documents"] = new Date()
+    }
+
+    const vendor = await Vendor.findByIdAndUpdate(id, updates, { new: true }).select("documentVerification formProgress")
 
     if (!vendor) {
       return res.status(404).json({ success: false, message: "Vendor not found" })
@@ -2820,8 +2867,9 @@ async function verifyDocument(req, res) {
 
     res.status(200).json({
       success: true,
-      message: `Document ${status ? "approved" : "rejected"} successfully`,
+      message: `Document status updated to ${verificationStatus} successfully`,
       documentVerification: vendor.documentVerification,
+      formProgress: vendor.formProgress,
     })
   } catch (error) {
     res.status(500).json({ success: false, message: "Error updating document status", error: error.message })

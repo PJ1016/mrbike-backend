@@ -165,13 +165,13 @@ const dealerModel = new mongoose.Schema(
     },
 
     documentVerification: {
-      aadhar: { type: Boolean, default: false },
-      aadharFront: { type: Boolean, default: false },
-      aadharBack: { type: Boolean, default: false },
-      pan: { type: Boolean, default: false },
-      bank: { type: Boolean, default: false },
-      face: { type: Boolean, default: false },
-      shop: { type: Boolean, default: false },
+      aadhar: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      aadharFront: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      aadharBack: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      pan: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      bank: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      face: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      shop: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
     },
 
     shopOpeningDate: { type: Date, required: false },
