@@ -2171,13 +2171,15 @@ async function updateShopDetails(req, res) {
     }
 
     const updateData = {
-      shopName,
-      shopEmail,
-      shopContact,
-      holiday,
-      "formProgress.completedSteps.shopDetails": true,
-      "completionTimestamps.shopDetails": new Date(),
-      updatedAt: new Date(),
+      $set: {
+        shopName,
+        shopEmail,
+        shopContact,
+        holiday,
+        "formProgress.completedSteps.shopDetails": true,
+        "completionTimestamps.shopDetails": new Date(),
+        updatedAt: new Date(),
+      }
     }
 
     if (shopImages.length > 0) {
