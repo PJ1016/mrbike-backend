@@ -16,14 +16,14 @@ async function userLogin(req, res) {
         if (!user) {
             const otpData = await otpAuth.otp(phone);
             user = new customers({ phone, otp: otpData.otp, device_token, isVerified: false });
-            await user.save();
+            await user.save({ validateModifiedOnly: true });
             return res.status(201).json({ success: true, message: "User created and OTP sent to your mobile.", user: { phone: user.phone, isVerified: user.isVerified } });
         }
 
         const otpData = await otpAuth.otp(phone);
         user.otp = otpData.otp;
         user.device_token = device_token;
-        await user.save();
+        await user.save({ validateModifiedOnly: true });
 
         res.status(200).json({ success: true, message: "OTP sent to your mobile." });
     } catch (error) {
@@ -50,7 +50,7 @@ async function otpVerify(req, res) {
 
         user.isVerified = true;
         user.device_token = device_token;
-        await user.save();
+        await user.save({ validateModifiedOnly: true });
 
         const token = validation.generateUserToken(user._id, 'logged', 4);
         return res.status(200).cookie("token", token, { expires: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), httpOnly: true }).json({ success: true, message: "OTP verified successfully", token, user_id: user._id, });
@@ -73,7 +73,7 @@ async function resendOtp(req, res) {
 
         const otpData = await otpAuth.otp(phone);
         user.otp = otpData.otp;
-        await user.save();
+        await user.save({ validateModifiedOnly: true });
 
         res.status(200).json({ success: true, message: "OTP sent successfully" });
     } catch (error) {
