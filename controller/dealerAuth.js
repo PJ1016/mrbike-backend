@@ -2580,7 +2580,7 @@ async function updateBankDetails(req, res) {
   try {
     const { id } = req.params
     const { accountHolderName, accountNumber, ifscCode, bankName } = req.body
-    const passbookImage = req.file?.path
+    const passbookImage = req.file?.location || req.file?.path;
 
     // Validate required fields
     if (!accountHolderName || !accountNumber || !ifscCode || !bankName || !passbookImage) {
