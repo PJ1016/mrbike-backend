@@ -1,4 +1,5 @@
-require("dotenv").config({path:"src/config/.env"});
+const path = require('path');
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
 const text = require("body-parser/lib/types/text");
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
