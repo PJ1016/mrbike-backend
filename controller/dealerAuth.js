@@ -426,7 +426,6 @@
 //       });
 //     }
 
-
 //     // 5. Return progress data
 //     res.status(200).json({
 //       success: true,
@@ -795,7 +794,7 @@
 // //     const updatedVendor = await Vendor.findByIdAndUpdate(
 // //       id,
 // //       updates,
-// //       { 
+// //       {
 // //         new: true,
 // //         runValidators: true
 // //       }
@@ -1474,7 +1473,7 @@
 // //   await sendEmail({
 // //     to: adminEmails,
 // //     subject: 'New Vendor Registration Requires Approval',
-// //     html: `<p>A new vendor registration requires your approval. 
+// //     html: `<p>A new vendor registration requires your approval.
 // //            <a href="${process.env.ADMIN_PORTAL_URL}/vendors/${vendorId}">Review now</a></p>`
 // //   });
 // // }
@@ -1509,60 +1508,61 @@
 //   rejectDealer
 // };
 
-
-
-
-
-var validation = require("../helper/validation")
-const otpAuth = require("../helper/otpAuth")
-const Dealer = require("../models/Dealer")
-const Vendor = require("../models/dealerModel")
-const Admin = require("../models/admin_model")
-const jwt = require("jsonwebtoken")
-const mongoose = require("mongoose")
-const { sendemails } = require("../helper/helper")
+var validation = require("../helper/validation");
+const otpAuth = require("../helper/otpAuth");
+const Dealer = require("../models/Dealer");
+const Vendor = require("../models/dealerModel");
+const Admin = require("../models/admin_model");
+const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+const { sendemails } = require("../helper/helper");
 
 async function sendOtp(req, res) {
   try {
-    const { phone } = req.body
+    const { phone } = req.body;
 
     if (phone != "" || phone === null) {
-      var userResm = await Dealer.findOne({ phone })
+      var userResm = await Dealer.findOne({ phone });
 
       if (userResm) {
-        const data = await otpAuth.otp(phone)
+        const data = await otpAuth.otp(phone);
 
-        Dealer.findByIdAndUpdate({ _id: userResm._id }, { otp: data.otp }, { new: true }, async (err, docs) => {
-          if (err) {
-            return res.status(201).send({
-              status: 201,
-              message: err,
-            })
-          } else {
-            return res.status(200).json({
-              status: 200,
-              message: "OTP send successfully",
-            })
-          }
-        })
+        Dealer.findByIdAndUpdate(
+          { _id: userResm._id },
+          { otp: data.otp },
+          { new: true },
+          async (err, docs) => {
+            if (err) {
+              return res.status(201).send({
+                status: 201,
+                message: err,
+              });
+            } else {
+              return res.status(200).json({
+                status: 200,
+                message: "OTP send successfully",
+              });
+            }
+          },
+        );
       } else {
         return res.status(201).send({
           status: 201,
           message: "Dealer not exist",
-        })
+        });
       }
     } else {
       return res.status(201).send({
         status: 201,
         message: "Phone No can not be empty value!",
-      })
+      });
     }
   } catch (error) {
-    console.log("error", error)
+    console.log("error", error);
     return res.status(201).send({
       status: 201,
       message: "Operation was not successful",
-    })
+    });
   }
 }
 
@@ -1625,19 +1625,19 @@ async function sendOtp(req, res) {
 
 async function usersignin(req, res) {
   try {
-    const { phone, ftoken, device_token } = req.body
+    const { phone, ftoken, device_token } = req.body;
 
     if (!phone) {
       return res.status(400).json({
         success: false,
         message: "Phone number is required!",
-      })
+      });
     }
 
-    const otp = "9999"
-    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000)
+    const otp = "9999";
+    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
 
-    let dealer = await Vendor.findOne({ phone })
+    let dealer = await Vendor.findOne({ phone });
 
     if (!dealer) {
       // new dealer creation
@@ -1651,17 +1651,17 @@ async function usersignin(req, res) {
         isVerify: false,
         isProfile: false,
         isDoc: false,
-      })
+      });
     } else {
       // update existing dealer
-      dealer.otp = otp
-      dealer.otpExpiry = otpExpiry
-      dealer.ftoken = ftoken || dealer.ftoken
-      dealer.device_token = device_token || dealer.device_token
-      dealer.isActive = true
+      dealer.otp = otp;
+      dealer.otpExpiry = otpExpiry;
+      dealer.ftoken = ftoken || dealer.ftoken;
+      dealer.device_token = device_token || dealer.device_token;
+      dealer.isActive = true;
     }
 
-    await dealer.save({ validateModifiedOnly: true })
+    await dealer.save({ validateModifiedOnly: true });
 
     return res.status(dealer.isNew ? 201 : 200).json({
       success: true,
@@ -1672,35 +1672,37 @@ async function usersignin(req, res) {
         isDoc: dealer.isDoc,
         isProfile: dealer.isProfile,
       },
-    })
+    });
   } catch (error) {
-    console.error("Login error:", error)
+    console.error("Login error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
-      ...(process.env.NODE_ENV === "development" ? { error: error.message } : {}),
-    })
+      ...(process.env.NODE_ENV === "development"
+        ? { error: error.message }
+        : {}),
+    });
   }
 }
 
 async function verifyOTP(req, res) {
   try {
-    const { otp, phone } = req.body
+    const { otp, phone } = req.body;
 
     if (!phone) {
       return res.status(400).json({
         success: false,
         message: "Phone number is required",
-      })
+      });
     }
 
-    const dealer = await Vendor.findOne({ phone })
+    const dealer = await Vendor.findOne({ phone });
 
     if (otp !== "9999") {
       return res.status(401).json({
         success: false,
         message: "Incorrect OTP",
-      })
+      });
     }
 
     if (!dealer) {
@@ -1711,11 +1713,11 @@ async function verifyOTP(req, res) {
         isProfile: false,
         isDoc: false,
         isActive: true,
-      })
+      });
 
-      await newDealer.save()
+      await newDealer.save();
 
-      const token = validation.generateUserToken(newDealer._id, "dealer", "2h")
+      const token = validation.generateUserToken(newDealer._id, "dealer", "2h");
 
       return res.status(201).json({
         success: true,
@@ -1730,11 +1732,11 @@ async function verifyOTP(req, res) {
             isProfile: newDealer.isProfile,
           },
         },
-      })
+      });
     }
 
-    const token = validation.generateUserToken(dealer._id, "dealer", "2h")
-    const isNewUser = !dealer.isProfile || !dealer.isDoc || !dealer.isVerify
+    const token = validation.generateUserToken(dealer._id, "dealer", "2h");
+    const isNewUser = !dealer.isProfile || !dealer.isDoc || !dealer.isVerify;
 
     return res.status(200).json({
       success: true,
@@ -1749,84 +1751,89 @@ async function verifyOTP(req, res) {
           isProfile: dealer.isProfile,
         },
       },
-    })
+    });
   } catch (error) {
-    console.error("OTP verification error:", error)
+    console.error("OTP verification error:", error);
 
     if (error.code === 11000) {
       if (error.keyPattern.phone) {
         return res.status(409).json({
           success: false,
           message: "Phone number already registered",
-        })
+        });
       }
       return res.status(409).json({
         success: false,
         message: "Email already exists",
-      })
+      });
     }
 
     res.status(500).json({
       success: false,
       message: "Internal server error",
       ...(process.env.NODE_ENV === "development" && { error: error.message }),
-    })
+    });
   }
 }
 
 async function changePassword(req, res) {
   try {
-    const { phone, new_password, confirm_password } = req.body
+    const { phone, new_password, confirm_password } = req.body;
 
-    const dealers = await Dealer.findOne({ phone }).select("+password")
+    const dealers = await Dealer.findOne({ phone }).select("+password");
 
     if (!dealers) {
       return res.status(201).send({
         status: 201,
         message: "Mobile no not exist",
-      })
+      });
     }
 
     if (validation.comparePassword(dealers.password, new_password)) {
       return res.status(201).send({
         status: 201,
         message: "New Password can not Same as Old Password",
-      })
+      });
     }
 
     if (new_password != confirm_password) {
       return res.status(201).send({
         status: 201,
         message: "Password Not Matched",
-      })
+      });
     }
 
     const datas = {
       password: validation.hashPassword(new_password),
-    }
+    };
 
-    var where = { _id: dealers._id }
+    var where = { _id: dealers._id };
 
-    Dealer.findByIdAndUpdate(where, { $set: datas }, { new: true }, async (err, docs) => {
-      if (err) {
-        return res.status(201).send({
-          status: 201,
-          message: err,
-        })
-      } else {
-        return res.status(200).send({
-          status: 200,
-          message: "Dealer Password Updated Successfully",
-          // data: docs,
-        })
-      }
-    })
+    Dealer.findByIdAndUpdate(
+      where,
+      { $set: datas },
+      { new: true },
+      async (err, docs) => {
+        if (err) {
+          return res.status(201).send({
+            status: 201,
+            message: err,
+          });
+        } else {
+          return res.status(200).send({
+            status: 200,
+            message: "Dealer Password Updated Successfully",
+            // data: docs,
+          });
+        }
+      },
+    );
   } catch (error) {
-    console.log("error", error)
+    console.log("error", error);
     return res.status(201).send({
       status: 201,
       message: "Operation was not successful",
-    })
+    });
   }
 }
 
@@ -1836,86 +1843,102 @@ async function logout(req, res) {
     res
       .status(200)
       .cookie("token", null, { expires: new Date(Date.now()), httpOnly: true })
-      .cookie("accessToken", null, { expires: new Date(Date.now()), httpOnly: true })
-      .cookie("refreshToken", null, { expires: new Date(Date.now()), httpOnly: true })
-      .cookie("authSession", null, { expires: new Date(Date.now()), httpOnly: true })
-      .cookie("refreshTokenID", null, { expires: new Date(Date.now()), httpOnly: true })
+      .cookie("accessToken", null, {
+        expires: new Date(Date.now()),
+        httpOnly: true,
+      })
+      .cookie("refreshToken", null, {
+        expires: new Date(Date.now()),
+        httpOnly: true,
+      })
+      .cookie("authSession", null, {
+        expires: new Date(Date.now()),
+        httpOnly: true,
+      })
+      .cookie("refreshTokenID", null, {
+        expires: new Date(Date.now()),
+        httpOnly: true,
+      })
       .json({
         success: true,
         message: "Logged out",
-      })
+      });
   } catch (error) {
-    console.log("error", error)
+    console.log("error", error);
     return res.status(201).send({
       status: 201,
       message: "Operation was not successful",
-    })
+    });
   }
 }
 
 async function resendOtp(req, res) {
   try {
-    const { phone } = req.body
+    const { phone } = req.body;
     if (!phone) {
-      return res.status(400).json({ success: false, message: "Phone number is required" })
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number is required" });
     }
 
-    const user = await Dealer.findOne({ phone })
+    const user = await Dealer.findOne({ phone });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" })
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
-    const otpData = await otpAuth.otp(phone)
-    user.otp = otpData.otp
-    await user.save()
+    const otpData = await otpAuth.otp(phone);
+    user.otp = otpData.otp;
+    await user.save();
 
-    res.status(200).json({ success: true, message: "OTP sent successfully" })
+    res.status(200).json({ success: true, message: "OTP sent successfully" });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message })
+    res.status(500).json({ success: false, message: error.message });
   }
 }
 
 async function getProgress(req, res) {
   try {
     // 1. Extract and validate token format
-    const authHeader = req.headers.authorization
+    const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         success: false,
         message: "Authorization header with Bearer token required",
-      })
+      });
     }
 
-    const token = authHeader.split(" ")[1]
+    const token = authHeader.split(" ")[1];
 
     // 2. Verify token with same secret used in generation
     const decoded = jwt.verify(token, process.env.JWT_SECRET, {
       algorithms: ["HS256"],
       ignoreExpiration: false,
-    })
+    });
 
-    console.log("Decoded Token:", decoded)
+    console.log("Decoded Token:", decoded);
 
     // 3. Check for required fields in payload
     if (!decoded.user_id) {
       return res.status(401).json({
         success: false,
         message: "Token missing required user_id field",
-      })
+      });
     }
 
     // 4. Find vendor (now using user_id instead of _id)
-    const vendor = await Vendor.findById(decoded.user_id)
+    const vendor = await Vendor.findById(decoded.user_id);
     // .select("formProgress completionTimestamps isActive adminApproved");
     // .select("formProgress completionTimestamps");
 
-    console.log("Vendor detaials", vendor)
+    console.log("Vendor detaials", vendor);
 
     if (!vendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     // 5. Return progress data
@@ -1930,7 +1953,7 @@ async function getProgress(req, res) {
         isActive: vendor.status.isActive || false,
         isVerified: vendor.status.isVerified || false,
       },
-    })
+    });
   } catch (error) {
     // Enhanced error handling
     if (error.name === "JsonWebTokenError") {
@@ -1938,43 +1961,55 @@ async function getProgress(req, res) {
         success: false,
         message: "Invalid token",
         details: error.message,
-      })
+      });
     }
 
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({
         success: false,
         message: "Token expired",
-      })
+      });
     }
 
-    console.error("Progress Error:", error)
+    console.error("Progress Error:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching progress",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    })
+    });
   }
 }
 
 function determineNextStep(completedSteps) {
-  const stepsOrder = ["basicInfo", "locationInfo", "shopDetails", "documents", "bankDetails"]
+  const stepsOrder = [
+    "basicInfo",
+    "locationInfo",
+    "shopDetails",
+    "documents",
+    "bankDetails",
+  ];
   for (const step of stepsOrder) {
-    if (!completedSteps.get(step)) return step
+    if (!completedSteps.get(step)) return step;
   }
-  return null
+  return null;
 }
 
 async function updateProgress(req, res) {
   try {
-    const { section } = req.params
-    const validSections = ["basicInfo", "locationInfo", "shopDetails", "documents", "bankDetails"]
+    const { section } = req.params;
+    const validSections = [
+      "basicInfo",
+      "locationInfo",
+      "shopDetails",
+      "documents",
+      "bankDetails",
+    ];
 
     if (!validSections.includes(section)) {
       return res.status(400).json({
         success: false,
         message: "Invalid section",
-      })
+      });
     }
 
     const update = {
@@ -1982,34 +2017,41 @@ async function updateProgress(req, res) {
       [`completionTimestamps.${section}`]: new Date(),
       "formProgress.lastActiveStep": getStepNumber(section),
       "formProgress.currentStep": getNextStepAfter(section),
-    }
+    };
 
-    await Vendor.findByIdAndUpdate(req.user._id, update)
+    await Vendor.findByIdAndUpdate(req.user._id, update);
 
     res.status(200).json({
       success: true,
       message: "Progress updated successfully",
-    })
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Error updating progress",
       error: error.message,
-    })
+    });
   }
 }
 
 async function updateBasicInfo(req, res) {
   try {
-    const { id } = req.params
-    console.log("Updating basic info for vendor ID:", id)
-    const { fullName, personalEmail, phone, alternatePhone, gender, dateOfBirth } = req.body
+    const { id } = req.params;
+    console.log("Updating basic info for vendor ID:", id);
+    const {
+      fullName,
+      personalEmail,
+      phone,
+      alternatePhone,
+      gender,
+      dateOfBirth,
+    } = req.body;
 
     if (!fullName || !personalEmail || !phone) {
       return res.status(400).json({
         success: false,
         message: "Full name, email, and phone are required",
-      })
+      });
     }
 
     const vendor = await Vendor.findByIdAndUpdate(
@@ -2024,13 +2066,13 @@ async function updateBasicInfo(req, res) {
         "formProgress.completedSteps.basicInfo": true,
       },
       { new: true },
-    )
+    );
 
     if (!vendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     res.status(200).json({
@@ -2043,43 +2085,51 @@ async function updateBasicInfo(req, res) {
         alternatePhone: vendor.alternatePhone,
         updatedFields: Object.keys(req.body),
       },
-    })
+    });
   } catch (error) {
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0]
+      const field = Object.keys(error.keyPattern)[0];
       return res.status(409).json({
         success: false,
         message: `${field} already exists`,
         field: field,
-      })
+      });
     }
 
     res.status(500).json({
       success: false,
       message: "Error updating basic info",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    })
+    });
   }
 }
 
 async function updateLocationInfo(req, res) {
   try {
-    const { id } = req.params
-    const { address, city, state, pincode, latitude, longitude, isPermanentAddress } = req.body
+    const { id } = req.params;
+    const {
+      address,
+      city,
+      state,
+      pincode,
+      latitude,
+      longitude,
+      isPermanentAddress,
+    } = req.body;
 
     // Validate required fields
     if (!address || !city || !state || !pincode) {
       return res.status(400).json({
         success: false,
         message: "Address, city, state, and pincode are required",
-      })
+      });
     }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
         message: "Invalid vendor ID format",
-      })
+      });
     }
 
     const updateData = {
@@ -2088,33 +2138,37 @@ async function updateLocationInfo(req, res) {
       "formProgress.completedSteps.locationInfo": true,
       "completionTimestamps.locationInfo": new Date(),
       updatedAt: new Date(),
-    }
+    };
 
     if (isPermanentAddress) {
-      updateData.permanentAddress = { address, city, state }
-      updateData.shopPincode = pincode
+      updateData.permanentAddress = { address, city, state };
+      updateData.shopPincode = pincode;
     } else {
-      updateData.presentAddress = { address, city, state }
-      updateData.shopPincode = pincode
+      updateData.presentAddress = { address, city, state };
+      updateData.shopPincode = pincode;
     }
 
     const updatedVendor = await Vendor.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
-    }).select("presentAddress permanentAddress shopPincode latitude longitude formProgress completionTimestamps")
+    }).select(
+      "presentAddress permanentAddress shopPincode latitude longitude formProgress completionTimestamps",
+    );
 
     if (!updatedVendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     res.status(200).json({
       success: true,
       message: "Location info updated successfully",
       data: {
-        address: isPermanentAddress ? updatedVendor.permanentAddress : updatedVendor.presentAddress,
+        address: isPermanentAddress
+          ? updatedVendor.permanentAddress
+          : updatedVendor.presentAddress,
         pincode: updatedVendor.shopPincode,
         coordinates: {
           latitude: updatedVendor.latitude,
@@ -2125,9 +2179,9 @@ async function updateLocationInfo(req, res) {
           lastUpdated: updatedVendor.completionTimestamps.locationInfo,
         },
       },
-    })
+    });
   } catch (error) {
-    console.error("Location update error:", error)
+    console.error("Location update error:", error);
 
     // Handle specific MongoDB errors
     if (error.name === "ValidationError") {
@@ -2135,45 +2189,52 @@ async function updateLocationInfo(req, res) {
         success: false,
         message: "Validation failed",
         errors: Object.values(error.errors).map((e) => e.message),
-      })
+      });
     }
 
     res.status(500).json({
       success: false,
       message: "Error updating location info",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    })
+    });
   }
 }
 
 async function updateShopDetails(req, res) {
   try {
-    const { id } = req.params
-    const { shopName, shopEmail, shopContact, holiday } = req.body
-    
-    console.log(`[updateShopDetails] Updating shop details for vendor ID: ${id}`);
+    const { id } = req.params;
+    const { shopName, shopEmail, shopContact, holiday } = req.body;
+
+    console.log(
+      `[updateShopDetails] Updating shop details for vendor ID: ${id}`,
+    );
     console.log(`[updateShopDetails] Received files:`, req.files);
-    
-    const shopImages = req.files?.map(file => file.location) || [];
-    console.log(`[updateShopDetails] Extracted shop image locations:`, shopImages);
+
+    const shopImages = req.files?.map((file) => file.location) || [];
+    console.log(
+      `[updateShopDetails] Extracted shop image locations:`,
+      shopImages,
+    );
     console.log(`[updateShopDetails] Request body:`, req.body);
 
     // Validate required fields
     if (!shopName || !shopEmail || !shopContact) {
-      console.warn(`[updateShopDetails] Validation failed: Missing required fields for vendor ID: ${id}`);
+      console.warn(
+        `[updateShopDetails] Validation failed: Missing required fields for vendor ID: ${id}`,
+      );
       return res.status(400).json({
         success: false,
         message: "Vendor ID, shop name, email, and contact are required",
-      })
+      });
     }
 
     // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(shopEmail)) {
       return res.status(400).json({
         success: false,
         message: "Please provide a valid shop email",
-      })
+      });
     }
 
     const updateData = {
@@ -2185,29 +2246,36 @@ async function updateShopDetails(req, res) {
         "formProgress.completedSteps.shopDetails": true,
         "completionTimestamps.shopDetails": new Date(),
         updatedAt: new Date(),
-      }
-    }
+      },
+    };
 
     if (shopImages.length > 0) {
       updateData.$push = { shopImages: { $each: shopImages } };
     }
 
-    console.log(`[updateShopDetails] Update data prepared:`, JSON.stringify(updateData, null, 2));
+    console.log(
+      `[updateShopDetails] Update data prepared:`,
+      JSON.stringify(updateData, null, 2),
+    );
 
     const updatedVendor = await Vendor.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
-    }).select("shopName shopEmail shopContact holiday shopImages formProgress completionTimestamps")
+    }).select(
+      "shopName shopEmail shopContact holiday shopImages formProgress completionTimestamps",
+    );
 
     if (!updatedVendor) {
       console.error(`[updateShopDetails] Vendor not found for ID: ${id}`);
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
-    console.log(`[updateShopDetails] Successfully updated vendor ID: ${id}. New image count: ${updatedVendor.shopImages.length}`);
+    console.log(
+      `[updateShopDetails] Successfully updated vendor ID: ${id}. New image count: ${updatedVendor.shopImages.length}`,
+    );
 
     res.status(200).json({
       success: true,
@@ -2225,9 +2293,9 @@ async function updateShopDetails(req, res) {
           lastUpdated: updatedVendor.completionTimestamps.shopDetails,
         },
       },
-    })
+    });
   } catch (error) {
-    console.error("Shop update error:", error)
+    console.error("Shop update error:", error);
 
     // Handle duplicate key errors
     if (error.code === 11000) {
@@ -2235,7 +2303,7 @@ async function updateShopDetails(req, res) {
         success: false,
         message: "Shop email already exists",
         field: "shopEmail",
-      })
+      });
     }
 
     // Handle validation errors
@@ -2244,14 +2312,14 @@ async function updateShopDetails(req, res) {
         success: false,
         message: "Validation failed",
         errors: Object.values(error.errors).map((e) => e.message),
-      })
+      });
     }
 
     res.status(500).json({
       success: false,
       message: "Error updating shop details",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    })
+    });
   }
 }
 
@@ -2464,74 +2532,93 @@ async function updateShopDetails(req, res) {
 
 async function uploadDocuments(req, res) {
   try {
-    const { id } = req.params
-    const files = req.files
-    const { aadharCardNo, panCardNo, shopOpeningDate } = req.body
+    const { id } = req.params;
+    const files = req.files;
+    const { aadharCardNo, panCardNo, shopOpeningDate } = req.body;
 
     if (!files || Object.keys(files).length === 0) {
       return res.status(400).json({
         success: false,
         message: "No documents were uploaded",
-      })
+      });
     }
 
     // Fetch current vendor to check existing statuses
-    const currentVendor = await Vendor.findById(id).select("documentVerification formProgress")
+    const currentVendor = await Vendor.findById(id).select(
+      "documentVerification formProgress",
+    );
     if (!currentVendor) {
-      return res.status(404).json({ success: false, message: "Vendor not found" })
+      return res
+        .status(404)
+        .json({ success: false, message: "Vendor not found" });
     }
 
     const updates = {
       updatedAt: new Date(),
-    }
+    };
 
     // ✅ Add uploaded file paths
-    if (files.aadharFront) updates["documents.aadharFront"] = files.aadharFront[0].location;
-    if (files.aadharBack) updates["documents.aadharBack"] = files.aadharBack[0].location;
-    if (files.panCard) updates["documents.panCardFront"] = files.panCard[0].location;
-    if (files.shopCertificate) updates["documents.shopCertificate"] = files.shopCertificate[0].location;
-    if (files.faceVerificationImage) updates["documents.faceVerificationImage"] = files.faceVerificationImage[0].location;
+    if (files.aadharFront)
+      updates["documents.aadharFront"] = files.aadharFront[0].location;
+    if (files.aadharBack)
+      updates["documents.aadharBack"] = files.aadharBack[0].location;
+    if (files.panCard)
+      updates["documents.panCardFront"] = files.panCard[0].location;
+    if (files.shopCertificate)
+      updates["documents.shopCertificate"] = files.shopCertificate[0].location;
+    if (files.faceVerificationImage)
+      updates["documents.faceVerificationImage"] =
+        files.faceVerificationImage[0].location;
 
     // ✅ Add text fields if provided
-    if (aadharCardNo) updates["aadharCardNo"] = aadharCardNo
-    if (panCardNo) updates["panCardNo"] = panCardNo
-    if (shopOpeningDate) updates["shopOpeningDate"] = new Date(shopOpeningDate)
+    if (aadharCardNo) updates["aadharCardNo"] = aadharCardNo;
+    if (panCardNo) updates["panCardNo"] = panCardNo;
+    if (shopOpeningDate) updates["shopOpeningDate"] = new Date(shopOpeningDate);
 
     // --- Update document flags and check for remaining rejections ---
-    const dv = currentVendor.documentVerification || {}
-    const newDV = { ...dv.toObject?.() || dv }
+    const dv = currentVendor.documentVerification || {};
+    const newDV = { ...(dv.toObject?.() || dv) };
 
-    updates.isDoc = true
-    if (files.aadharFront) newDV.aadharFront = "pending"
-    if (files.aadharBack) newDV.aadharBack = "pending"
-    if (files.panCard) newDV.pan = "pending"
-    if (files.shopCertificate) newDV.shop = "pending"
-    if (files.faceVerificationImage) newDV.face = "pending"
+    updates.isDoc = true;
+    if (files.aadharFront) newDV.aadharFront = "pending";
+    if (files.aadharBack) newDV.aadharBack = "pending";
+    if (files.panCard) newDV.pan = "pending";
+    if (files.shopCertificate) newDV.shop = "pending";
+    if (files.faceVerificationImage) newDV.face = "pending";
 
     // Map the new statuses back to updates
-    Object.keys(newDV).forEach(key => {
-      updates[`documentVerification.${key}`] = newDV[key]
-    })
+    Object.keys(newDV).forEach((key) => {
+      updates[`documentVerification.${key}`] = newDV[key];
+    });
 
     // Check if any required doc is still "rejected"
-    const hasRejected = ["aadharFront", "aadharBack", "pan", "shop", "face"].some(k => newDV[k] === "rejected")
+    const hasRejected = [
+      "aadharFront",
+      "aadharBack",
+      "pan",
+      "shop",
+      "face",
+    ].some((k) => newDV[k] === "rejected");
 
     if (hasRejected) {
-      updates["formProgress.completedSteps.documents"] = false
+      updates["formProgress.completedSteps.documents"] = false;
     } else {
-      updates["formProgress.completedSteps.documents"] = true
-      updates["completionTimestamps.documents"] = new Date()
+      updates["formProgress.completedSteps.documents"] = true;
+      updates["completionTimestamps.documents"] = new Date();
     }
 
-    const updatedVendor = await Vendor.findByIdAndUpdate(id, updates, { new: true, runValidators: true }).select(
+    const updatedVendor = await Vendor.findByIdAndUpdate(id, updates, {
+      new: true,
+      runValidators: true,
+    }).select(
       "documents aadharCardNo panCardNo shopOpeningDate formProgress completionTimestamps isDoc documentVerification",
-    )
+    );
 
     if (!updatedVendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     res.status(200).json({
@@ -2549,15 +2636,15 @@ async function uploadDocuments(req, res) {
         isDoc: updatedVendor.isDoc,
         documentVerification: updatedVendor.documentVerification,
       },
-    })
+    });
   } catch (error) {
-    console.error("Document upload error:", error)
+    console.error("Document upload error:", error);
 
     if (error.code === "ENOENT") {
       return res.status(500).json({
         success: false,
         message: "Error storing documents - file system error",
-      })
+      });
     }
 
     if (error.name === "ValidationError") {
@@ -2565,29 +2652,35 @@ async function uploadDocuments(req, res) {
         success: false,
         message: "Validation failed",
         errors: Object.values(error.errors).map((e) => e.message),
-      })
+      });
     }
 
     res.status(500).json({
       success: false,
       message: "Error uploading documents",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    })
+    });
   }
 }
 
 async function updateBankDetails(req, res) {
   try {
-    const { id } = req.params
-    const { accountHolderName, accountNumber, ifscCode, bankName } = req.body
+    const { id } = req.params;
+    const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
     const passbookImage = req.file?.location || req.file?.path;
 
     // Validate required fields
-    if (!accountHolderName || !accountNumber || !ifscCode || !bankName || !passbookImage) {
+    if (
+      !accountHolderName ||
+      !accountNumber ||
+      !ifscCode ||
+      !bankName ||
+      !passbookImage
+    ) {
       return res.status(400).json({
         success: false,
         message: "All bank details and passbook image are required",
-      })
+      });
     }
 
     // Validate ID format
@@ -2595,7 +2688,7 @@ async function updateBankDetails(req, res) {
       return res.status(400).json({
         success: false,
         message: "Invalid vendor ID format",
-      })
+      });
     }
 
     // Validate IFSC code format (example validation)
@@ -2603,7 +2696,7 @@ async function updateBankDetails(req, res) {
       return res.status(400).json({
         success: false,
         message: "Invalid IFSC code format",
-      })
+      });
     }
 
     // Validate account number (basic check)
@@ -2611,7 +2704,7 @@ async function updateBankDetails(req, res) {
       return res.status(400).json({
         success: false,
         message: "Account number must be 9-18 digits",
-      })
+      });
     }
 
     const updatedVendor = await Vendor.findByIdAndUpdate(
@@ -2622,8 +2715,8 @@ async function updateBankDetails(req, res) {
           accountNumber,
           ifscCode,
           bankName,
+          passbookImage,
         },
-        "documents.passbookImage": passbookImage,
         "formProgress.completedSteps.bankDetails": true,
         "completionTimestamps.bankDetails": new Date(),
         updatedAt: new Date(),
@@ -2632,13 +2725,13 @@ async function updateBankDetails(req, res) {
         new: true,
         runValidators: true,
       },
-    ).select("bankDetails documents.passbookImage formProgress completionTimestamps")
+    ).select("bankDetails formProgress completionTimestamps");
 
     if (!updatedVendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     res.status(200).json({
@@ -2646,15 +2739,15 @@ async function updateBankDetails(req, res) {
       message: "Bank details updated successfully",
       data: {
         bankDetails: updatedVendor.bankDetails,
-        hasPassbookImage: !!updatedVendor.documents.passbookImage,
+        hasPassbookImage: !!updatedVendor.bankDetails?.passbookImage,
         progress: {
           completed: updatedVendor.formProgress.completedSteps.bankDetails,
           lastUpdated: updatedVendor.completionTimestamps.bankDetails,
         },
       },
-    })
+    });
   } catch (error) {
-    console.error("Bank details update error:", error)
+    console.error("Bank details update error:", error);
 
     // Handle duplicate account errors
     if (error.code === 11000 && error.keyPattern?.bankDetails?.accountNumber) {
@@ -2662,7 +2755,7 @@ async function updateBankDetails(req, res) {
         success: false,
         message: "Bank account already registered",
         field: "accountNumber",
-      })
+      });
     }
 
     // Handle validation errors
@@ -2671,59 +2764,68 @@ async function updateBankDetails(req, res) {
         success: false,
         message: "Bank details validation failed",
         errors: Object.values(error.errors).map((e) => e.message),
-      })
+      });
     }
 
     res.status(500).json({
       success: false,
       message: "Error updating bank details",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    })
+    });
   }
 }
 
 async function submitForApproval(req, res) {
   try {
-    const { id } = req.params
-    const vendor = await Vendor.findById(id)
-    console.log("Submitting registration for vendor ID:", id)
-    console.log("Vendor details:", vendor)
-    const allCompleted = Array.from(vendor.formProgress.completedSteps.values()).every((val) => val === true)
+    const { id } = req.params;
+    const vendor = await Vendor.findById(id);
+    console.log("Submitting registration for vendor ID:", id);
+    console.log("Vendor details:", vendor);
+    const allCompleted = Array.from(
+      vendor.formProgress.completedSteps.values(),
+    ).every((val) => val === true);
 
     if (!allCompleted) {
       return res.status(400).json({
         success: false,
         message: "Please complete all sections before submitting",
-      })
+      });
     }
 
-    if (!vendor.documents.aadharFront || !vendor.documents.panCardFront || !vendor.documents.shopCertificate) {
+    if (
+      !vendor.documents.aadharFront ||
+      !vendor.documents.panCardFront ||
+      !vendor.documents.shopCertificate
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Please upload all required documents (Aadhar Front, PAN Card Front, and Shop Certificate)",
-      })
+        message:
+          "Please upload all required documents (Aadhar Front, PAN Card Front, and Shop Certificate)",
+      });
     }
 
-    vendor.registrationStatus = "Pending"
-    vendor.submittedAt = new Date()
-    await vendor.save()
+    vendor.registrationStatus = "Pending";
+    vendor.submittedAt = new Date();
+    await vendor.save();
 
     res.status(200).json({
       success: true,
       message: "Registration submitted for admin approval",
-    })
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Error submitting registration",
       error: error.message,
-    })
+    });
   }
 }
 
 async function checkApprovalStatus(req, res) {
   try {
-    const vendor = await Vendor.findById(req.user._id).select("registrationStatus adminNotes submittedAt approvedAt")
+    const vendor = await Vendor.findById(req.user._id).select(
+      "registrationStatus adminNotes submittedAt approvedAt",
+    );
 
     res.status(200).json({
       success: true,
@@ -2731,13 +2833,13 @@ async function checkApprovalStatus(req, res) {
       adminNotes: vendor.adminNotes,
       submittedAt: vendor.submittedAt,
       approvedAt: vendor.approvedAt,
-    })
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Error checking approval status",
       error: error.message,
-    })
+    });
   }
 }
 
@@ -2778,66 +2880,76 @@ async function getPendingRegistrations(req, res) {
   try {
     const pendingVendors = await Vendor.find({
       registrationStatus: "Pending",
-      $or: [{ "status.adminApproved": false }, { "status.isActive": false }, { "status.isVerified": false }],
-    }).lean()
+      $or: [
+        { "status.adminApproved": false },
+        { "status.isActive": false },
+        { "status.isVerified": false },
+      ],
+    }).lean();
 
     res.status(200).json({
       success: true,
       count: pendingVendors.length,
       vendors: pendingVendors,
-    })
+    });
   } catch (error) {
-    console.error("Error fetching pending registrations:", error)
+    console.error("Error fetching pending registrations:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching pending registrations",
       error: error.message,
-    })
+    });
   }
 }
 
 async function getDealerDetails(req, res) {
   try {
-    const vendor = await Vendor.findById(req.params.id).select("-password -otp -otpExpiry")
+    const vendor = await Vendor.findById(req.params.id).select(
+      "-password -otp -otpExpiry",
+    );
 
     if (!vendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     res.status(200).json({
       success: true,
       vendor,
-    })
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Error fetching vendor details",
       error: error.message,
-    })
+    });
   }
 }
 
 async function verifyDocument(req, res) {
   try {
-    const { id } = req.params
-    const { docType, status } = req.body
+    const { id } = req.params;
+    const { docType, status } = req.body;
 
-    const validDocTypes = ["aadharFront", "aadharBack", "pan", "shop", "face"]
+    const validDocTypes = ["aadharFront", "aadharBack", "pan", "shop", "face"];
     if (!validDocTypes.includes(docType)) {
-      return res.status(400).json({ success: false, message: "Invalid document type" })
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid document type" });
     }
 
     // Map boolean status to string if necessary (for backward compatibility during transition)
-    let verificationStatus = status
-    if (status === true) verificationStatus = "verified"
-    if (status === false) verificationStatus = "rejected"
+    let verificationStatus = status;
+    if (status === true) verificationStatus = "verified";
+    if (status === false) verificationStatus = "rejected";
 
-    const validStatuses = ["pending", "verified", "rejected", "none"]
+    const validStatuses = ["pending", "verified", "rejected", "none"];
     if (!validStatuses.includes(verificationStatus)) {
-      return res.status(400).json({ success: false, message: "Invalid verification status" })
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid verification status" });
     }
 
     // Map frontend docType to the documentVerification field
@@ -2847,32 +2959,50 @@ async function verifyDocument(req, res) {
       pan: "documentVerification.pan",
       shop: "documentVerification.shop",
       face: "documentVerification.face",
-    }
+    };
 
     const updates = {
       [fieldMap[docType]]: verificationStatus,
-    }
+    };
 
     // Refresh current vendor state to check all documents
-    const currentVendor = await Vendor.findById(id).select("documentVerification formProgress")
-    const dv = currentVendor.documentVerification || {}
-    const newDV = { ...dv.toObject?.() || dv, [docType]: verificationStatus }
+    const currentVendor = await Vendor.findById(id).select(
+      "documentVerification formProgress",
+    );
+    const dv = currentVendor.documentVerification || {};
+    const newDV = { ...(dv.toObject?.() || dv), [docType]: verificationStatus };
 
     // If any document is rejected, mark the documents section as incomplete
-    const anyRejected = ["aadharFront", "aadharBack", "pan", "shop", "face"].some(k => newDV[k] === "rejected")
-    const allVerified = ["aadharFront", "aadharBack", "pan", "shop", "face"].every(k => newDV[k] === "verified")
+    const anyRejected = [
+      "aadharFront",
+      "aadharBack",
+      "pan",
+      "shop",
+      "face",
+    ].some((k) => newDV[k] === "rejected");
+    const allVerified = [
+      "aadharFront",
+      "aadharBack",
+      "pan",
+      "shop",
+      "face",
+    ].every((k) => newDV[k] === "verified");
 
     if (anyRejected) {
-      updates["formProgress.completedSteps.documents"] = false
+      updates["formProgress.completedSteps.documents"] = false;
     } else if (allVerified) {
-      updates["formProgress.completedSteps.documents"] = true
-      updates["completionTimestamps.documents"] = new Date()
+      updates["formProgress.completedSteps.documents"] = true;
+      updates["completionTimestamps.documents"] = new Date();
     }
 
-    const vendor = await Vendor.findByIdAndUpdate(id, updates, { new: true }).select("documentVerification formProgress")
+    const vendor = await Vendor.findByIdAndUpdate(id, updates, {
+      new: true,
+    }).select("documentVerification formProgress");
 
     if (!vendor) {
-      return res.status(404).json({ success: false, message: "Vendor not found" })
+      return res
+        .status(404)
+        .json({ success: false, message: "Vendor not found" });
     }
 
     res.status(200).json({
@@ -2880,23 +3010,29 @@ async function verifyDocument(req, res) {
       message: `Document status updated to ${verificationStatus} successfully`,
       documentVerification: vendor.documentVerification,
       formProgress: vendor.formProgress,
-    })
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error updating document status", error: error.message })
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error updating document status",
+        error: error.message,
+      });
   }
 }
 
 async function approveDealer(req, res) {
   try {
-    console.log("Id:- ", req.params.id)
+    console.log("Id:- ", req.params.id);
 
     // First check if vendor exists
-    const vendorExists = await Vendor.findById(req.params.id)
+    const vendorExists = await Vendor.findById(req.params.id);
     if (!vendorExists) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     // Then try to update
@@ -2911,7 +3047,7 @@ async function approveDealer(req, res) {
         "status.isVerified": true,
       },
       { new: true },
-    )
+    );
 
     res.status(200).json({
       success: true,
@@ -2924,15 +3060,15 @@ async function approveDealer(req, res) {
           isVerified: true,
         },
       },
-    })
+    });
   } catch (error) {
-    console.error("Full error:", error) // Log the complete error
+    console.error("Full error:", error); // Log the complete error
     res.status(500).json({
       success: false,
       message: "Error approving vendor",
       error: error.message,
       stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
-    })
+    });
   }
 }
 
@@ -2977,23 +3113,23 @@ async function approveDealer(req, res) {
 
 async function rejectDealer(req, res) {
   try {
-    const { notes } = req.body
+    const { notes } = req.body;
 
     // Find the vendor first
-    const vendor = await Vendor.findById(req.params.id)
+    const vendor = await Vendor.findById(req.params.id);
 
     if (!vendor) {
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
-      })
+      });
     }
 
     // Send rejection email BEFORE deletion
-    await sendRejectionEmail(vendor, notes)
+    await sendRejectionEmail(vendor, notes);
 
     // Delete vendor after rejection
-    await Vendor.findByIdAndDelete(req.params.id)
+    await Vendor.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,
@@ -3002,15 +3138,15 @@ async function rejectDealer(req, res) {
         vendorId: req.params.id,
         deleted: true,
       },
-    })
+    });
   } catch (error) {
-    console.error("Reject dealer error:", error)
+    console.error("Reject dealer error:", error);
 
     res.status(500).json({
       success: false,
       message: "Error rejecting vendor",
       error: error.message,
-    })
+    });
   }
 }
 
@@ -3021,14 +3157,22 @@ function getStepNumber(section) {
     shopDetails: 3,
     documents: 4,
     bankDetails: 5,
-  }
-  return stepMap[section]
+  };
+  return stepMap[section];
 }
 
 function getNextStepAfter(section) {
-  const stepsOrder = ["basicInfo", "locationInfo", "shopDetails", "documents", "bankDetails"]
-  const currentIndex = stepsOrder.indexOf(section)
-  return currentIndex < stepsOrder.length - 1 ? getStepNumber(stepsOrder[currentIndex + 1]) : 5
+  const stepsOrder = [
+    "basicInfo",
+    "locationInfo",
+    "shopDetails",
+    "documents",
+    "bankDetails",
+  ];
+  const currentIndex = stepsOrder.indexOf(section);
+  return currentIndex < stepsOrder.length - 1
+    ? getStepNumber(stepsOrder[currentIndex + 1])
+    : 5;
 }
 
 // async function notifyAdmin(vendorId) {
@@ -3044,13 +3188,13 @@ function getNextStepAfter(section) {
 // }
 
 async function sendRejectionEmail(vendor, notes) {
-  const emailAddress = vendor.personalEmail
-  const name = vendor.ownerName || "Vendor"
-  const message = `Your vendor registration has been rejected.\n\nAdmin Notes: ${notes || "No additional notes provided."}`
-  const subject = "Your Vendor Registration Status - Rejected"
+  const emailAddress = vendor.personalEmail;
+  const name = vendor.ownerName || "Vendor";
+  const message = `Your vendor registration has been rejected.\n\nAdmin Notes: ${notes || "No additional notes provided."}`;
+  const subject = "Your Vendor Registration Status - Rejected";
 
   // Using type 4 which allows custom subject and message
-  await sendemails(emailAddress, name, message, 4, subject)
+  await sendemails(emailAddress, name, message, 4, subject);
 }
 
 module.exports = {
@@ -3074,4 +3218,4 @@ module.exports = {
   approveDealer,
   rejectDealer,
   verifyDocument,
-}
+};

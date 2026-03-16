@@ -93,6 +93,7 @@ const dealerModel = new mongoose.Schema(
       ifscCode: { type: String, required: false },
       bankName: { type: String, required: false },
       accountNumber: { type: String, required: false },
+      passbookImage: { type: String, required: false },
     },
     commission: {
       type: Number,
