@@ -16,7 +16,10 @@ var {
   addUserBike,
   getcustomersData,
 } = require("../controller/customers")
+const { createS3Upload } = require("../utils/s3Upload")
 const router = express.Router()
+
+const s3Upload = createS3Upload("customer-profiles")
 
 // set storage
 const storage = multer.diskStorage({
@@ -36,7 +39,12 @@ const upload = multer({
 })
 
 /* POST users listing. */
-router.post("/addProfile", verifyToken, upload.single("images"), addProfile)
+router.post(
+  "/addProfile",
+  verifyToken,
+  s3Upload.single("images"),
+  addProfile,
+)
 router.get("/getMyBikes", verifyToken, getMyBikes)
 router.post("/deleteMyBike/:bike_id", verifyToken, deleteMyBike)
 router.post("/addUserBike", verifyToken, addUserBike)
@@ -48,7 +56,7 @@ router.get("/customer/:user_id", getcustomer)
 router.get("/customersdata/:user_id", getcustomersData)
 router.delete("/deletecustomer", deletecustomer)
 router.put("/editcustomer/:id", verifyToken, editcustomer)
-router.put("/editimage", verifyToken, upload.single("images"), changeImage)
+router.put("/editimage", verifyToken, s3Upload.single("images"), changeImage)
 
 //Uploading Single file
 router.post("/uploadfile", upload.single("myFile"), (req, res, next) => {

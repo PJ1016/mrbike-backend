@@ -169,7 +169,7 @@ async function addProfile(req, res) {
     user.isProfile = true;
 
     if (req.file) {
-      user.image = `uploads/userprofile/${req.file.filename}`;
+      user.image = req.file.location
     }
 
     await user.save();
@@ -470,7 +470,7 @@ async function editcustomer(req, res) {
               status: 200,
               message: "customer updated successfully",
               data: docs,
-              image_base_url: process.env.BASE_URL,
+              image_base_url: docs.image?.startsWith("http") ? "" : process.env.BASE_URL,
             };
             return res.status(200).send(response);
           }
@@ -519,11 +519,11 @@ async function changeImage(req, res) {
     }
 
     // ✅ Update the image and return full URL
-    customer.image = `uploads/userprofile/${req.file.filename}`;
+    customer.image = req.file.location
 
-    await customer.save();
+    await customer.save()
 
-    const imageUrl = `${process.env.BASE_URL}/${customer.image}`;
+    const imageUrl = customer.image
 
     return res.status(200).json({
       success: true,
@@ -667,7 +667,7 @@ async function customerlist(req, res) {
       status: 200,
       message: "success",
       data: customerResponse,
-      image_base_url: process.env.BASE_URL,
+      image_base_url: process.env.BASE_URL, // Keep for list as individual items might vary
     };
     return res.status(200).send(response);
   } catch (error) {
