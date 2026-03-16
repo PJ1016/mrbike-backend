@@ -530,7 +530,10 @@ const getMyBikes = async (req, res) => {
     const data = jwt_decode(req.headers.token);
     const user_id = data.user_id;
 
+    console.log(`[getMyBikes] Fetching bikes for user ID: ${user_id}`);
+
     if (!user_id) {
+      console.warn(`[getMyBikes] Unauthorized access attempt: No user ID in token`);
       return res.status(200).json({
         status: 200,
         message: "Unauthorized access!",
@@ -540,6 +543,7 @@ const getMyBikes = async (req, res) => {
 
     // Fetch user bikes
     const userBikes = await UserBike.find({ user_id });
+    console.log(`[getMyBikes] Found ${userBikes.length} bikes for user ID: ${user_id}`);
 
     res.status(200).json({
       status: 200,
@@ -562,7 +566,11 @@ const addUserBike = async (req, res) => {
     const data = jwt_decode(req.headers.token);
     const user_id = data.user_id;
 
+    console.log(`[addUserBike] Adding new bike for user ID: ${user_id}`);
+    console.log(`[addUserBike] Request body:`, req.body);
+
     if (!user_id) {
+      console.warn(`[addUserBike] Unauthorized access attempt: No user ID in token`);
       return res.status(200).json({
         status: 200,
         message: "Unauthorized access!",
@@ -574,6 +582,7 @@ const addUserBike = async (req, res) => {
 
     // Check if all required fields are provided
     if (!name || !model || !bike_cc || !plate_number) {
+      console.warn(`[addUserBike] Validation failed: Missing required fields for user ID: ${user_id}`);
       return res.status(200).json({
         status: 200,
         message: "All fields (name, model, bike_cc, plate_number) are required!",
@@ -585,6 +594,7 @@ const addUserBike = async (req, res) => {
     const existingBike = await UserBike.findOne({ plate_number });
 
     if (existingBike) {
+      console.warn(`[addUserBike] Plate number ${plate_number} already exists`);
       return res.status(200).json({
         status: 200,
         message: "A bike with this plate number already exists!",
@@ -603,6 +613,7 @@ const addUserBike = async (req, res) => {
     });
 
     await newBike.save();
+    console.log(`[addUserBike] Successfully saved new bike for user ID: ${user_id}. Bike ID: ${newBike._id}`);
 
     res.status(200).json({
       status: 200,

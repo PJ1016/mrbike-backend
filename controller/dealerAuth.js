@@ -2150,11 +2150,16 @@ async function updateShopDetails(req, res) {
   try {
     const { id } = req.params
     const { shopName, shopEmail, shopContact, holiday } = req.body
+    
+    console.log(`[updateShopDetails] Updating shop details for vendor ID: ${id}`);
+    console.log(`[updateShopDetails] Received files:`, req.files);
+    
     const shopImages = req.files?.map(file => file.location) || [];
-
+    console.log(`[updateShopDetails] Extracted shop image locations:`, shopImages);
 
     // Validate required fields
     if (!shopName || !shopEmail || !shopContact) {
+      console.warn(`[updateShopDetails] Validation failed: Missing required fields for vendor ID: ${id}`);
       return res.status(400).json({
         success: false,
         message: "Vendor ID, shop name, email, and contact are required",
@@ -2186,6 +2191,7 @@ async function updateShopDetails(req, res) {
       updateData.$push = { shopImages: { $each: shopImages } };
     }
 
+    console.log(`[updateShopDetails] Update data prepared:`, JSON.stringify(updateData, null, 2));
 
     const updatedVendor = await Vendor.findByIdAndUpdate(id, updateData, {
       new: true,
@@ -2193,11 +2199,14 @@ async function updateShopDetails(req, res) {
     }).select("shopName shopEmail shopContact holiday shopImages formProgress completionTimestamps")
 
     if (!updatedVendor) {
+      console.error(`[updateShopDetails] Vendor not found for ID: ${id}`);
       return res.status(404).json({
         success: false,
         message: "Vendor not found",
       })
     }
+
+    console.log(`[updateShopDetails] Successfully updated vendor ID: ${id}. New image count: ${updatedVendor.shopImages.length}`);
 
     res.status(200).json({
       success: true,
