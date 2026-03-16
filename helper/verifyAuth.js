@@ -29,7 +29,7 @@ function verifyToken(req, res, next){
       return res.status(401).send(responseErr);
   }
   try {
-    const decoded =  jwt.verify(token, 'sk_digi');
+    const decoded =  jwt.verify(token, process.env.JWT_SECRET);
     if (decoded) {
 
        if (decoded.type === 'logged') {

@@ -1,16 +1,15 @@
 var validation = require("../helper/validation");
 require("dotenv").config();
-const mongoose = require("mongoose")
+const mongoose = require("mongoose");
 var moment = require("moment");
 const customers = require("../models/customer_model");
-const Vendor = require('../models/dealerModel');
+const Vendor = require("../models/dealerModel");
 const { is } = require("express/lib/request");
 const jwt_decode = require("jwt-decode");
 const otpAuth = require("../helper/otpAuth");
-const UserBike = require('../models/userBikeModel')
+const UserBike = require("../models/userBikeModel");
 
 // async function customersignup(req, res) {
-
 
 //   try {
 
@@ -113,8 +112,6 @@ const UserBike = require('../models/userBikeModel')
 //   }
 // }
 
-
-
 const updateUserBike = async (req, res) => {
   try {
     const { id } = req.params; // Get bike ID from URL params
@@ -148,14 +145,18 @@ async function addProfile(req, res) {
 
     // Extract user_id from request (set by authentication middleware)
     const user_id = req.user_id;
-    console.log(user_id, "userid")
+    console.log(user_id, "userid");
     if (!user_id) {
-      return res.status(400).json({ success: false, message: "User ID is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "User ID is required" });
     }
 
     let user = await customers.findOne({ _id: user_id });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     // Update user profile fields
@@ -173,7 +174,11 @@ async function addProfile(req, res) {
 
     await user.save();
 
-    res.status(200).json({ success: true, message: "Profile added successfully.", profile: user });
+    res.status(200).json({
+      success: true,
+      message: "Profile added successfully.",
+      profile: user,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -210,7 +215,10 @@ const deleteMyBike = async (req, res) => {
     }
 
     console.log("🔹 Bike Owner ID:", bike.user_id.toString());
-    console.log("🔹 Checking if User ID matches:", user_id === bike.user_id.toString());
+    console.log(
+      "🔹 Checking if User ID matches:",
+      user_id === bike.user_id.toString(),
+    );
 
     if (bike.user_id.toString() !== user_id) {
       return res.status(200).json({
@@ -228,7 +236,6 @@ const deleteMyBike = async (req, res) => {
       message: "Bike deleted successfully",
       data: [],
     });
-
   } catch (error) {
     console.error("❌ Error deleting user bike:", error);
 
@@ -239,11 +246,6 @@ const deleteMyBike = async (req, res) => {
     });
   }
 };
-
-
-
-
-
 
 // async function getcustomer(req, res) {
 //   try {
@@ -285,27 +287,32 @@ async function getcustomer(req, res) {
     const { user_id } = req.params;
 
     if (!user_id) {
-      return res.status(400).json({ success: false, message: "user_id is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "user_id is required" });
     }
 
     if (!mongoose.Types.ObjectId.isValid(user_id)) {
-      return res.status(400).json({ success: false, message: "Invalid user_id" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid user_id" });
     }
 
     const customer = await Vendor.findById(user_id);
     // const customer = await customers.findById(user_id);
 
     if (!customer) {
-      return res.status(404).json({ success: false, message: "No Customer Account Found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "No Customer Account Found" });
     }
-    console.log("Customer", customer)
+    console.log("Customer", customer);
     return res.status(200).json({
       success: true,
       message: "success",
       data: customer,
       image_base_url: process.env.BASE_URL,
     });
-
   } catch (error) {
     console.error("Error in getcustomer:", error);
     return res.status(500).json({
@@ -320,27 +327,32 @@ async function getcustomersData(req, res) {
     const { user_id } = req.params;
 
     if (!user_id) {
-      return res.status(400).json({ success: false, message: "user_id is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "user_id is required" });
     }
 
     if (!mongoose.Types.ObjectId.isValid(user_id)) {
-      return res.status(400).json({ success: false, message: "Invalid user_id" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid user_id" });
     }
 
     // const customer = await Vendor.findById(user_id);
     const customer = await customers.findById(user_id);
 
     if (!customer) {
-      return res.status(404).json({ success: false, message: "No Customer Account Found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "No Customer Account Found" });
     }
-    console.log("Customer", customer)
+    console.log("Customer", customer);
     return res.status(200).json({
       success: true,
       message: "success",
       data: customer,
       image_base_url: process.env.BASE_URL,
     });
-
   } catch (error) {
     console.error("Error in getcustomer:", error);
     return res.status(500).json({
@@ -349,7 +361,6 @@ async function getcustomersData(req, res) {
     });
   }
 }
-
 
 async function deletecustomer(req, res) {
   try {
@@ -384,7 +395,7 @@ async function deletecustomer(req, res) {
             };
             return res.status(200).send(response);
           }
-        }
+        },
       );
     } else {
       var response = {
@@ -404,14 +415,13 @@ async function deletecustomer(req, res) {
   }
 }
 
-
 async function editcustomer(req, res) {
   try {
     const data = jwt_decode(req.headers.token);
     const user_id = data.user_id;
     const user_type = data.user_type;
     const type = data.type;
-    if (user_id == null || user_type != 1 && user_type != 4) {
+    if (user_id == null || (user_type != 1 && user_type != 4)) {
       var response = {
         status: 401,
         message: "admin is un-authorised !",
@@ -427,7 +437,7 @@ async function editcustomer(req, res) {
       state,
       city,
       address,
-      pincode
+      pincode,
     } = req.body;
 
     const customerResp = await customers.findOne({ _id: req.params.id });
@@ -464,7 +474,7 @@ async function editcustomer(req, res) {
             };
             return res.status(200).send(response);
           }
-        }
+        },
       );
     } else {
       response = {
@@ -483,8 +493,6 @@ async function editcustomer(req, res) {
   }
 }
 
-
-
 async function changeImage(req, res) {
   try {
     const data = jwt_decode(req.headers.token);
@@ -492,16 +500,22 @@ async function changeImage(req, res) {
     const user_type = data.user_type;
 
     if (!user_id || (user_type !== 1 && user_type !== 4)) {
-      return res.status(200).json({ success: false, message: "Unauthorized access!" });
+      return res
+        .status(200)
+        .json({ success: false, message: "Unauthorized access!" });
     }
 
     const customer = await customers.findById(user_id);
     if (!customer) {
-      return res.status(200).json({ success: false, message: "No Customer Account Found" });
+      return res
+        .status(200)
+        .json({ success: false, message: "No Customer Account Found" });
     }
 
     if (!req.file) {
-      return res.status(200).json({ success: false, message: "Please upload an image" });
+      return res
+        .status(200)
+        .json({ success: false, message: "Please upload an image" });
     }
 
     // ✅ Update the image and return full URL
@@ -515,15 +529,15 @@ async function changeImage(req, res) {
       success: true,
       message: "Profile Image updated successfully",
       image_name: customer.image,
-      full_image_url: imageUrl
+      full_image_url: imageUrl,
     });
-
   } catch (error) {
     console.error("Error:", error);
-    return res.status(500).json({ success: false, message: "Operation was not successful" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Operation was not successful" });
   }
 }
-
 
 const getMyBikes = async (req, res) => {
   try {
@@ -533,30 +547,36 @@ const getMyBikes = async (req, res) => {
     console.log(`[getMyBikes] Fetching bikes for user ID: ${user_id}`);
 
     if (!user_id) {
-      console.warn(`[getMyBikes] Unauthorized access attempt: No user ID in token`);
+      console.warn(
+        `[getMyBikes] Unauthorized access attempt: No user ID in token`,
+      );
       return res.status(200).json({
         status: 200,
         message: "Unauthorized access!",
-        data: []
+        data: [],
       });
     }
 
     // Fetch user bikes
     const userBikes = await UserBike.find({ user_id });
-    console.log(`[getMyBikes] Found ${userBikes.length} bikes for user ID: ${user_id}`);
+    console.log(
+      `[getMyBikes] Found ${userBikes.length} bikes for user ID: ${user_id}`,
+    );
 
     res.status(200).json({
       status: 200,
-      message: userBikes.length > 0 ? "Bikes retrieved successfully" : "No bikes found",
+      message:
+        userBikes.length > 0
+          ? "Bikes retrieved successfully"
+          : "No bikes found",
       data: userBikes,
     });
-
   } catch (error) {
     console.error("Error fetching user bikes:", error);
     res.status(200).json({
       status: 200,
       message: "Internal Server Error",
-      data: []
+      data: [],
     });
   }
 };
@@ -570,7 +590,9 @@ const addUserBike = async (req, res) => {
     console.log(`[addUserBike] Request body:`, req.body);
 
     if (!user_id) {
-      console.warn(`[addUserBike] Unauthorized access attempt: No user ID in token`);
+      console.warn(
+        `[addUserBike] Unauthorized access attempt: No user ID in token`,
+      );
       return res.status(200).json({
         status: 200,
         message: "Unauthorized access!",
@@ -578,14 +600,17 @@ const addUserBike = async (req, res) => {
       });
     }
 
-    const { name, model, bike_cc, plate_number, variant_id, } = req.body;
+    const { name, model, bike_cc, plate_number, variant_id } = req.body;
 
     // Check if all required fields are provided
     if (!name || !model || !bike_cc || !plate_number) {
-      console.warn(`[addUserBike] Validation failed: Missing required fields for user ID: ${user_id}`);
+      console.warn(
+        `[addUserBike] Validation failed: Missing required fields for user ID: ${user_id}`,
+      );
       return res.status(200).json({
         status: 200,
-        message: "All fields (name, model, bike_cc, plate_number) are required!",
+        message:
+          "All fields (name, model, bike_cc, plate_number) are required!",
         data: [],
       });
     }
@@ -609,18 +634,19 @@ const addUserBike = async (req, res) => {
       model,
       bike_cc,
       plate_number,
-      variant_id
+      variant_id,
     });
 
     await newBike.save();
-    console.log(`[addUserBike] Successfully saved new bike for user ID: ${user_id}. Bike ID: ${newBike._id}`);
+    console.log(
+      `[addUserBike] Successfully saved new bike for user ID: ${user_id}. Bike ID: ${newBike._id}`,
+    );
 
     res.status(200).json({
       status: 200,
       message: "Bike added successfully",
       data: newBike,
     });
-
   } catch (error) {
     console.error("Error adding user bike:", error);
 
@@ -632,7 +658,7 @@ const addUserBike = async (req, res) => {
   }
 };
 
-// By prashant 
+// By prashant
 async function customerlist(req, res) {
   try {
     const customerResponse = await customers.find();
@@ -700,5 +726,5 @@ module.exports = {
   getMyBikes,
   deleteMyBike,
   addUserBike,
-  getcustomersData
+  getcustomersData,
 };
