@@ -1,5 +1,13 @@
 const path = require('path');
-require("dotenv").config({ path: path.join(__dirname, "../.env") });
+const dotenvPath = path.join(__dirname, "../.env");
+const dotenvResult = require("dotenv").config({ path: dotenvPath });
+console.log("otpAuth.js: Loading .env from:", dotenvPath);
+if (dotenvResult.error) {
+    console.error("otpAuth.js: dotenv loading error:", dotenvResult.error);
+} else {
+    console.log("otpAuth.js: .env loaded successfully");
+}
+console.log("otpAuth.js: JWT_AUTH_TOKEN length:", process.env.JWT_AUTH_TOKEN ? process.env.JWT_AUTH_TOKEN.length : "UNDEFINED");
 const text = require("body-parser/lib/types/text");
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -89,7 +97,9 @@ const verifyotp = async(phone, hash, otp)=>{
 const otp = async(phone)=>{
 	
     const otp = Math.floor(1000 + Math.random() * 9000);
-	const accessToken = jwt.sign({ data: phone }, JWT_AUTH_TOKEN, { expiresIn: '60s' });
+    console.log("otpAuth.js: otp(): Phone:", phone);
+    console.log("otpAuth.js: otp(): JWT_AUTH_TOKEN:", JWT_AUTH_TOKEN ? "DEFINED" : "UNDEFINED");
+    const accessToken = jwt.sign({ data: phone }, JWT_AUTH_TOKEN, { expiresIn: '60s' });
 	const refreshToken = jwt.sign({ data: phone }, JWT_REFRESH_TOKEN, { expiresIn: '1y' });
 	refreshTokens.push(refreshToken);
 	
