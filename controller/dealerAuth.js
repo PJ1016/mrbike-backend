@@ -2003,7 +2003,7 @@ async function updateBasicInfo(req, res) {
   try {
     const { id } = req.params
     console.log("Updating basic info for vendor ID:", id)
-    const { fullName, personalEmail, phone, gender, dateOfBirth } = req.body
+    const { fullName, personalEmail, phone, alternatePhone, gender, dateOfBirth } = req.body
 
     if (!fullName || !personalEmail || !phone) {
       return res.status(400).json({
@@ -2015,11 +2015,12 @@ async function updateBasicInfo(req, res) {
     const vendor = await Vendor.findByIdAndUpdate(
       id,
       {
-        fullName,
+        ownerName: fullName,
         personalEmail,
         phone,
+        alternatePhone,
         gender,
-        dateOfBirth,
+        dob: dateOfBirth,
         "formProgress.completedSteps.basicInfo": true,
       },
       { new: true },
@@ -2037,8 +2038,9 @@ async function updateBasicInfo(req, res) {
       message: "Basic info updated successfully",
       data: {
         id: vendor._id,
-        fullName: vendor.fullName,
+        ownerName: vendor.ownerName,
         email: vendor.personalEmail,
+        alternatePhone: vendor.alternatePhone,
         updatedFields: Object.keys(req.body),
       },
     })
