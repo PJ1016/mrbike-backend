@@ -1661,7 +1661,7 @@ async function usersignin(req, res) {
       dealer.isActive = true
     }
 
-    await dealer.save()
+    await dealer.save({ validateModifiedOnly: true })
 
     return res.status(dealer.isNew ? 201 : 200).json({
       success: true,
