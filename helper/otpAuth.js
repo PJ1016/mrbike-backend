@@ -1,29 +1,6 @@
-const path = require('path');
-const dotenvPath = path.join(__dirname, "../.env");
-const dotenvResult = require("dotenv").config({ path: dotenvPath });
-console.log("otpAuth.js: Loading .env from:", dotenvPath);
-if (dotenvResult.error) {
-    console.error("otpAuth.js: dotenv loading error:", dotenvResult.error);
-} else {
-    console.log("otpAuth.js: .env loaded successfully");
-}
-console.log("otpAuth.js: JWT_AUTH_TOKEN length:", process.env.JWT_AUTH_TOKEN ? process.env.JWT_AUTH_TOKEN.length : "UNDEFINED");
-const text = require("body-parser/lib/types/text");
-const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
-var fetch = require('node-fetch');
-
-// sendOTP Twilio
-// const accountSid = process.env.ACCOUNT_SID;
-// const authToken = process.env.AUTH_TOKEN;
-// const client = require('twilio')(accountSid, authToken);
-// const twilioNum = process.env.TWILIO_PHONE_NUMBER;
-// const smsKey = process.env.SMS_SECRET_KEY;
-
-
 // Verify OTP
-const JWT_AUTH_TOKEN = process.env.JWT_AUTH_TOKEN;
-const JWT_REFRESH_TOKEN = process.env.JWT_REFRESH_TOKEN;
+const JWT_AUTH_TOKEN = process.env.JWT_AUTH_TOKEN || process.env.JWT_SECRET;
+const JWT_REFRESH_TOKEN = process.env.JWT_REFRESH_TOKEN || process.env.JWT_SECRET;
 let refreshTokens = [];
 
 // Twilio
@@ -97,9 +74,7 @@ const verifyotp = async(phone, hash, otp)=>{
 const otp = async(phone)=>{
 	
     const otp = Math.floor(1000 + Math.random() * 9000);
-    console.log("otpAuth.js: otp(): Phone:", phone);
-    console.log("otpAuth.js: otp(): JWT_AUTH_TOKEN:", JWT_AUTH_TOKEN ? "DEFINED" : "UNDEFINED");
-    const accessToken = jwt.sign({ data: phone }, JWT_AUTH_TOKEN, { expiresIn: '60s' });
+	const accessToken = jwt.sign({ data: phone }, JWT_AUTH_TOKEN, { expiresIn: '60s' });
 	const refreshToken = jwt.sign({ data: phone }, JWT_REFRESH_TOKEN, { expiresIn: '1y' });
 	refreshTokens.push(refreshToken);
 	
