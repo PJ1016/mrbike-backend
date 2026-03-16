@@ -2933,7 +2933,7 @@ async function verifyDocument(req, res) {
     const { id } = req.params;
     const { docType, status } = req.body;
 
-    const validDocTypes = ["aadharFront", "aadharBack", "pan", "shop", "face"];
+    const validDocTypes = ["aadharFront", "aadharBack", "pan", "shop", "face", "passbook"];
     if (!validDocTypes.includes(docType)) {
       return res
         .status(400)
@@ -2959,6 +2959,7 @@ async function verifyDocument(req, res) {
       pan: "documentVerification.pan",
       shop: "documentVerification.shop",
       face: "documentVerification.face",
+      passbook: "documentVerification.passbook",
     };
 
     const updates = {
@@ -2979,6 +2980,7 @@ async function verifyDocument(req, res) {
       "pan",
       "shop",
       "face",
+      "passbook",
     ].some((k) => newDV[k] === "rejected");
     const allVerified = [
       "aadharFront",
@@ -2986,6 +2988,7 @@ async function verifyDocument(req, res) {
       "pan",
       "shop",
       "face",
+      "passbook",
     ].every((k) => newDV[k] === "verified");
 
     if (anyRejected) {

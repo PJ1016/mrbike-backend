@@ -173,6 +173,7 @@ const dealerModel = new mongoose.Schema(
       bank: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
       face: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
       shop: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
+      passbook: { type: String, enum: ["none", "pending", "verified", "rejected"], default: "none" },
     },
 
     shopOpeningDate: { type: Date, required: false },
