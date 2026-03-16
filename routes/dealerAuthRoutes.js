@@ -20,7 +20,7 @@ router.put('/progress/:section', updateProgress);
 // Form Submission Endpoints
 router.post('/basic-info/:id', updateBasicInfo);
 router.post('/location-info/:id', updateLocationInfo);
-router.post('/shop-details/:id', upload.array('shopImages', 10), updateShopDetails);
+router.post('/shop-details/:id', upload.any(), updateShopDetails);
 router.post('/upload-documents/:id',
   upload.fields([
     { name: 'aadharFront', maxCount: 1 },

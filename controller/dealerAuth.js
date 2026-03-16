@@ -2156,6 +2156,7 @@ async function updateShopDetails(req, res) {
     
     const shopImages = req.files?.map(file => file.location) || [];
     console.log(`[updateShopDetails] Extracted shop image locations:`, shopImages);
+    console.log(`[updateShopDetails] Request body:`, req.body);
 
     // Validate required fields
     if (!shopName || !shopEmail || !shopContact) {
