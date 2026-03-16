@@ -129,10 +129,51 @@ bookingSchema.plugin(AutoIncrement, { id: "booking_seq", inc_field: "id" });
 //   return `B-${this.id.toString().padStart(2, "0")}`;
 // });
 bookingSchema.virtual("bookingId").get(function () {
-  if (!this.id) return null; 
+  if (!this.id) return null;
   return `B-${this.id.toString().padStart(2, "0")}`;
 });
 
+bookingSchema.virtual("vehicleLifecycleStatus").get(function () {
+  // 1. Cancelled states
+  if (["rejected", "user_cancelled", "cancelled"].includes(this.status)) {
+    return "Cancelled";
+  }
+
+  // 2. Initial Booking
+  if (this.status === "pending") return "Booking Created";
+
+  // 3. Pre-Service & In Service
+  if (this.status === "confirmed") {
+    // If it's a Pickup & Drop service
+    if (this.pickupAndDropId) {
+      if (this.pickupStatus === "pending") return "Pickup Scheduled";
+      if (["pickedup", "completed", "arrived"].includes(this.pickupStatus))
+        return "Service In Progress";
+    } else {
+      // If it's a direct customer visit to the shop
+      return "Awaiting Customer Drop-off";
+    }
+  }
+
+  // 4. Post-Service & Billing
+  if (this.status === "completed") {
+    if (!this.billGenerated) return "Service Completed (Pending Bill)";
+    if (this.billStatus === "pending")
+      return "Bill Generated (Pending Payment)";
+  }
+
+  // 5. Payment & Delivery closure
+  if (
+    this.billStatus === "paid" ||
+    ["Payment", "cash received"].includes(this.status)
+  ) {
+    return "Payment Completed (Ready for Delivery)";
+  }
+
+  return "Unknown Status";
+});
+
 bookingSchema.set("toJSON", { virtuals: true });
+bookingSchema.set("toObject", { virtuals: true });
 
 module.exports = mongoose.model("Booking", bookingSchema);
