@@ -1,3 +1,10 @@
+const path = require('path');
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
+const text = require("body-parser/lib/types/text");
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+var fetch = require('node-fetch');
+
 // Verify OTP
 const JWT_AUTH_TOKEN = process.env.JWT_AUTH_TOKEN || process.env.JWT_SECRET;
 const JWT_REFRESH_TOKEN = process.env.JWT_REFRESH_TOKEN || process.env.JWT_SECRET;
