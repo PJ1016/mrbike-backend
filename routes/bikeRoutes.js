@@ -7,6 +7,8 @@ var {
   bikeList,
   editBike,
   deleteBike,
+  deleteBikeModel,
+  deleteBikeCompany,
   getBike,
   addBikeCompany,
   addBikeModel,
@@ -48,6 +50,8 @@ router.post("/addBike", upload.single("images"), addBike)
 router.get("/bikeList", bikeList)
 router.put("/editBike/:id", editBike)
 router.delete("/deleteBike/:id", deleteBike) // updated parameter name to :id for clarity
+router.delete("/deleteBikeModel/:id", deleteBikeModel)
+router.delete("/deleteBikeCompany/:id", deleteBikeCompany)
 router.get("/getBike/:id", getBike)
 router.post("/add-bike-company", addBikeCompany)
 router.post("/add-bike-model", addBikeModel)

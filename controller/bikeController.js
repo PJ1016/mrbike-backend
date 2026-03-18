@@ -196,6 +196,100 @@ async function deleteBike(req, res) {
   }
 }
 
+async function deleteBikeModel(req, res) {
+  try {
+    if (!req.headers.token) {
+      return res.status(401).send({ status: 401, message: "Token not provided" })
+    }
+    const data = jwt_decode(req.headers.token)
+    const user_id = data.user_id || data.id
+    const user_type = data.user_type
+    const role = data.role
+
+    if (user_id == null || (user_type != 1 && role !== "Admin")) {
+      return res.status(401).send({
+        status: 401,
+        message: "Only Admin can delete bike models!",
+      })
+    }
+
+    const model_id = req.params.id
+
+    // Delete all variants for this model
+    await BikeVariant.deleteMany({ model_id })
+    // Delete the model itself
+    const modelRes = await BikeModel.findByIdAndDelete(model_id)
+
+    if (modelRes) {
+      return res.status(200).send({
+        status: 200,
+        message: "Bike model and its variants deleted successfully",
+      })
+    } else {
+      return res.status(404).send({
+        status: 404,
+        message: "Bike model not found",
+      })
+    }
+  } catch (error) {
+    console.error("Error in deleteBikeModel:", error)
+    return res.status(500).send({
+      status: 500,
+      message: "Internal server error during bike model deletion",
+    })
+  }
+}
+
+async function deleteBikeCompany(req, res) {
+  try {
+    if (!req.headers.token) {
+      return res.status(401).send({ status: 401, message: "Token not provided" })
+    }
+    const data = jwt_decode(req.headers.token)
+    const user_id = data.user_id || data.id
+    const user_type = data.user_type
+    const role = data.role
+
+    if (user_id == null || (user_type != 1 && role !== "Admin")) {
+      return res.status(401).send({
+        status: 401,
+        message: "Only Admin can delete bike companies!",
+      })
+    }
+
+    const company_id = req.params.id
+
+    // Find all models for this company
+    const models = await BikeModel.find({ company_id })
+    const modelIds = models.map((m) => m._id)
+
+    // Delete all variants for these models
+    await BikeVariant.deleteMany({ model_id: { $in: modelIds } })
+    // Delete all models for this company
+    await BikeModel.deleteMany({ company_id })
+    // Delete the company itself
+    const companyRes = await BikeCompany.findByIdAndDelete(company_id)
+
+    if (companyRes) {
+      return res.status(200).send({
+        status: 200,
+        message: "Bike company, its models, and variants deleted successfully",
+      })
+    } else {
+      return res.status(404).send({
+        status: 404,
+        message: "Bike company not found",
+      })
+    }
+  } catch (error) {
+    console.error("Error in deleteBikeCompany:", error)
+    return res.status(500).send({
+      status: 500,
+      message: "Internal server error during bike company deletion",
+    })
+  }
+}
+
 async function editBike(req, res) {
   try {
     if (!req.headers.token) {
@@ -715,6 +809,8 @@ module.exports = {
   addBike,
   bikeList,
   deleteBike,
+  deleteBikeModel,
+  deleteBikeCompany,
   editBike,
   getBike,
   addBikeCompany,
