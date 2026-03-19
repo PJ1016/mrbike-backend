@@ -111,7 +111,7 @@ async function createBaseService(req, res) {
  */
 async function listBaseServices(req, res) {
   try {
-    const services = await BaseService.find().sort({ id: -1 })
+    const services = await BaseService.find({ isActive: { $ne: false } }).sort({ id: -1 })
 
     return res.status(200).json({
       status: true,
@@ -244,11 +244,12 @@ async function updateBaseService(req, res) {
  * DELETE BaseService (Admin Only)
  * DELETE /admin/base-services/:id
  * Prevent deletion if referenced by any AdminService, unless ?force=true and no bookings exist.
+ * If bookings exist, allow ?deactivate=true to hide the service.
  */
 async function deleteBaseService(req, res) {
   try {
     const { id } = req.params
-    const { force } = req.query
+    const { force, deactivate } = req.query
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -257,9 +258,33 @@ async function deleteBaseService(req, res) {
       })
     }
 
+    // 0. DEACTIVATE MODE (Soft Delete)
+    if (deactivate === "true") {
+      console.log(`[v0] Deactivating base service ${id} and its associated admin services.`)
+      
+      const adminServiceIds = await AdminService.find({ base_service_id: id }).distinct("_id")
+      
+      // Deactivate BaseService
+      await BaseService.findByIdAndUpdate(id, { isActive: false })
+      
+      // Deactivate all associated AdminServices
+      if (adminServiceIds.length > 0) {
+        await AdminService.updateMany(
+          { _id: { $in: adminServiceIds } },
+          { isActive: false }
+        )
+      }
+
+      return res.status(200).json({
+        status: true,
+        message: "Base service and associated admin services deactivated successfully.",
+      })
+    }
+
     // 1. Find all AdminServices referencing this BaseService
     const referencingAdminServices = await AdminService.find({
       base_service_id: id,
+      isActive: { $ne: false }, // Only care about active ones for blocking
     }).populate("dealer_id", "shopName")
 
     const referencedCount = referencingAdminServices.length
@@ -288,8 +313,10 @@ async function deleteBaseService(req, res) {
       if (bookingCount > 0) {
         return res.status(400).json({
           status: false,
+          canDeactivate: true,
           message: `Cannot force delete. There are ${bookingCount} project/booking(s) referencing the associated admin services.`,
           bookingCount,
+          hint: "You can use ?deactivate=true to hide this service without breaking booking records.",
         })
       }
 

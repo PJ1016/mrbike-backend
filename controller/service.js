@@ -116,6 +116,7 @@ async function getServicesByDealer(req, res) {
     const services = await adminservices
       .find({
         dealers: dealer_id,
+        isActive: { $ne: false },
       })
       .populate("base_service_id", "name image")
       .populate("companies", "name")
@@ -336,7 +337,7 @@ async function addAdminService(req, res) {
 async function listAdminServices(req, res) {
   try {
     const services = await adminservices
-      .find()
+      .find({ isActive: { $ne: false } })
       .populate("base_service_id", "name image")
       .populate("companies", "name")
       .populate("dealer_id", "shopName id")
@@ -643,6 +644,7 @@ async function getDealerServices(req, res) {
     const services = await adminservices
       .find({
         dealers: dealer_id,
+        isActive: { $ne: false },
       })
       .populate("base_service_id", "name image")
       .populate("companies", "name")
@@ -691,6 +693,7 @@ async function getAdminServicesByDealer(req, res) {
     const services = await adminservices
       .find({
         dealers: dealer_id,
+        isActive: { $ne: false },
       })
       .populate("base_service_id", "name image")
       .populate("companies", "name")

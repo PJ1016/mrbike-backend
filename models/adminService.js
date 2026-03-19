@@ -58,6 +58,10 @@ const adminServiceSchema = new mongoose.Schema(
       required: false,
       default: "",
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true,
