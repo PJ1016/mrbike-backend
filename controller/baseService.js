@@ -34,12 +34,13 @@ async function createBaseService(req, res) {
     }
 
     const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id || data.id
+    // Support both custom JWT (user_id/id) and Google ID Token (sub)
+    const user_id = data.user_id || data.id || data.sub
 
     if (!user_id) {
       return res.status(401).json({
         status: false,
-        message: "Unauthorized",
+        message: "Unauthorized - Invalid token payload",
       })
     }
 
@@ -88,7 +89,7 @@ async function createBaseService(req, res) {
     const newService = await BaseService.create({
       name: name.trim(),
       description: description?.trim(),
-      image: `uploads/base-services/${req.file.filename}`,
+      image: req.file.location, // S3 URL
     })
 
     return res.status(201).json({
@@ -212,7 +213,7 @@ async function updateBaseService(req, res) {
     }
 
     if (req.file) {
-      updateData.image = `uploads/base-services/${req.file.filename}`
+      updateData.image = req.file.location // S3 URL
     }
 
     const updatedService = await BaseService.findByIdAndUpdate(id, updateData, {

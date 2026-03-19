@@ -240,7 +240,7 @@ async function addDealer1(req, res) {
       const data = {
         dealer_id: dealer_id,
         dealerId: dealerId,
-        image: `uploads/dealer-services/${req.file.filename}`,
+        image: req.file.location, // S3 URL
         name: name,
         description: description,
         area: area,
@@ -430,7 +430,7 @@ async function editDealer(req, res) {
 
       if (req.files.panCardFront) {
         updateData.documents.panCardFront =
-  `uploads/dealer-documents/${req.files.panCardFront[0].filename}`;
+  req.files.panCardFront[0].location; // S3 URL
         // Delete old file if exists
         if (existingDealer.documents.panCardFront) {
           fs.unlinkSync(path.join(uploadDir, existingDealer.documents.panCardFront));
@@ -444,7 +444,7 @@ async function editDealer(req, res) {
       updateData.shopImages = [
         ...existingDealer.shopImages,
         ...req.files.shopImages.map(
-  file => `uploads/dealer-documents/${file.filename}`
+  file => file.location // S3 URL
 )
 
       ];

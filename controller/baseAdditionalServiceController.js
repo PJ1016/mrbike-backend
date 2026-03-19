@@ -71,7 +71,7 @@ async function createBaseAdditionalService(req, res) {
     ========================== */
     const newService = await BaseAdditionalService.create({
       name: name.trim(),
-      image: `uploads/base-additional-services/${req.file.filename}`,
+      image: req.file.location, // S3 URL
     })
 
     return res.status(201).json({
@@ -191,7 +191,7 @@ async function updateBaseAdditionalService(req, res) {
     }
 
     if (req.file) {
-      updateData.image = `uploads/base-additional-services/${req.file.filename}`
+      updateData.image = req.file.location // S3 URL
     }
 
     const updatedService = await BaseAdditionalService.findByIdAndUpdate(id, updateData, {

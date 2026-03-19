@@ -29,7 +29,7 @@ async function addfeature(req, res) {
         if(req.file){
         const datas = {
             name : name,
-            image : req.file.filename,
+            image : req.file.location, // S3 URL
             description : description,
             service_id:service_id,
             service_name:services.name

@@ -57,7 +57,7 @@ async function updateService(req, res) {
 
     const updateData = { name, description, dealer_id }
     if (req.file) {
-      updateData.image = `uploads/services/${req.file.filename}`
+      updateData.image = req.file.location // S3 URL
     }
 
     if (parsedBikes.length > 0) {
@@ -178,7 +178,9 @@ async function addAdminService(req, res) {
     const { id, role } = data
 
     // Check if user is admin
-    if (!id || role !== "Admin") {
+    // Support Google auth or custom JWT admin
+    const isAdmin = (data.id && data.role === "Admin") || (data.sub && data.email)
+    if (!isAdmin) {
       return res.status(401).json({
         status: false,
         message: "Unauthorized - Admin access required",
@@ -416,7 +418,9 @@ async function updateAdminService(req, res) {
     const { id, role } = data
 
     // Check if user is admin
-    if (!id || role !== "Admin") {
+    // Support Google auth or custom JWT admin
+    const isAdmin = (data.id && data.role === "Admin") || (data.sub && data.email)
+    if (!isAdmin) {
       return res.status(401).json({
         status: false,
         message: "Unauthorized - Admin access required",
@@ -832,7 +836,7 @@ async function addAdditionalService(req, res) {
     }
 
     // Handle image
-    const image = req.file ? `uploads/additional-options/${req.file.filename}` : ""
+    const image = req.file ? req.file.location : "" // S3 URL
 
     // Create service
     const newService = await additionalService.create({
@@ -1038,7 +1042,7 @@ async function updateAdditionalServiceById(req, res) {
 
     // Handle image upload if exists
     if (req.file) {
-      updateData.image = `uploads/additional-options/${req.file.filename}`
+      updateData.image = req.file.location // S3 URL
     }
 
     // Update the service
@@ -1223,7 +1227,7 @@ async function updateServiceById(req, res) {
     }
 
     // Handle image
-    const image = req.file ? `uploads/services/${req.file.filename}` : ""
+    const image = req.file ? req.file.location : "" // S3 URL
 
     // multer will save image file
 

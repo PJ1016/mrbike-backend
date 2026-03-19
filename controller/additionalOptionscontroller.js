@@ -347,7 +347,7 @@ async function updateService(req, res) {
 
     const updateData = { name, description, dealer_id };
     if (req.file) {
-      updateData.image = req.file.filename;
+      updateData.image = req.file.location; // S3 URL
     }
     if (parsedBikes.length > 0) {
       updateData.bikes = parsedBikes;
@@ -427,7 +427,7 @@ async function addservice(req, res) {
 
     const newService = await service.create({
       name,
-      image: req.file.filename,
+      image: req.file.location, // S3 URL
       description,
       dealer_id,
       bikes: parsedBikes,
