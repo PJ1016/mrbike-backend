@@ -386,7 +386,7 @@ const cashfreeWebhook = async (req, res) => {
 
     // Use verified status from API, not webhook payload (security)
     const orderStatus = verifiedOrderData.order_status
-    const paymentMethod = data.payment?.payment_method
+    const paymentMethodGroup = data.payment?.payment_group || "upi"
     const transactionId = data.payment?.cf_payment_id
     const utr = data.payment?.payment_group === "upi" ? data.payment?.bank_reference : null
 
@@ -420,7 +420,7 @@ const cashfreeWebhook = async (req, res) => {
 
     // Update payment record
     payment.order_status = mappedStatus
-    payment.payment_method = paymentMethod || "upi"
+    payment.payment_method = paymentMethodGroup
     payment.transaction_id = transactionId || utr
     payment.metadata = {
       ...payment.metadata,
