@@ -6,15 +6,15 @@ const Customer = require("../models/customer_model")
 const Dealer = require("../models/dealerModel")
 
 // Cashfree API Configuration
-const CASHFREE_BASE_URL =
-  process.env.CASHFREE_ENV === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg"
+const getCashfreeBaseUrl = () =>
+  process.env.CASHFREE_ENV === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
 
-const CASHFREE_HEADERS = {
+const getCashfreeHeaders = () => ({
   "x-client-id": process.env.CASHFREE_APP_ID,
   "x-client-secret": process.env.CASHFREE_SECRET_KEY,
   "x-api-version": "2023-08-01",
   "Content-Type": "application/json",
-}
+});
 
 /**
  * Generate UPI QR Code for Payment
@@ -100,8 +100,24 @@ const generateUPIQRCode = async (req, res) => {
 
     console.log("Creating Cashfree order:", JSON.stringify(orderPayload, null, 2))
 
+    // ---------- ADDED DETAILED AUTH LOGS ----------
+    const appId = process.env.CASHFREE_APP_ID || '';
+    const secretKey = process.env.CASHFREE_SECRET_KEY || '';
+    
+    console.log(`\n--- [CASHFREE AUTH DEBUG] ---`);
+    console.log(`Environment: ${process.env.CASHFREE_ENV || 'undefined'}`);
+    console.log(`App ID (length ${appId.length}): ${appId ? appId.substring(0, 5) + '...' + appId.substring(appId.length - 4) : 'UNDEFINED or EMPTY'}`);
+    console.log(`Secret Key (length ${secretKey.length}): ${secretKey ? secretKey.substring(0, 5) + '...' + secretKey.substring(secretKey.length - 4) : 'UNDEFINED or EMPTY'}`);
+    console.log(`API URL: ${getCashfreeBaseUrl()}/orders`);
+    const debugHeaders = getCashfreeHeaders();
+    console.log(`Headers being sent:`, JSON.stringify({
+      ...debugHeaders,
+      'x-client-secret': secretKey ? '***MASKED (Correct length: ' + secretKey.length + ')***' : 'UNDEFINED'
+    }, null, 2));
+    console.log(`-----------------------------\n`);
+
     // Step 1: Create order in Cashfree
-    const orderResponse = await axios.post(`${CASHFREE_BASE_URL}/orders`, orderPayload, { headers: CASHFREE_HEADERS })
+    const orderResponse = await axios.post(`${getCashfreeBaseUrl()}/orders`, orderPayload, { headers: getCashfreeHeaders() })
 
     const orderData = orderResponse.data
     console.log("Cashfree order created:", JSON.stringify(orderData, null, 2))
@@ -124,8 +140,8 @@ const generateUPIQRCode = async (req, res) => {
 
     try {
       // Try to get QR code from Cashfree sessions API
-      const paymentResponse = await axios.post(`${CASHFREE_BASE_URL}/orders/sessions`, upiPayload, {
-        headers: CASHFREE_HEADERS,
+      const paymentResponse = await axios.post(`${getCashfreeBaseUrl()}/orders/sessions`, upiPayload, {
+        headers: getCashfreeHeaders(),
       })
 
       const paymentData = paymentResponse.data
@@ -228,6 +244,15 @@ const cashfreePaymentLink =
     })
   } catch (error) {
     console.error("Generate UPI QR Error:", error.response?.data || error.message)
+    console.error("--- FULL ERROR DETAILS ---", JSON.stringify({
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      headers: error.response?.headers,
+      data: error.response?.data,
+      method: error.config?.method,
+      url: error.config?.url
+    }, null, 2))
+    
     res.status(500).json({
       success: false,
       message: "Failed to generate UPI QR Code",
@@ -252,7 +277,7 @@ const checkPaymentStatus = async (req, res) => {
     }
 
     // Get status from Cashfree
-    const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${order_id}`, { headers: CASHFREE_HEADERS })
+    const response = await axios.get(`${getCashfreeBaseUrl()}/orders/${order_id}`, { headers: getCashfreeHeaders() })
 
     const orderData = response.data
 
@@ -348,7 +373,7 @@ const cashfreeWebhook = async (req, res) => {
     // This is the industry-standard approach recommended by Cashfree for PG v3
     let verifiedOrderData
     try {
-      const verifyResponse = await axios.get(`${CASHFREE_BASE_URL}/orders/${orderId}`, { headers: CASHFREE_HEADERS })
+      const verifyResponse = await axios.get(`${getCashfreeBaseUrl()}/orders/${orderId}`, { headers: getCashfreeHeaders() })
       verifiedOrderData = verifyResponse.data
       console.log(`Verified order ${orderId} via API:`, verifiedOrderData.order_status)
     } catch (verifyError) {
@@ -501,7 +526,7 @@ const regenerateQRCode = async (req, res) => {
     }
 
     // Get fresh payment session from Cashfree
-    const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${payment.orderId}`, { headers: CASHFREE_HEADERS })
+    const response = await axios.get(`${getCashfreeBaseUrl()}/orders/${payment.orderId}`, { headers: getCashfreeHeaders() })
 
     const orderData = response.data
 
@@ -524,8 +549,8 @@ const regenerateQRCode = async (req, res) => {
       },
     }
 
-    const paymentResponse = await axios.post(`${CASHFREE_BASE_URL}/orders/${payment.orderId}/payments`, upiPayload, {
-      headers: CASHFREE_HEADERS,
+    const paymentResponse = await axios.post(`${getCashfreeBaseUrl()}/orders/${payment.orderId}/payments`, upiPayload, {
+      headers: getCashfreeHeaders(),
     })
 
     const paymentData = paymentResponse.data
