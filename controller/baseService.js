@@ -1,5 +1,8 @@
 const BaseService = require("../models/baseService")
 const AdminService = require("../models/adminService")
+const Booking = require("../models/Booking")
+const Offer = require("../models/offer_model")
+const Vendor = require("../models/dealerModel")
 const jwt_decode = require("jwt-decode")
 const mongoose = require("mongoose")
 
@@ -240,11 +243,12 @@ async function updateBaseService(req, res) {
 /**
  * DELETE BaseService (Admin Only)
  * DELETE /admin/base-services/:id
- * Prevent deletion if referenced by any AdminService
+ * Prevent deletion if referenced by any AdminService, unless ?force=true and no bookings exist.
  */
 async function deleteBaseService(req, res) {
   try {
     const { id } = req.params
+    const { force } = req.query
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -253,16 +257,56 @@ async function deleteBaseService(req, res) {
       })
     }
 
-    // Check if any AdminService references this BaseService
-    const referencedCount = await AdminService.countDocuments({
+    // 1. Find all AdminServices referencing this BaseService
+    const referencingAdminServices = await AdminService.find({
       base_service_id: id,
-    })
+    }).populate("dealer_id", "shopName")
+
+    const referencedCount = referencingAdminServices.length
 
     if (referencedCount > 0) {
-      return res.status(400).json({
-        status: false,
-        message: `Cannot delete this base service. It is referenced by ${referencedCount} admin service(s)`,
+      if (force !== "true") {
+        return res.status(400).json({
+          status: false,
+          isReferenced: true,
+          message: `Cannot delete this base service. It is referenced by ${referencedCount} admin service(s).`,
+          referencingDetails: referencingAdminServices.map(as => ({
+            admin_service_id: as._id,
+            serviceId: as.serviceId,
+            dealerName: as.dealer_id?.shopName || "Unknown Dealer",
+          })),
+          hint: "Use ?force=true to cascadingly delete if NO bookings exist.",
+        })
+      }
+
+      // 2. FORCE DELETE MODE: Check for Bookings
+      const adminServiceIds = referencingAdminServices.map(as => as._id)
+      const bookingCount = await Booking.countDocuments({
+        services: { $in: adminServiceIds },
       })
+
+      if (bookingCount > 0) {
+        return res.status(400).json({
+          status: false,
+          message: `Cannot force delete. There are ${bookingCount} project/booking(s) referencing the associated admin services.`,
+          bookingCount,
+        })
+      }
+
+      // 3. NO BOOKINGS: Proceed with cascading delete
+      console.log(`[v0] Cascadingly deleting base service ${id} and ${referencedCount} admin services.`)
+
+      // Clean up Offers
+      await Offer.deleteMany({ service_id: { $in: adminServiceIds } })
+
+      // Clean up Vendor (Dealer) services arrays
+      await Vendor.updateMany(
+        { services: { $in: adminServiceIds } },
+        { $pull: { services: { $in: adminServiceIds } } }
+      )
+
+      // Delete AdminServices
+      await AdminService.deleteMany({ _id: { $in: adminServiceIds } })
     }
 
     const deletedService = await BaseService.findByIdAndDelete(id)
@@ -276,7 +320,9 @@ async function deleteBaseService(req, res) {
 
     return res.status(200).json({
       status: true,
-      message: "Base service deleted successfully",
+      message: referencedCount > 0 
+        ? `Base service and ${referencedCount} associated admin services deleted successfully.` 
+        : "Base service deleted successfully.",
     })
   } catch (error) {
     console.error("Error deleting base service:", error)
