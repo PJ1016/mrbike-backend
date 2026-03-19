@@ -1,5 +1,7 @@
 const BaseAdditionalService = require("../models/baseAdditionalServiceSchema")
 const AdditionalService = require("../models/additionalServiceSchema")
+const Booking = require("../models/Booking")
+const Vendor = require("../models/dealerModel")
 const jwt_decode = require("jwt-decode")
 const mongoose = require("mongoose")
 
@@ -94,7 +96,7 @@ async function createBaseAdditionalService(req, res) {
  */
 async function listBaseAdditionalServices(req, res) {
   try {
-    const services = await BaseAdditionalService.find().sort({ id: -1 })
+    const services = await BaseAdditionalService.find({ isActive: { $ne: false } }).sort({ id: -1 })
 
     return res.status(200).json({
       status: true,
@@ -227,6 +229,7 @@ async function updateBaseAdditionalService(req, res) {
 async function deleteBaseAdditionalService(req, res) {
   try {
     const { id } = req.params
+    const { force, deactivate } = req.query
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -235,16 +238,73 @@ async function deleteBaseAdditionalService(req, res) {
       })
     }
 
-    // Check if any AdditionalService references this BaseAdditionalService
-    const referencedCount = await AdditionalService.countDocuments({
+    // 0. DEACTIVATE MODE (Soft Delete)
+    if (deactivate === "true") {
+      console.log(`[v0] Deactivating base additional service ${id} and its associated dealer services.`)
+      
+      const additionalServiceIds = await AdditionalService.find({ base_additional_service_id: id }).distinct("_id")
+      
+      // Deactivate BaseAdditionalService
+      await BaseAdditionalService.findByIdAndUpdate(id, { isActive: false })
+      
+      // Deactivate all associated AdditionalServices
+      if (additionalServiceIds.length > 0) {
+        await AdditionalService.updateMany(
+          { _id: { $in: additionalServiceIds } },
+          { isActive: false }
+        )
+      }
+
+      return res.status(200).json({
+        status: true,
+        message: "Base additional service and associated dealer services deactivated successfully.",
+      })
+    }
+
+    // 1. Find all AdditionalServices referencing this BaseAdditionalService
+    const referencingServices = await AdditionalService.find({
       base_additional_service_id: id,
-    })
+      isActive: { $ne: false },
+    }).populate("dealer_id", "shopName")
+
+    const referencedCount = referencingServices.length
 
     if (referencedCount > 0) {
-      return res.status(400).json({
-        status: false,
-        message: `Cannot delete this base additional service. It is referenced by ${referencedCount} additional service(s)`,
+      if (force !== "true") {
+        return res.status(400).json({
+          status: false,
+          isReferenced: true,
+          message: `Cannot delete this base additional service. It is referenced by ${referencedCount} additional service(s).`,
+          referencingDetails: referencingServices.map(as => ({
+            additional_service_id: as._id,
+            serviceId: as.serviceId,
+            dealerName: as.dealer_id?.shopName || "Unknown Dealer",
+          })),
+          hint: "Use ?force=true to cascadingly delete if NO bookings exist.",
+        })
+      }
+
+      // 2. FORCE DELETE MODE: Check for Bookings
+      const additionalServiceIds = referencingServices.map(as => as._id)
+      const bookingCount = await Booking.countDocuments({
+        additionalServices: { $in: additionalServiceIds },
       })
+
+      if (bookingCount > 0) {
+        return res.status(400).json({
+          status: false,
+          canDeactivate: true,
+          message: `Cannot force delete. There are ${bookingCount} project/booking(s) referencing the associated additional services.`,
+          bookingCount,
+          hint: "You can use ?deactivate=true to hide this service without breaking booking records.",
+        })
+      }
+
+      // 3. NO BOOKINGS: Proceed with cascading delete
+      console.log(`[v0] Cascadingly deleting base additional service ${id} and ${referencedCount} additional services.`)
+
+      // Delete AdditionalServices
+      await AdditionalService.deleteMany({ _id: { $in: additionalServiceIds } })
     }
 
     const deletedService = await BaseAdditionalService.findByIdAndDelete(id)
@@ -258,7 +318,9 @@ async function deleteBaseAdditionalService(req, res) {
 
     return res.status(200).json({
       status: true,
-      message: "Base additional service deleted successfully",
+      message: referencedCount > 0 
+        ? `Base additional service and ${referencedCount} associated dealer services deleted successfully.` 
+        : "Base additional service deleted successfully.",
     })
   } catch (error) {
     console.error("Error deleting base additional service:", error)
