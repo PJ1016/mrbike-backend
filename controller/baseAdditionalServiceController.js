@@ -2,33 +2,15 @@ const BaseAdditionalService = require("../models/baseAdditionalServiceSchema")
 const AdditionalService = require("../models/additionalServiceSchema")
 const Booking = require("../models/Booking")
 const Vendor = require("../models/dealerModel")
-const jwt_decode = require("jwt-decode")
 const mongoose = require("mongoose")
 
 /**
  * CREATE BaseAdditionalService (Admin Only)
- * POST /admin/base-additional-services
+ * POST /base-additional-service
+ * Auth: verifyToken middleware on the route
  */
 async function createBaseAdditionalService(req, res) {
   try {
-    // Auth check
-    if (!req.headers.token) {
-      return res.status(401).json({
-        status: false,
-        message: "Token required",
-      })
-    }
-
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id || data.id
-
-    if (!user_id) {
-      return res.status(401).json({
-        status: false,
-        message: "Unauthorized",
-      })
-    }
-
     const { name } = req.body
 
     /* =========================
