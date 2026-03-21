@@ -129,18 +129,29 @@ bookingSchema.pre("save", async function (next) {
   if (!this.isNew || this.bookingId) return next();
 
   try {
-    const today = new Date();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
+    // 1. Get current time in IST (UTC + 5:30)
+    const ISTOffset = 5.5 * 60 * 60 * 1000;
+    const now = new Date();
+    const istNow = new Date(now.getTime() + ISTOffset);
+    
+    // Month and Day in IST
+    const mm = String(istNow.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(istNow.getUTCDate()).padStart(2, "0");
     const dateStr = mm + dd;
 
-    const startOfDay = new Date(today);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
+    // 2. Define range for "today" in IST boundaries, converted to UTC
+    const startOfIstTodayUTC = new Date(istNow);
+    startOfIstTodayUTC.setUTCHours(0, 0, 0, 0);
+    // Move from IST 00:00 to UTC equivalent
+    const startOfTodayUTC = new Date(startOfIstTodayUTC.getTime() - ISTOffset);
+    
+    const endOfIstTodayUTC = new Date(istNow);
+    endOfIstTodayUTC.setUTCHours(23, 59, 59, 999);
+    // Move from IST 23:59 to UTC equivalent
+    const endOfTodayUTC = new Date(endOfIstTodayUTC.getTime() - ISTOffset);
 
     const count = await this.constructor.countDocuments({
-      create_date: { $gte: startOfDay, $lte: endOfDay },
+      create_date: { $gte: startOfTodayUTC, $lte: endOfTodayUTC },
     });
 
     const sequence = String(count + 1).padStart(2, "0");
