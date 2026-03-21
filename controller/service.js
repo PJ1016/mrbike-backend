@@ -696,8 +696,10 @@ async function getDealerServices(req, res) {
       (doc.bikes || []).forEach(bike => {
         const variant = bike.variant_id;
         extractCompany(variant);
+        const companyName = variant?.model_id?.company_id?.name || "";
+        const modelName = variant?.model_id?.model_name || "";
         const bikeName = variant 
-          ? `${variant.model_id?.company_id?.name || ""} ${variant.model_id?.model_name || ""} ${variant.variant_name || ""}`.trim()
+          ? `${companyName} ${modelName} ${variant.variant_name || ""}`.trim()
           : "Generic Bike";
 
         pricing.push({
@@ -706,6 +708,8 @@ async function getDealerServices(req, res) {
           serviceName: doc.base_service_id?.name,
           serviceImage: doc.base_service_id?.image,
           bikeName: bikeName,
+          companyName: companyName,
+          modelName: modelName,
           variantId: variant?._id || bike.variant_id || bike.variantId,
           cc: bike.cc,
           price: bike.price
@@ -717,8 +721,10 @@ async function getDealerServices(req, res) {
       (doc.bikes || []).forEach(bike => {
         const variant = bike.variant_id;
         extractCompany(variant);
+        const companyName = variant?.model_id?.company_id?.name || "";
+        const modelName = variant?.model_id?.model_name || "";
         const bikeName = variant 
-          ? `${variant.model_id?.company_id?.name || ""} ${variant.model_id?.model_name || ""} ${variant.variant_name || ""}`.trim()
+          ? `${companyName} ${modelName} ${variant.variant_name || ""}`.trim()
           : "Generic Bike";
 
         pricing.push({
@@ -727,6 +733,8 @@ async function getDealerServices(req, res) {
           serviceName: doc.base_additional_service_id?.name,
           serviceImage: doc.base_additional_service_id?.image,
           bikeName: bikeName,
+          companyName: companyName,
+          modelName: modelName,
           variantId: variant?._id || bike.variant_id || bike.variantId,
           cc: bike.cc,
           price: bike.price
