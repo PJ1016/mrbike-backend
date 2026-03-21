@@ -4,6 +4,10 @@ const jwt_decode = require("jwt-decode")
 const adminservices = require("../models/adminService")
 const mongoose = require("mongoose")
 const BaseService = require("../models/baseService")
+const BaseAdditionalService = require("../models/baseAdditionalServiceSchema")
+const BikeVariant = require("../models/bikeVariantModel")
+const BikeModel = require("../models/bikeModel")
+const BikeCompany = require("../models/bikeCompanyModel")
 
 async function servicelist(req, res) {
   try {
@@ -627,53 +631,118 @@ async function deleteAdminService(req, res) {
  */
 async function getDealerServices(req, res) {
   try {
-    // Extract dealer_id from token
-    if (!req.headers.token) {
-      return res.status(401).json({
-        status: false,
-        message: "Token required",
-      })
+    let dealer_id = req.query.dealerId;
+    
+    // Fallback to token if no query param (for Dealer app usage instead of Admin)
+    if (!dealer_id) {
+      if (!req.headers.token) {
+        return res.status(401).json({ status: false, message: "Token required" });
+      }
+      const data = jwt_decode(req.headers.token);
+      dealer_id = data.user_id || data.dealer_id || data.id;
     }
 
-    const data = jwt_decode(req.headers.token)
-    const dealer_id = data.user_id || data.dealer_id || data.id
     if (!dealer_id || !mongoose.Types.ObjectId.isValid(dealer_id)) {
-      return res.status(401).json({
-        status: false,
-        message: "Unauthorized",
-      })
+      return res.status(400).json({ status: false, message: "Valid dealerId required" });
     }
 
-    // Fetch AdminServices where this dealer is included
-    const services = await adminservices
-      .find({
-        dealers: dealer_id,
-        isActive: { $ne: false },
-      })
+    // Fetch Base Services
+    const baseServices = await adminservices.find({ dealer_id, isActive: true })
       .populate("base_service_id", "name image")
-      .populate("companies", "name")
-      .select("base_service_id bikes")
+      .populate({
+        path: "bikes.variant_id",
+        populate: {
+          path: "model_id",
+          select: "model_name",
+          populate: {
+            path: "company_id",
+            select: "name"
+          }
+        }
+      });
+    
+    // Fetch Additional Services
+    let addlServices = [];
+    if (typeof additionalService !== 'undefined') {
+      addlServices = await additionalService.find({ dealer_id, isActive: true })
+        .populate("base_additional_service_id", "name image")
+        .populate({
+          path: "bikes.variant_id",
+          populate: {
+            path: "model_id",
+            select: "model_name",
+            populate: {
+              path: "company_id",
+              select: "name"
+            }
+          }
+        });
+    }
 
-    // Format response: return only service info + pricing
-    const formattedServices = services.map((service) => ({
-      _id: service._id,
-      name: service.base_service_id?.name,
-      image: service.base_service_id?.image,
-      bikes: service.bikes,
-      createdAt: service.createdAt,
-    }))
+    const pricing = [];
+    const uniqueCompanies = new Map();
+
+    const extractCompany = (variant) => {
+      const company = variant?.model_id?.company_id;
+      if (company && !uniqueCompanies.has(String(company._id))) {
+        uniqueCompanies.set(String(company._id), {
+          _id: company._id,
+          name: company.name
+        });
+      }
+    };
+
+    baseServices.forEach(doc => {
+      (doc.bikes || []).forEach(bike => {
+        const variant = bike.variant_id;
+        extractCompany(variant);
+        const bikeName = variant 
+          ? `${variant.model_id?.company_id?.name || ""} ${variant.model_id?.model_name || ""} ${variant.variant_name || ""}`.trim()
+          : "Generic Bike";
+
+        pricing.push({
+          type: "base",
+          serviceId: doc.base_service_id?._id || doc.base_service_id,
+          serviceName: doc.base_service_id?.name,
+          serviceImage: doc.base_service_id?.image,
+          bikeName: bikeName,
+          variantId: variant?._id || bike.variant_id || bike.variantId,
+          cc: bike.cc,
+          price: bike.price
+        });
+      });
+    });
+
+    addlServices.forEach(doc => {
+      (doc.bikes || []).forEach(bike => {
+        const variant = bike.variant_id;
+        extractCompany(variant);
+        const bikeName = variant 
+          ? `${variant.model_id?.company_id?.name || ""} ${variant.model_id?.model_name || ""} ${variant.variant_name || ""}`.trim()
+          : "Generic Bike";
+
+        pricing.push({
+          type: "additional",
+          serviceId: doc.base_additional_service_id?._id || doc.base_additional_service_id,
+          serviceName: doc.base_additional_service_id?.name,
+          serviceImage: doc.base_additional_service_id?.image,
+          bikeName: bikeName,
+          variantId: variant?._id || bike.variant_id || bike.variantId,
+          cc: bike.cc,
+          price: bike.price
+        });
+      });
+    });
 
     return res.status(200).json({
       status: true,
-      message: services.length > 0 ? "Services fetched successfully" : "No services found",
-      data: formattedServices,
-    })
+      message: "Services fetched successfully",
+      pricing: pricing,
+      companies: Array.from(uniqueCompanies.values())
+    });
   } catch (error) {
-    console.error("Error fetching dealer services:", error)
-    return res.status(500).json({
-      status: false,
-      message: "Internal Server Error",
-    })
+    console.error("Error fetching dealer services:", error);
+    return res.status(500).json({ status: false, message: "Internal Server Error" });
   }
 }
 

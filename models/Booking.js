@@ -118,20 +118,40 @@ const bookingSchema = new mongoose.Schema(
     additionalNotes: { type: [String], default: [] },
 
     pickupDate: { type: Date, default: null },
+    bookingId: { type: String, unique: true },
 
     create_date: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
 
-bookingSchema.plugin(AutoIncrement, { id: "booking_seq", inc_field: "id" });
-// bookingSchema.virtual("bookingId").get(function () {
-//   return `B-${this.id.toString().padStart(2, "0")}`;
-// });
-bookingSchema.virtual("bookingId").get(function () {
-  if (!this.id) return null;
-  return `B-${this.id.toString().padStart(2, "0")}`;
+bookingSchema.pre("save", async function (next) {
+  if (!this.isNew || this.bookingId) return next();
+
+  try {
+    const today = new Date();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const dateStr = mm + dd;
+
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const count = await this.constructor.countDocuments({
+      create_date: { $gte: startOfDay, $lte: endOfDay },
+    });
+
+    const sequence = String(count + 1).padStart(2, "0");
+    this.bookingId = `MRB${dateStr}${sequence}`;
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
+
+bookingSchema.plugin(AutoIncrement, { id: "booking_seq", inc_field: "id" });
 
 bookingSchema.virtual("vehicleLifecycleStatus").get(function () {
   // 1. Cancelled states
