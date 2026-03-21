@@ -6,6 +6,7 @@ router.post("/initiate", initiatePayment);
 router.post("/create-checkout", createCheckoutUrl);
 router.post('/create-checkout-session', createCheckoutSession);
 router.post('/link', createPaymentLink);
+router.get("/all-payments", getAllPayments);
 router.get("/single-payment-detail/:id", getPaymentById);
 router.get("/webhook", paymentWebhook);
 router.get('/bills/booking/:booking_id', getBillByBookingId);
