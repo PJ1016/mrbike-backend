@@ -563,7 +563,7 @@ const getAllPayments = async (req, res) => {
                 options: { strictPopulate: false },
             })
             .populate("dealer_id", "name email")
-            .populate("user_id", "first_name last_name email")
+            .populate("user_id", "first_name last_name email phone")
             .sort(sort)
             .lean();
 
