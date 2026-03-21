@@ -1254,6 +1254,76 @@ async function updateServiceById(req, res) {
   }
 }
 
+/**
+ * NEW: Save Dealer Services (Upsert)
+ * POST /dealer/services
+ */
+async function saveDealerServices(req, res) {
+  try {
+    const { dealerId, pricing } = req.body;
+    
+    if (!dealerId || !Array.isArray(pricing)) {
+      return res.status(400).json({ status: false, message: "Invalid payload" });
+    }
+
+    const baseMap = {};
+    const addlMap = {};
+
+    pricing.forEach(item => {
+      const { type, serviceId, variantId, cc, price } = item;
+      if (type === "base") {
+        if (!baseMap[serviceId]) baseMap[serviceId] = [];
+        baseMap[serviceId].push({ variant_id: variantId, cc, price });
+      } else if (type === "additional") {
+        if (!addlMap[serviceId]) addlMap[serviceId] = [];
+        addlMap[serviceId].push({ variant_id: variantId, cc, price });
+      }
+    });
+
+    // Process Base Services (AdminService model)
+    for (const [baseSvcId, bikes] of Object.entries(baseMap)) {
+      if (bikes.length === 0) continue;
+      await adminservices.findOneAndUpdate(
+        { dealer_id: dealerId, base_service_id: baseSvcId },
+        { 
+          $set: { bikes, isActive: true },
+          $setOnInsert: { companies: [] }
+        },
+        { upsert: true, new: true, runValidators: false }
+      );
+    }
+
+    // Deactivate missing base services
+    await adminservices.updateMany(
+      { dealer_id: dealerId, base_service_id: { $nin: Object.keys(baseMap) } },
+      { $set: { isActive: false } }
+    );
+
+    // Process Additional Services
+    if (typeof additionalService !== 'undefined') {
+      for (const [addSvcId, bikes] of Object.entries(addlMap)) {
+        if (bikes.length === 0) continue;
+        await additionalService.findOneAndUpdate(
+          { dealer_id: dealerId, base_additional_service_id: addSvcId },
+          { $set: { bikes, isActive: true } },
+          { upsert: true, new: true, runValidators: false }
+        );
+      }
+      
+      // Deactivate missing additional services
+      await additionalService.updateMany(
+        { dealer_id: dealerId, base_additional_service_id: { $nin: Object.keys(addlMap) } },
+        { $set: { isActive: false } }
+      );
+    }
+
+    return res.status(200).json({ status: true, message: "Dealer services saved successfully" });
+  } catch (error) {
+    console.error("Error saving dealer services:", error);
+    return res.status(500).json({ status: false, message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   servicelist,
   singleService,
@@ -1273,5 +1343,6 @@ module.exports = {
   updateAdminService,
   deleteAdminService,
   getDealerServices,
+  saveDealerServices,
   getAdminServicesByDealer,
 }

@@ -39,7 +39,17 @@ const AutoIncrement = require("mongoose-sequence")(mongoose);
 
 const BikePriceSchema = new mongoose.Schema(
   {
-    cc: { type: Number, required: true, min: 1 },
+    model_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BikeModel",
+      required: false,
+    },
+    variant_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BikeVariant",
+      required: false,
+    },
+    cc: { type: Number, required: true },
     price: { type: Number, required: true, min: 0 },
   },
   { _id: false }

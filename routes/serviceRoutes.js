@@ -20,7 +20,6 @@ var {
   getAdminServiceById,
   updateAdminService,
   deleteAdminService,
-  getDealerServices,
 } = require("../controller/service")
 
 var {
@@ -52,11 +51,6 @@ router.put("/updateservice", dealerServiceUpload.fields([{ name: "service_image"
 
 router.delete("/deleteService", deleteService)
 router.get("/service/:id", singleService)
-
-/* =====================================================
-   NEW: DEALER SERVICES (Read-Only) - MUST BE BEFORE :dealer_id
-===================================================== */
-router.get("/dealer/services", getDealerServices)
 
 /* =====================================================
    DEALER SERVICES BY ID

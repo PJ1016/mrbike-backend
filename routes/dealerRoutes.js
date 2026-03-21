@@ -27,9 +27,14 @@ var {
   setDealerOnline,
   getActiveDealers,
 } = require("../controller/dealer")
+const { getDealerServices, saveDealerServices } = require("../controller/service")
 const { log } = require("console")
 
 const router = express.Router()
+
+// Dealer Services
+router.get("/services", getDealerServices)
+router.post("/services", saveDealerServices)
 
 const upload = createS3Upload("dealer-documents")
 
