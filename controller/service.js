@@ -1360,14 +1360,25 @@ async function saveDealerServices(req, res) {
     // Process Base Services (AdminService model)
     for (const [baseSvcId, bikes] of Object.entries(baseMap)) {
       if (bikes.length === 0) continue;
-      await adminservices.findOneAndUpdate(
-        { dealer_id: dealerId, base_service_id: baseSvcId },
-        { 
-          $set: { bikes, isActive: true },
-          $setOnInsert: { companies: [] }
-        },
-        { upsert: true, new: true, runValidators: false }
-      );
+      
+      const existing = await adminservices.findOne({ 
+        dealer_id: dealerId, 
+        base_service_id: baseSvcId 
+      });
+
+      if (existing) {
+        existing.bikes = bikes;
+        existing.isActive = true;
+        await existing.save();
+      } else {
+        await adminservices.create({
+          dealer_id: dealerId,
+          base_service_id: baseSvcId,
+          bikes,
+          isActive: true,
+          companies: [] // Required field
+        });
+      }
     }
 
     // Deactivate missing base services
@@ -1380,11 +1391,24 @@ async function saveDealerServices(req, res) {
     if (typeof additionalService !== 'undefined') {
       for (const [addSvcId, bikes] of Object.entries(addlMap)) {
         if (bikes.length === 0) continue;
-        await additionalService.findOneAndUpdate(
-          { dealer_id: dealerId, base_additional_service_id: addSvcId },
-          { $set: { bikes, isActive: true } },
-          { upsert: true, new: true, runValidators: false }
-        );
+
+        const existing = await additionalService.findOne({ 
+          dealer_id: dealerId, 
+          base_additional_service_id: addSvcId 
+        });
+
+        if (existing) {
+          existing.bikes = bikes;
+          existing.isActive = true;
+          await existing.save();
+        } else {
+          await additionalService.create({
+            dealer_id: dealerId,
+            base_additional_service_id: addSvcId,
+            bikes,
+            isActive: true
+          });
+        }
       }
       
       // Deactivate missing additional services
