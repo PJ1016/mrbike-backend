@@ -307,7 +307,9 @@ async function editDealer(req, res) {
       email,
       phone,
       shopPincode,
-      fullAddress,
+      shopNumber,
+      locality,
+      fullAddress: fullAddressInput,
       city,
       state,
       latitude,
@@ -397,7 +399,32 @@ async function editDealer(req, res) {
     if (email) updateData.email = email;
     if (phone) updateData.phone = phone;
     if (alternatePhone) updateData.alternatePhone = alternatePhone;
-    // ... add all other text fields similarly
+    if (shopPincode) updateData.shopPincode = shopPincode;
+    if (city) updateData.city = city;
+    if (state) updateData.state = state;
+    if (ownerName) updateData.ownerName = ownerName;
+    if (aadharCardNo) updateData.aadharCardNo = aadharCardNo;
+    if (panCardNo) updateData.panCardNo = panCardNo;
+    if (latitude) updateData.latitude = parseFloat(latitude);
+    if (longitude) updateData.longitude = parseFloat(longitude);
+    if (tax) updateData.tax = taxValue;
+    if (commissionInput) updateData.commission = commission;
+
+    // Granular address parts
+    const newShopNumber = shopNumber !== undefined ? shopNumber : existingDealer.shopNumber;
+    const newLocality = locality !== undefined ? locality : existingDealer.locality;
+    const newCity = city || existingDealer.city;
+    const newState = state || existingDealer.state;
+    const newPincode = shopPincode || existingDealer.shopPincode;
+
+    if (shopNumber !== undefined) updateData.shopNumber = shopNumber;
+    if (locality !== undefined) updateData.locality = locality;
+
+    // Always recalculate fullAddress when any address part changes
+    if (shopNumber !== undefined || locality !== undefined || city || state || shopPincode) {
+      const parts = [newShopNumber, newLocality, newCity, newState ? `${newState} - ${newPincode}` : newPincode].filter(Boolean);
+      updateData.fullAddress = parts.join(", ");
+    }
 
     // Bank details
     if (accountHolderName || ifscCode || bankName || accountNumber) {
