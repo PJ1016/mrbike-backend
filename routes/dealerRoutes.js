@@ -62,15 +62,6 @@ router.post(
         latitude,
         longitude,
         ownerName,
-        personalEmail,
-        personalPhone,
-        alternatePhone,
-        permanentAddress,
-        permanentState,
-        permanentCity,
-        presentAddress,
-        presentState,
-        presentCity,
         accountHolderName,
         ifscCode,
         bankName,
@@ -180,19 +171,6 @@ router.post(
         latitude: Number.parseFloat(latitude),
         longitude: Number.parseFloat(longitude),
         ownerName,
-        personalEmail: personalEmail.trim().toLowerCase(),
-        personalPhone,
-        alternatePhone,
-        permanentAddress: {
-          address: permanentAddress,
-          state: permanentState,
-          city: permanentCity,
-        },
-        presentAddress: {
-          address: presentAddress,
-          state: presentState,
-          city: presentCity,
-        },
         bankDetails: {
           accountHolderName,
           ifscCode,
@@ -364,9 +342,6 @@ router.put(
         "latitude",
         "longitude",
         "ownerName",
-        "personalEmail",
-        "personalPhone",
-        "alternatePhone",
         "aadharCardNo",
         "panCardNo",
         "gstNumber",
@@ -384,19 +359,6 @@ router.put(
       }
       if (req.body.tax !== undefined) {
         updateData.tax = req.body.tax === "" ? null : Number.parseFloat(req.body.tax)
-      }
-
-      // Handle addresses
-      if (
-        req.body.permanentAddress !== undefined ||
-        req.body.permanentState !== undefined ||
-        req.body.permanentCity !== undefined
-      ) {
-        updateData.permanentAddress = {
-          address: req.body.permanentAddress || existingDealer.permanentAddress.address,
-          state: req.body.permanentState || existingDealer.permanentAddress.state,
-          city: req.body.permanentCity || existingDealer.permanentAddress.city,
-        }
       }
 
       // Handle bank details

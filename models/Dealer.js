@@ -222,19 +222,19 @@ const DealerSchema = new mongoose.Schema({
 
   shopImages: [{ type: String }],
 
-  personalEmail: { type: String, required: true },
-  personalPhone: { type: String, required: true },
-  alternatePhone: { type: String, required: true },
+  personalEmail: { type: String, required: false },
+  personalPhone: { type: String, required: false },
+  alternatePhone: { type: String, required: false },
 
   permanentAddress: {
-    address: { type: String, required: true },
-    state: { type: String, required: true },
-    city: { type: String, required: true }
+    address: { type: String, required: false },
+    state: { type: String, required: false },
+    city: { type: String, required: false }
   },
   presentAddress: {
-    address: { type: String, required: true },
-    state: { type: String, required: true },
-    city: { type: String, required: true }
+    address: { type: String, required: false },
+    state: { type: String, required: false },
+    city: { type: String, required: false }
   },
 
   documents: {

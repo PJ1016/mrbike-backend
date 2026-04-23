@@ -313,14 +313,6 @@ async function editDealer(req, res) {
       latitude,
       longitude,
       ownerName,
-      personalEmail,
-      personalPhone,
-      alternatePhone,
-      permanentAddress,
-      permanentState,
-      permanentCity,
-      presentAddress,
-      presentState,
       presentCity,
       accountHolderName,
       ifscCode,
@@ -404,15 +396,6 @@ async function editDealer(req, res) {
     if (email) updateData.email = email;
     if (phone) updateData.phone = phone;
     // ... add all other text fields similarly
-
-    // Address fields
-    if (permanentAddress || permanentState || permanentCity) {
-      updateData.permanentAddress = {
-        address: permanentAddress || existingDealer.permanentAddress.address,
-        state: permanentState || existingDealer.permanentAddress.state,
-        city: permanentCity || existingDealer.permanentAddress.city
-      };
-    }
 
     // Bank details
     if (accountHolderName || ifscCode || bankName || accountNumber) {
