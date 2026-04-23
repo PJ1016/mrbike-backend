@@ -209,7 +209,7 @@ const DealerSchema = new mongoose.Schema({
     }
   },
   phone: { type: String, required: true },
-  password: { type: String, required: true },
+  password: { type: String, required: false },
   aadharCardNo: { type: Number, required: false },
   shopPincode: { type: String, required: true },
   fullAddress: { type: String, required: true },
