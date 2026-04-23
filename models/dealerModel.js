@@ -59,6 +59,8 @@ const dealerModel = new mongoose.Schema(
         message: (props) => `${props.value} is not a valid PAN number!`,
       },
     },
+    shopNumber: { type: String, required: false },
+    locality: { type: String, required: false },
     shopPincode: { type: String, required: false },
     fullAddress: { type: String, required: false },
     city: { type: String, required: false },

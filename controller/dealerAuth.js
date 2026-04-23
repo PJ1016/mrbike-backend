@@ -2109,6 +2109,8 @@ async function updateLocationInfo(req, res) {
     const { id } = req.params;
     const {
       address,
+      shopNumber,
+      locality,
       city,
       state,
       pincode,
@@ -2118,10 +2120,10 @@ async function updateLocationInfo(req, res) {
     } = req.body;
 
     // Validate required fields
-    if (!address || !city || !state || !pincode) {
+    if (!city || !state || !pincode) {
       return res.status(400).json({
         success: false,
-        message: "Address, city, state, and pincode are required",
+        message: "City, state, and pincode are required",
       });
     }
 
@@ -2132,27 +2134,38 @@ async function updateLocationInfo(req, res) {
       });
     }
 
+    // Build full address from granular fields or fall back to provided address string
+    const builtAddress = [shopNumber, locality, city, state ? `${state} - ${pincode}` : pincode]
+      .filter(Boolean)
+      .join(", ") || address;
+
     const updateData = {
       latitude,
       longitude,
+      // Granular address fields
+      shopNumber: shopNumber || null,
+      locality: locality || null,
+      city,
+      state,
+      shopPincode: pincode,
+      fullAddress: builtAddress,
       "formProgress.completedSteps.locationInfo": true,
       "completionTimestamps.locationInfo": new Date(),
       updatedAt: new Date(),
     };
 
+    // Also maintain legacy address blocks for backward compatibility
     if (isPermanentAddress) {
-      updateData.permanentAddress = { address, city, state };
-      updateData.shopPincode = pincode;
+      updateData.permanentAddress = { address: address || builtAddress, city, state };
     } else {
-      updateData.presentAddress = { address, city, state };
-      updateData.shopPincode = pincode;
+      updateData.presentAddress = { address: address || builtAddress, city, state };
     }
 
     const updatedVendor = await Vendor.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     }).select(
-      "presentAddress permanentAddress shopPincode latitude longitude formProgress completionTimestamps",
+      "shopNumber locality city state shopPincode fullAddress presentAddress permanentAddress latitude longitude formProgress completionTimestamps",
     );
 
     if (!updatedVendor) {
@@ -2166,10 +2179,12 @@ async function updateLocationInfo(req, res) {
       success: true,
       message: "Location info updated successfully",
       data: {
-        address: isPermanentAddress
-          ? updatedVendor.permanentAddress
-          : updatedVendor.presentAddress,
+        shopNumber: updatedVendor.shopNumber,
+        locality: updatedVendor.locality,
+        city: updatedVendor.city,
+        state: updatedVendor.state,
         pincode: updatedVendor.shopPincode,
+        fullAddress: updatedVendor.fullAddress,
         coordinates: {
           latitude: updatedVendor.latitude,
           longitude: updatedVendor.longitude,
@@ -2183,7 +2198,6 @@ async function updateLocationInfo(req, res) {
   } catch (error) {
     console.error("Location update error:", error);
 
-    // Handle specific MongoDB errors
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,

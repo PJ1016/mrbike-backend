@@ -360,6 +360,28 @@ router.put(
         }
       })
 
+      // Auto-sync fullAddress if address components are updated
+      const addressComponentsChanged = ["shopNumber", "locality", "city", "state", "shopPincode"].some(
+        (field) => req.body[field] !== undefined
+      )
+      
+      if (addressComponentsChanged) {
+        const addr = {
+          shopNumber: req.body.shopNumber !== undefined ? req.body.shopNumber : existingDealer.shopNumber,
+          locality: req.body.locality !== undefined ? req.body.locality : existingDealer.locality,
+          city: req.body.city !== undefined ? req.body.city : existingDealer.city,
+          state: req.body.state !== undefined ? req.body.state : existingDealer.state,
+          shopPincode: req.body.shopPincode !== undefined ? req.body.shopPincode : existingDealer.shopPincode,
+        }
+        
+        updateData.fullAddress = [
+          addr.shopNumber,
+          addr.locality,
+          addr.city,
+          addr.state ? `${addr.state} - ${addr.shopPincode}` : addr.shopPincode
+        ].filter(Boolean).join(", ")
+      }
+
       // Handle numeric fields
       if (req.body.comission !== undefined) {
         updateData.commission = Number.parseFloat(req.body.comission)
