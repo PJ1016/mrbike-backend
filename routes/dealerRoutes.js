@@ -62,6 +62,7 @@ router.post(
         latitude,
         longitude,
         ownerName,
+        alternatePhone,
         accountHolderName,
         ifscCode,
         bankName,
@@ -171,6 +172,7 @@ router.post(
         latitude: Number.parseFloat(latitude),
         longitude: Number.parseFloat(longitude),
         ownerName,
+        alternatePhone,
         bankDetails: {
           accountHolderName,
           ifscCode,
@@ -342,6 +344,7 @@ router.put(
         "latitude",
         "longitude",
         "ownerName",
+        "alternatePhone",
         "aadharCardNo",
         "panCardNo",
         "gstNumber",

@@ -313,6 +313,7 @@ async function editDealer(req, res) {
       latitude,
       longitude,
       ownerName,
+      alternatePhone,
       presentCity,
       accountHolderName,
       ifscCode,
@@ -395,6 +396,7 @@ async function editDealer(req, res) {
     if (shopName) updateData.shopName = shopName;
     if (email) updateData.email = email;
     if (phone) updateData.phone = phone;
+    if (alternatePhone) updateData.alternatePhone = alternatePhone;
     // ... add all other text fields similarly
 
     // Bank details
