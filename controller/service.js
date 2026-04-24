@@ -8,6 +8,7 @@ const BaseAdditionalService = require("../models/baseAdditionalServiceSchema")
 const BikeVariant = require("../models/bikeVariantModel")
 const BikeModel = require("../models/bikeModel")
 const BikeCompany = require("../models/bikeCompanyModel")
+const { cache, CacheKeys } = require("../utils/cache")
 
 async function servicelist(req, res) {
   try {
@@ -99,9 +100,7 @@ async function deleteService(req, res) {
 }
 
 /**
- * UPDATED: Fetch admin services for a specific dealer
- * Now queries adminservices model where dealer_id is in the dealers array
- * GET /service/dealer/:dealer_id
+ * OPTIMIZED: Fast service fetch with caching and selective population
  */
 async function getServicesByDealer(req, res) {
   try {
@@ -114,29 +113,40 @@ async function getServicesByDealer(req, res) {
       })
     }
 
-    console.log("[v0] Fetching admin services for dealer:", dealer_id)
-
-    // Query adminservices where this dealer is in the dealers array
-    const services = await adminservices
-      .find({
-        dealers: dealer_id,
-        isActive: { $ne: false },
+    // Check cache first
+    const cacheKey = CacheKeys.servicesByDealer(dealer_id)
+    const cachedData = cache.get(cacheKey)
+    if (cachedData) {
+      return res.status(200).send({
+        status: 200,
+        message: cachedData.length > 0 ? "Success (cached)" : "No services found for this dealer",
+        data: cachedData,
       })
+    }
+
+    // OPTIMIZED: Use lean() and selective population
+    const services = await adminservices
+      .find(
+        {
+          dealers: dealer_id,
+          isActive: { $ne: false },
+        },
+        {
+          _id: 1,
+          serviceId: 1,
+          base_service_id: 1,
+          companies: 1,
+          bikes: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      )
       .populate("base_service_id", "name image")
       .populate("companies", "name")
-      .populate({
-        path: "bikes.model_id",
-        select: "model_name",
-      })
-      .populate({
-        path: "bikes.variant_id",
-        select: "variant_name",
-      })
+      .lean()
       .sort({ createdAt: -1 })
+      .limit(50) // Add pagination
 
-    console.log("[v0] Found services:", services.length)
-
-    // Format response with service details and pricing
     const formattedServices = services.map((service) => ({
       _id: service._id,
       serviceId: service.serviceId || null,
@@ -148,12 +158,12 @@ async function getServicesByDealer(req, res) {
       updatedAt: service.updatedAt,
     }))
 
+    // Cache the result
+    cache.set(cacheKey, formattedServices, 3 * 60 * 1000) // 3 minutes
+
     return res.status(200).send({
       status: 200,
-      message:
-        formattedServices.length > 0
-          ? "Success"
-          : "No services found for this dealer",
+      message: formattedServices.length > 0 ? "Success" : "No services found for this dealer",
       data: formattedServices,
     })
   } catch (error) {
@@ -364,27 +374,66 @@ async function listAdminServices(req, res) {
 }
 
 /**
- * REFACTORED: getAdminServiceById - now populates base_service_id
+ * OPTIMIZED: Fast admin service by ID with caching
  */
 async function getAdminServiceById(req, res) {
   try {
     const { id } = req.params
 
-    const service = await adminservices
-      .findById(id)
-      .populate("base_service_id", "name image")
-      .populate("companies", "name")
-      .populate("dealer_id", "shopName id")
-      .populate({
-        path: "bikes.model_id",
-        select: "model_name",
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({
+        status: false,
+        message: "Valid service ID is required",
       })
-      .populate({
-        path: "bikes.variant_id",
-        select: "variant_name",
-      })
+    }
 
-    if (!service) {
+    // OPTIMIZED: Use aggregation for better performance
+    const serviceData = await adminservices.aggregate([
+      { $match: { _id: new mongoose.Types.ObjectId(id) } },
+      {
+        $lookup: {
+          from: "baseservices",
+          localField: "base_service_id",
+          foreignField: "_id",
+          as: "base_service",
+          pipeline: [{ $project: { name: 1, image: 1 } }]
+        }
+      },
+      {
+        $lookup: {
+          from: "bikecompanies",
+          localField: "companies",
+          foreignField: "_id",
+          as: "company_details",
+          pipeline: [{ $project: { name: 1 } }]
+        }
+      },
+      {
+        $lookup: {
+          from: "vendors",
+          localField: "dealer_id",
+          foreignField: "_id",
+          as: "dealer",
+          pipeline: [{ $project: { shopName: 1, id: 1 } }]
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          serviceId: 1,
+          base_service_id: { $arrayElemAt: ["$base_service", 0] },
+          companies: "$company_details",
+          dealer_id: { $arrayElemAt: ["$dealer", 0] },
+          bikes: 1,
+          description: 1,
+          isActive: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    ])
+
+    if (!serviceData.length) {
       return res.status(404).json({
         status: false,
         message: "Admin service not found",
@@ -394,7 +443,7 @@ async function getAdminServiceById(req, res) {
     return res.status(200).json({
       status: true,
       message: "Admin service fetched successfully",
-      data: service,
+      data: serviceData[0],
     })
   } catch (error) {
     console.error("Error fetching admin service by id:", error)

@@ -8,6 +8,7 @@ const BikeVariant = require("../models/bikeVariantModel")
 const BikeModel = require("../models/bikeModel")
 const BikeCompany = require("../models/bikeCompanyModel")
 const AdminService  = require("../models/adminService")
+const { cache, CacheKeys } = require("../utils/cache")
 
 async function checkPermission(user_id, requiredPermission) {
   try {
@@ -660,11 +661,12 @@ async function getCcByCompany(req, res) {
   }
 }
 
+/**
+ * OPTIMIZED: Fast bike details by company with caching and indexing
+ */
 async function getBikeDetailsByCompany(req, res) {
   try {
     const { companyIds } = req.query
-
-    console.log("[getBikeDetailsByCompany] Received companyIds:", companyIds)
 
     if (!companyIds) {
       return res.status(400).json({
@@ -674,13 +676,22 @@ async function getBikeDetailsByCompany(req, res) {
       })
     }
 
+    // Check cache first
+    const cacheKey = CacheKeys.bikesByCompany(companyIds)
+    const cachedData = cache.get(cacheKey)
+    if (cachedData) {
+      return res.status(200).json({
+        status: 200,
+        message: "Bike details fetched successfully (cached)",
+        data: cachedData,
+      })
+    }
+
     const idArray = companyIds
       .split(",")
       .map(id => id.trim())
       .filter(id => mongoose.Types.ObjectId.isValid(id))
       .map(id => new mongoose.Types.ObjectId(id))
-
-    console.log("[getBikeDetailsByCompany] Valid company IDs:", idArray)
 
     if (!idArray.length) {
       return res.status(400).json({
@@ -690,7 +701,7 @@ async function getBikeDetailsByCompany(req, res) {
       })
     }
 
-    // Fetch bike details using aggregation
+    // OPTIMIZED: Single aggregation with proper indexing
     const bikeDetails = await BikeCompany.aggregate([
       { $match: { _id: { $in: idArray } } },
       {
@@ -699,6 +710,9 @@ async function getBikeDetailsByCompany(req, res) {
           localField: "_id",
           foreignField: "company_id",
           as: "models",
+          pipeline: [
+            { $project: { _id: 1, model_name: 1, company_id: 1 } }
+          ]
         },
       },
       { $unwind: { path: "$models", preserveNullAndEmptyArrays: false } },
@@ -708,6 +722,9 @@ async function getBikeDetailsByCompany(req, res) {
           localField: "models._id",
           foreignField: "model_id",
           as: "variants",
+          pipeline: [
+            { $project: { _id: 1, variant_name: 1, engine_cc: 1, model_id: 1 } }
+          ]
         },
       },
       { $unwind: { path: "$variants", preserveNullAndEmptyArrays: false } },
@@ -722,24 +739,21 @@ async function getBikeDetailsByCompany(req, res) {
           engine_cc: "$variants.engine_cc",
         },
       },
+      { $sort: { engine_cc: 1 } }
     ])
 
-    console.log("[getBikeDetailsByCompany] Raw bike details found:", bikeDetails.length)
+    const formattedData = bikeDetails.map(item => ({
+      company_id: item.company_id,
+      company_name: item.company_name,
+      model_id: item.model_id,
+      model_name: item.model_name,
+      variant_id: item.variant_id,
+      variant_name: item.variant_name,
+      engine_cc: Number(item.engine_cc),
+    }))
 
-    const formattedData = bikeDetails
-      .filter(item => item.model_id && item.variant_id && item.engine_cc)
-      .map(item => ({
-        company_id: item.company_id,
-        company_name: item.company_name,
-        model_id: item.model_id,
-        model_name: item.model_name,
-        variant_id: item.variant_id,
-        variant_name: item.variant_name,
-        engine_cc: Number(item.engine_cc),
-      }))
-      .sort((a, b) => a.engine_cc - b.engine_cc)
-
-    console.log("[getBikeDetailsByCompany] Formatted data count:", formattedData.length)
+    // Cache the result for 5 minutes
+    cache.set(cacheKey, formattedData, 5 * 60 * 1000)
 
     return res.status(200).json({
       status: 200,
