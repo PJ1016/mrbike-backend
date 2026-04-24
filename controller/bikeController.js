@@ -664,9 +664,8 @@ async function getBikeDetailsByCompany(req, res) {
   try {
     const { companyIds } = req.query
 
-    /* =========================
-       1. Validate companyIds
-    ========================== */
+    console.log("[getBikeDetailsByCompany] Received companyIds:", companyIds)
+
     if (!companyIds) {
       return res.status(400).json({
         status: 400,
@@ -681,6 +680,8 @@ async function getBikeDetailsByCompany(req, res) {
       .filter(id => mongoose.Types.ObjectId.isValid(id))
       .map(id => new mongoose.Types.ObjectId(id))
 
+    console.log("[getBikeDetailsByCompany] Valid company IDs:", idArray)
+
     if (!idArray.length) {
       return res.status(400).json({
         status: 400,
@@ -689,35 +690,9 @@ async function getBikeDetailsByCompany(req, res) {
       })
     }
 
-    /* =========================
-       2. Fetch already-added service bikes
-    ========================== */
-    const existingServices = await AdminService.find(
-      {},
-      { bikes: 1 }
-    ).lean()
-
-    const usedVariantKeys = new Set() // modelId_variantId
-    const usedCcOnly = new Set()      // cc fallback
-
-    existingServices.forEach(service => {
-      service.bikes.forEach(bike => {
-        if (bike.model_id && bike.variant_id) {
-          usedVariantKeys.add(
-            `${bike.model_id.toString()}_${bike.variant_id.toString()}`
-          )
-        } else if (bike.cc) {
-          usedCcOnly.add(Number(bike.cc))
-        }
-      })
-    })
-
-    /* =========================
-       3. Fetch bike details (Company → Model → Variant)
-    ========================== */
+    // Fetch bike details using aggregation
     const bikeDetails = await BikeCompany.aggregate([
       { $match: { _id: { $in: idArray } } },
-
       {
         $lookup: {
           from: "bikemodels",
@@ -726,8 +701,7 @@ async function getBikeDetailsByCompany(req, res) {
           as: "models",
         },
       },
-      { $unwind: { path: "$models", preserveNullAndEmptyArrays: true } },
-
+      { $unwind: { path: "$models", preserveNullAndEmptyArrays: false } },
       {
         $lookup: {
           from: "bikevariants",
@@ -736,8 +710,7 @@ async function getBikeDetailsByCompany(req, res) {
           as: "variants",
         },
       },
-      { $unwind: { path: "$variants", preserveNullAndEmptyArrays: true } },
-
+      { $unwind: { path: "$variants", preserveNullAndEmptyArrays: false } },
       {
         $project: {
           company_id: "$_id",
@@ -751,49 +724,27 @@ async function getBikeDetailsByCompany(req, res) {
       },
     ])
 
-    /* =========================
-       4. FILTER already-priced bikes
-    ========================== */
-    const filteredData = bikeDetails
-      .map(item => {
-        if (!item.model_id || !item.variant_id || !item.engine_cc) {
-          return null
-        }
+    console.log("[getBikeDetailsByCompany] Raw bike details found:", bikeDetails.length)
 
-        const modelId = item.model_id.toString()
-        const variantId = item.variant_id.toString()
-        const cc = Number(item.engine_cc)
-
-        const variantKey = `${modelId}_${variantId}`
-
-        // ❌ Exclude if already priced
-        if (
-          usedVariantKeys.has(variantKey) ||
-          usedCcOnly.has(cc)
-        ) {
-          return null
-        }
-
-        return {
-          company_id: item.company_id,
-          company_name: item.company_name,
-          model_id: item.model_id,
-          model_name: item.model_name,
-          variant_id: item.variant_id,
-          variant_name: item.variant_name,
-          engine_cc: cc,
-        }
-      })
-      .filter(Boolean)
+    const formattedData = bikeDetails
+      .filter(item => item.model_id && item.variant_id && item.engine_cc)
+      .map(item => ({
+        company_id: item.company_id,
+        company_name: item.company_name,
+        model_id: item.model_id,
+        model_name: item.model_name,
+        variant_id: item.variant_id,
+        variant_name: item.variant_name,
+        engine_cc: Number(item.engine_cc),
+      }))
       .sort((a, b) => a.engine_cc - b.engine_cc)
 
-    /* =========================
-       5. Response
-    ========================== */
+    console.log("[getBikeDetailsByCompany] Formatted data count:", formattedData.length)
+
     return res.status(200).json({
       status: 200,
       message: "Bike details fetched successfully",
-      data: filteredData,
+      data: formattedData,
     })
   } catch (error) {
     console.error("[getBikeDetailsByCompany] Error:", error)
