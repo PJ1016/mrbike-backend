@@ -264,6 +264,12 @@
 
 const express = require("express");
 const crypto = require("crypto");
+
+// Polyfill for Node.js < 19 to support Azure SDK's use of global crypto.randomUUID()
+if (!global.crypto) {
+  global.crypto = crypto;
+}
+
 const path = require("path");
 const http = require("http");
 const bodyParser = require("body-parser");
