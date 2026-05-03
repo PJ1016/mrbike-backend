@@ -110,6 +110,10 @@ const dealerModel = new mongoose.Schema(
       min: 0,
       max: 18,
     },
+    pickupCharges: {
+      type: Number,
+      default: 0,
+    },
     formProgress: {
       currentStep: { type: Number, default: 1 },
       completedSteps: {
