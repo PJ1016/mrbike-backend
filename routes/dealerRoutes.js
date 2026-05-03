@@ -28,6 +28,7 @@ var {
   getActiveDealers,
 } = require("../controller/dealer")
 const { getDealerServices, saveDealerServices } = require("../controller/service")
+const { processDealer } = require("../controller/dealerController")
 const { log } = require("console")
 
 const router = express.Router()
@@ -35,6 +36,9 @@ const router = express.Router()
 // Dealer Services
 router.get("/services", getDealerServices)
 router.post("/services", saveDealerServices)
+
+// Process dealer files
+router.post("/process", processDealer)
 
 const upload = createS3Upload("dealer-documents")
 
@@ -44,6 +48,8 @@ router.post(
     { name: "panCardFront", maxCount: 1 },
     { name: "aadharFront", maxCount: 1 },
     { name: "aadharBack", maxCount: 1 },
+    { name: "bankPassbook", maxCount: 1 },
+    { name: "faceImage", maxCount: 1 },
     { name: "shopImages", maxCount: 5 },
   ]),
   async function addDealer(req, res) {
@@ -157,9 +163,26 @@ router.post(
       }
 
       const documents = {}
+      // Add required documents
       Object.keys(requiredDocs).forEach((key) => {
         documents[key] = req.files[key][0].location
       })
+
+      // Add face image if provided
+      if (req.files?.faceImage?.[0]) {
+        documents.faceVerificationImage = req.files.faceImage[0].location
+      }
+
+      // Parse DOB
+      let parsedDob = null;
+      if (ownerName && req.body.dob) {
+        // Simple attempt to parse common formats
+        const dobStr = req.body.dob;
+        const d = new Date(dobStr);
+        if (!isNaN(d.getTime())) {
+          parsedDob = d;
+        }
+      }
 
       const dealerData = {
         shopName,
@@ -174,12 +197,14 @@ router.post(
         latitude: Number.parseFloat(latitude),
         longitude: Number.parseFloat(longitude),
         ownerName,
+        dob: parsedDob,
         alternatePhone,
         bankDetails: {
           accountHolderName,
           ifscCode,
           bankName,
           accountNumber,
+          passbookImage: req.files?.bankPassbook?.[0]?.location || null,
         },
         aadharCardNo: aadharCardNo.trim(),
         panCardNo: panCardNo.trim().toUpperCase(),
