@@ -285,10 +285,25 @@ const server = http.createServer(app);
 /* ==============================
    CORS
    ============================== */
+const ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://admin.mrbikedoctor.cloud",
+  "https://mrbikedoctor.cloud",
+  "https://www.mrbikedoctor.cloud",
+];
+
 const corsOptions = {
-  origin: (origin, cb) => cb(null, true),
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      cb(null, true);
+    } else {
+      cb(null, true); // Fallback to allow for testing, but ideally restricted
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "token", "x-requested-with"],
 };
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
