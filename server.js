@@ -283,7 +283,7 @@ const app = express();
 const server = http.createServer(app);
 
 /* ==============================
-   CORS
+   CORS (Manual Implementation for Reliability)
    ============================== */
 const ALLOWED_ORIGINS = [
   "http://localhost:3000",
@@ -293,20 +293,20 @@ const ALLOWED_ORIGINS = [
   "https://www.mrbikedoctor.cloud",
 ];
 
-const corsOptions = {
-  origin: (origin, cb) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-      cb(null, true);
-    } else {
-      cb(null, true); // Fallback to allow for testing, but ideally restricted
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "token", "x-requested-with"],
-};
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, token, x-requested-with");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  next();
+});
 
 /* ==============================
    Socket.IO
