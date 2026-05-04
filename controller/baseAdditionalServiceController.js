@@ -11,7 +11,7 @@ const mongoose = require("mongoose")
  */
 async function createBaseAdditionalService(req, res) {
   try {
-    const { name } = req.body
+    const { name, description } = req.body
 
     /* =========================
        1. Validate name
@@ -56,6 +56,7 @@ async function createBaseAdditionalService(req, res) {
     const newService = await BaseAdditionalService.create({
       name: name.trim(),
       image: req.file.location, // S3 URL
+      description: description ? description.trim() : "",
     })
 
     return res.status(201).json({
@@ -139,7 +140,7 @@ async function getBaseAdditionalServiceById(req, res) {
 async function updateBaseAdditionalService(req, res) {
   try {
     const { id } = req.params
-    const { name } = req.body
+    const { name, description } = req.body
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -172,6 +173,7 @@ async function updateBaseAdditionalService(req, res) {
 
     const updateData = {
       name: name.trim(),
+      description: description ? description.trim() : "",
     }
 
     if (req.file) {

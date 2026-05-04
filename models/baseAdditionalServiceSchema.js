@@ -18,6 +18,11 @@ const baseAdditionalServiceSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // Service description
+    description: {
+      type: String,
+      trim: true,
+    },
     isActive: {
       type: Boolean,
       default: true,
