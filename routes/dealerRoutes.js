@@ -27,7 +27,7 @@ var {
   setDealerOnline,
   getActiveDealers,
 } = require("../controller/dealer")
-const { getDealerServices, saveDealerServices, getDealerPickupCharges } = require("../controller/service")
+const { getDealerServices, saveDealerServices } = require("../controller/service")
 const { processDealer } = require("../controller/dealerController")
 const { log } = require("console")
 
@@ -36,7 +36,6 @@ const router = express.Router()
 // Dealer Services
 router.get("/services", getDealerServices)
 router.post("/services", saveDealerServices)
-router.get("/pickup-charges/:dealerId", getDealerPickupCharges)
 
 // Process dealer files
 router.post("/process", processDealer)

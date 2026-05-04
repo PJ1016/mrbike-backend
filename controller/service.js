@@ -679,29 +679,6 @@ async function deleteAdminService(req, res) {
  * NEW: Dealer Services (Read-Only)
  * GET /dealer/services
  */
-async function getDealerPickupCharges(req, res) {
-  try {
-    const { dealerId } = req.params;
-
-    if (!dealerId || !mongoose.Types.ObjectId.isValid(dealerId)) {
-      return res.status(400).json({ status: false, message: "Valid dealerId required" });
-    }
-
-    const dealer = await Dealer.findById(dealerId).select("pickupCharges");
-    
-    if (!dealer) {
-      return res.status(404).json({ status: false, message: "Dealer not found" });
-    }
-
-    return res.status(200).json({
-      status: true,
-      pickupCharges: dealer.pickupCharges || 0
-    });
-  } catch (error) {
-    console.error("Error fetching pickup charges:", error);
-    return res.status(500).json({ status: false, message: "Internal Server Error" });
-  }
-}
 
 async function getDealerServices(req, res) {
   try {
@@ -719,9 +696,6 @@ async function getDealerServices(req, res) {
     if (!dealer_id || !mongoose.Types.ObjectId.isValid(dealer_id)) {
       return res.status(400).json({ status: false, message: "Valid dealerId required" });
     }
-
-    const dealer = await Dealer.findById(dealer_id);
-    const pickupCharges = dealer?.pickupCharges || 0;
 
     // Fetch Base Services
     const baseServices = await adminservices.find({ dealer_id, isActive: true })
@@ -823,7 +797,6 @@ async function getDealerServices(req, res) {
       status: true,
       message: "Services fetched successfully",
       pricing: pricing,
-      pickupCharges: pickupCharges,
       companies: Array.from(uniqueCompanies.values())
     });
   } catch (error) {
@@ -1415,17 +1388,10 @@ async function updateServiceById(req, res) {
  */
 async function saveDealerServices(req, res) {
   try {
-    const { dealerId, pricing, pickupCharges } = req.body;
+    const { dealerId, pricing } = req.body;
     
     if (!dealerId || !Array.isArray(pricing)) {
       return res.status(400).json({ status: false, message: "Invalid payload" });
-    }
-
-    // Update pickup charges if provided
-    if (pickupCharges !== undefined) {
-      await Dealer.findByIdAndUpdate(dealerId, { 
-        pickupCharges: Number(pickupCharges) 
-      });
     }
 
     const baseMap = {};
@@ -1531,5 +1497,4 @@ module.exports = {
   getDealerServices,
   saveDealerServices,
   getAdminServicesByDealer,
-  getDealerPickupCharges,
 }
