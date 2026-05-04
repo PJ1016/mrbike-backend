@@ -289,30 +289,21 @@ const app = express();
 const server = http.createServer(app);
 
 /* ==============================
-   CORS (Manual Implementation for Reliability)
+   CORS
    ============================== */
-const ALLOWED_ORIGINS = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "https://admin.mrbikedoctor.cloud",
-  "https://mrbikedoctor.cloud",
-  "https://www.mrbikedoctor.cloud",
-];
+const corsOptions = {
+  origin: [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://admin.mrbikedoctor.cloud",
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization", "token"],
+  credentials: true,
+};
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, token, x-requested-with");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-  next();
-});
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 /* ==============================
    Socket.IO
