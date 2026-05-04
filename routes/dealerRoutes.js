@@ -79,6 +79,7 @@ router.post(
         tax,
         aadharCardNo,
         panCardNo,
+        pickupCharges,
       } = req.body
 
       // Debug log
@@ -211,6 +212,7 @@ router.post(
         panCardNo: panCardNo.trim().toUpperCase(),
         commission,
         tax: taxValue,
+        pickupCharges: pickupCharges ? Number.parseFloat(pickupCharges) : 0,
         documents,
         shopImages: req.files?.shopImages?.map((file) => file.location) || [],
         isVerify: false,
@@ -414,6 +416,9 @@ router.put(
       }
       if (req.body.tax !== undefined) {
         updateData.tax = req.body.tax === "" ? null : Number.parseFloat(req.body.tax)
+      }
+      if (req.body.pickupCharges !== undefined) {
+        updateData.pickupCharges = req.body.pickupCharges === "" ? 0 : Number.parseFloat(req.body.pickupCharges)
       }
 
       // Handle bank details
