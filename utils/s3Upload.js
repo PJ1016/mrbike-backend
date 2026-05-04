@@ -35,6 +35,9 @@ function createS3Upload(folder) {
       if (allowed.includes(ext)) cb(null, true);
       else cb(new Error(`Invalid file type. Allowed: ${allowed.join(", ")}`), false);
     },
+    limits: {
+      fileSize: 50 * 1024 * 1024, // 50MB
+    },
   });
 }
 
