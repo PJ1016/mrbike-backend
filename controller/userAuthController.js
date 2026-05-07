@@ -53,8 +53,11 @@ async function otpVerify(req, res) {
         user.device_token = device_token;
         await user.save({ validateModifiedOnly: true });
 
+        // Fallback for older users who might not have isProfile set but have a name
+        const hasProfile = user.isProfile || (user.first_name && user.first_name.trim().length > 0);
+
         const token = validation.generateUserToken(user._id, 'logged', 4);
-        return res.status(200).cookie("token", token, { expires: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), httpOnly: true }).json({ success: true, message: "OTP verified successfully", token, user_id: user._id, isProfile: user.isProfile });
+        return res.status(200).cookie("token", token, { expires: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), httpOnly: true }).json({ success: true, message: "OTP verified successfully", token, user_id: user._id, isProfile: hasProfile });
     } catch (error) {
         console.error("otpVerify error:", error);
         res.status(500).json({ success: false, message: error.message });
