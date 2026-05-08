@@ -486,12 +486,46 @@ const getuserbookings = async (req, res) => {
       });
     }
 
-    return res.status(200).json({
-      status: 200,
-      success: true,
-      data: userBookings,
-      meta: { total, page, limit, pages: Math.ceil(total / limit) }
-    });
+    // Fetch bill information for each booking
+    try {
+      const Bill = require("../models/billSchema");
+      const bookingIds = userBookings.map(b => b._id);
+      const bills = await Bill.find({ booking_id: { $in: bookingIds } }).lean();
+      
+      // Create a map of booking_id -> bill for quick lookup
+      const billMap = {};
+      bills.forEach(bill => {
+        billMap[bill.booking_id.toString()] = bill;
+      });
+
+      // Add bill information to each booking
+      const enrichedBookings = userBookings.map(b => {
+        const bill = billMap[b._id.toString()];
+        return {
+          ...b,
+          subtotal: bill?.subtotal || 0,
+          tax_amount: bill?.tax_amount || 0,
+          grandTotal: bill?.total_amount || 0,
+          pickupCharges: b.pickupCharges || 0,
+        };
+      });
+
+      return res.status(200).json({
+        status: 200,
+        success: true,
+        data: enrichedBookings,
+        meta: { total, page, limit, pages: Math.ceil(total / limit) }
+      });
+    } catch (billError) {
+      console.log("Error fetching bills, returning bookings without bill data:", billError.message);
+      // Return bookings without bill data if bill fetch fails
+      return res.status(200).json({
+        status: 200,
+        success: true,
+        data: userBookings,
+        meta: { total, page, limit, pages: Math.ceil(total / limit) }
+      });
+    }
 
   } catch (error) {
     console.error("Error fetching bookings:", error);
@@ -1078,9 +1112,23 @@ async function getBookingDetails(req, res) {
 
     console.log("Filtered services count:", filteredServices.length);
 
+    // Fetch bill information if it exists
+    let billData = null;
+    try {
+      const Bill = require("../models/billSchema");
+      billData = await Bill.findOne({ booking_id: bookingId });
+    } catch (err) {
+      console.log("Bill not found for booking:", bookingId);
+    }
+
     const result = {
       ...bookings.toObject(),
-      services: filteredServices.length > 0 ? filteredServices : bookings.services
+      services: filteredServices.length > 0 ? filteredServices : bookings.services,
+      // Add bill information to booking response
+      subtotal: billData?.subtotal || 0,
+      tax_amount: billData?.tax_amount || 0,
+      grandTotal: billData?.total_amount || 0,
+      pickupCharges: bookings.pickupCharges || 0,
     };
 
     res.status(200).json({ success: true, data: result });
