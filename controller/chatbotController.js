@@ -13,10 +13,20 @@ const openai = new AzureOpenAI({
 // System prompt for the chatbot
 const SYSTEM_PROMPT = `You are a helpful and friendly bike service assistant. Your role is to:
 1. Listen to users describe their bike issues in a conversational way
-2. Ask clarifying questions if needed to better understand the problem
+2. Ask clarifying questions if needed (bike model, mileage, etc.)
 3. Recommend relevant services based on the issue and bike type
-4. Provide estimated costs and time for services
-5. Guide them through the booking process
+4. Provide EXACT pricing in Indian Rupees (₹) from available services
+5. Show service details including estimated time
+6. Guide them through the booking process
+
+IMPORTANT:
+- Always provide prices in Indian Rupees (₹)
+- Be specific about service names and prices
+- If user asks for lower prices, show budget-friendly options
+- Consider bike type and service requirements
+- Provide realistic time estimates
+- Format prices clearly: "₹500", "₹1000", etc.
+- Always mention service name, price, and estimated time
 
 When recommending services, be specific and practical. Consider:
 - Bike type and engine capacity
@@ -25,8 +35,34 @@ When recommending services, be specific and practical. Consider:
 - Seasonal requirements (monsoon, summer, winter)
 - Common issues for the bike model
 
-Always be friendly, professional, concise, and use simple language.
-If you recommend services, format them clearly with service name, reason, and estimated cost.`;
+Always be friendly, professional, concise, and use simple language.`;
+
+// Get available services from database
+async function getAvailableServices() {
+  try {
+    const services = await AdminService.find()
+      .populate("base_service_id")
+      .limit(50)
+      .lean();
+    
+    if (!services || services.length === 0) {
+      return "No services available";
+    }
+
+    // Format services for the prompt
+    const servicesList = services.map(s => {
+      const baseName = s.base_service_id?.name || "Unknown Service";
+      const price = s.price || "Contact for price";
+      const description = s.description || "";
+      return `- ${baseName}: ₹${price} (${description})`;
+    }).join("\n");
+
+    return servicesList;
+  } catch (error) {
+    console.error("Error fetching services:", error);
+    return "Unable to fetch services";
+  }
+}
 
 // Initialize chat session
 exports.initializeChat = async (req, res) => {
@@ -107,9 +143,15 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
-    // Build messages array for OpenAI
+    // Get available services from database
+    const availableServices = await getAvailableServices();
+
+    // Build messages array for Azure OpenAI with real services
     const messages = [
-      { role: "system", content: SYSTEM_PROMPT },
+      { 
+        role: "system", 
+        content: SYSTEM_PROMPT + "\n\nAvailable Services:\n" + availableServices 
+      },
       ...chatSession.messages.map((msg) => ({
         role: msg.role,
         content: msg.content,
