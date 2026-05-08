@@ -85,89 +85,6 @@ exports.createBooking = async (req, res) => {
   }
 };
 
-    if (!userId) {
-      return res.status(401).json({
-        status: false,
-        message: "Invalid token",
-      });
-    }
-
-    // Fetch service details to calculate pricing
-    const AdminService = require("../../models/adminService");
-    const serviceDocs = await AdminService.find({ _id: { $in: services } });
-
-    if (serviceDocs.length === 0) {
-      return res.status(400).json({
-        status: false,
-        message: "No valid services found",
-      });
-    }
-
-    // Calculate totals
-    let subtotal = 0;
-    const items = serviceDocs.map((svc) => {
-      subtotal += svc.price || 0;
-      return {
-        serviceId: svc._id,
-        serviceName: svc.serviceName || svc.name,
-        bikeName: "Bike", // You might want to fetch this from userBike_id
-        price: svc.price || 0,
-      };
-    });
-
-    const tax = Math.round(subtotal * 0.05); // 5% tax
-    const grandTotal = subtotal + tax;
-
-    // Generate OTP
-    const otp = String(Math.floor(1000 + Math.random() * 9000));
-
-    // Create booking with transformed payload
-    const booking = new BookingV2({
-      userId,
-      dealerId: dealer_id,
-      items,
-      logistics: {
-        mode: pickupAddress ? "pickup" : "self-drop",
-        pickupCharges: pickupAddress ? 100 : 0, // Example: 100 for pickup
-        address: pickupAddress || "",
-      },
-      schedule: {
-        date: scheduleDate,
-        timeSlot: timeSlot,
-      },
-      totals: {
-        subtotal,
-        tax,
-        grandTotal,
-      },
-      otp,
-    });
-
-    await booking.save();
-
-    console.log("Booking created:", booking.bookingId);
-
-    res.status(201).json({
-      status: true,
-      message: "Booking created successfully",
-      bookingId: booking.bookingId,
-      data: {
-        currentStatus: booking.status,
-        createdAt: booking.createdAt,
-      },
-      pickupOtp: otp,
-      deliveryOtp: otp,
-    });
-  } catch (error) {
-    console.error("Create Booking Error:", error);
-    res.status(400).json({
-      status: false,
-      message: "Invalid Payload",
-      error: error.message,
-    });
-  }
-};
-
 // 2. Get User Bookings
 exports.getUserBookings = async (req, res) => {
   try {
@@ -272,9 +189,6 @@ exports.updateBookingStatus = async (req, res) => {
       timelineEntry.time = new Date();
       timelineEntry.completed = true;
       if (comment) timelineEntry.comment = comment;
-    } else {
-        // If status is not in predefined timeline, add it or just update current status
-        // For simplicity, we assume predefined statuses are used
     }
 
     await booking.save();
