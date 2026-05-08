@@ -507,14 +507,19 @@ const getuserbookings = async (req, res) => {
         const grandTotal = bill?.total_amount || b.totalBill || 0;
         const subtotal = bill?.subtotal || b.totalBill || 0;
         
-        console.log(`Booking ${b.bookingId}:`, {
-          hasBill: !!bill,
-          billTotal: bill?.total_amount,
-          bookingTotalBill: b.totalBill,
-          finalGrandTotal: grandTotal,
-          services: b.services?.length || 0,
-          userBike: b.userBike_id?.bike_cc
-        });
+        console.log(`=== Booking ${b.bookingId} ===`);
+        console.log("Booking object keys:", Object.keys(b));
+        console.log("totalBill:", b.totalBill);
+        console.log("pickupCharges:", b.pickupCharges);
+        console.log("services count:", b.services?.length);
+        console.log("userBike_id:", b.userBike_id);
+        console.log("Bill found:", !!bill);
+        if (bill) {
+          console.log("Bill total_amount:", bill.total_amount);
+          console.log("Bill subtotal:", bill.subtotal);
+        }
+        console.log("Final grandTotal:", grandTotal);
+        console.log("---");
         
         return {
           ...b,
@@ -1031,17 +1036,32 @@ async function createBooking(req, res) {
     let totalBill = 0;
     try {
       const bikeData = await UserBike.findById(userBike_id);
+      console.log("=== Calculating totalBill ===");
+      console.log("Bike found:", !!bikeData);
       if (bikeData) {
+        console.log("Bike CC:", bikeData.bike_cc);
         const bikeCC = parseInt(bikeData.bike_cc || 0);
         const serviceDocs = await AdminService.find({ _id: { $in: services } });
+        console.log("Services found:", serviceDocs.length);
 
-        serviceDocs.forEach(svc => {
+        serviceDocs.forEach((svc, idx) => {
+          console.log(`Service ${idx}:`, {
+            name: svc.serviceName,
+            bikesCount: svc.bikes?.length || 0,
+            bikes: svc.bikes?.map(b => ({ cc: b.cc, price: b.price }))
+          });
+          
           const matchingBike = svc.bikes?.find(b => b.cc === bikeCC);
+          console.log(`Matching bike for CC ${bikeCC}:`, matchingBike);
+          
           if (matchingBike) {
             totalBill += matchingBike.price;
+            console.log(`Added ${matchingBike.price} to totalBill. New total: ${totalBill}`);
           }
         });
       }
+      console.log("Final totalBill:", totalBill);
+      console.log("---");
     } catch (priceError) {
       console.error("Error calculating initial bill:", priceError);
       // Fallback to 0 if calculation fails
