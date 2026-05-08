@@ -4,49 +4,86 @@ const Vendor = require("../../models/dealerModel");
 // 1. Create Booking
 exports.createBooking = async (req, res) => {
   try {
-    console.log("=== V2 Create Booking Request ===");
+    console.log("=== V2 Create Booking ===");
     console.log("Request body:", JSON.stringify(req.body, null, 2));
 
-    const {
-      dealer_id,
-      services,
-      additionalServices,
-      userBike_id,
-      scheduleDate,
-      timeSlot,
-      pickupDate,
-      pickupAddress,
-      pickupAndDropId,
-      estimated_cost,
-    } = req.body;
+    const { userId, dealerId, items, logistics, schedule, totals, otp } = req.body;
 
     // Validate required fields
-    if (!dealer_id || !services || services.length === 0) {
+    if (!dealerId) {
       return res.status(400).json({
         status: false,
         message: "Dealer and at least one service are required",
       });
     }
 
-    if (!userBike_id) {
+    if (!items || items.length === 0) {
       return res.status(400).json({
         status: false,
-        message: "User bike is required",
+        message: "Dealer and at least one service are required",
       });
     }
 
-    // Get user from token
-    const jwt_decode = require("jwt-decode");
-    const token = req.headers.token;
-    if (!token) {
-      return res.status(401).json({
+    if (!userId) {
+      return res.status(400).json({
         status: false,
-        message: "Authentication token required",
+        message: "User ID is required",
       });
     }
 
-    const decodedToken = jwt_decode(token);
-    const userId = decodedToken.user_id;
+    if (!schedule || !schedule.date || !schedule.timeSlot) {
+      return res.status(400).json({
+        status: false,
+        message: "Schedule date and time slot are required",
+      });
+    }
+
+    if (!totals || totals.grandTotal === undefined) {
+      return res.status(400).json({
+        status: false,
+        message: "Totals are required",
+      });
+    }
+
+    if (!otp) {
+      return res.status(400).json({
+        status: false,
+        message: "OTP is required",
+      });
+    }
+
+    const booking = new BookingV2({
+      userId,
+      dealerId,
+      items,
+      logistics: logistics || { mode: "self-drop", pickupCharges: 0 },
+      schedule,
+      totals,
+      otp,
+    });
+
+    await booking.save();
+
+    console.log("Booking created successfully:", booking.bookingId);
+
+    res.status(201).json({
+      status: true,
+      message: "Booking created successfully",
+      bookingId: booking.bookingId,
+      data: {
+        currentStatus: booking.status,
+        createdAt: booking.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error("Create Booking Error:", error);
+    res.status(400).json({
+      status: false,
+      message: "Invalid Payload",
+      error: error.message,
+    });
+  }
+};
 
     if (!userId) {
       return res.status(401).json({
