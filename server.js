@@ -289,16 +289,16 @@ const app = express();
 const server = http.createServer(app);
 
 /* ==============================
-   CORS
+   CORS - Allow All Origins for Development
    ============================== */
 const corsOptions = {
-  origin: [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://admin.mrbikedoctor.cloud"
-  ],
+  origin: function (origin, callback) {
+    // Allow all origins for development
+    callback(null, true);
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization", "token"],
 };
 
 app.use(cors(corsOptions));

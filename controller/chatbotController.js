@@ -6,9 +6,8 @@ const jwt_decode = require("jwt-decode");
 
 const openai = new AzureOpenAI({
   apiKey: process.env.AZURE_OPENAI_API_KEY,
-  baseURL: process.env.AZURE_OPENAI_ENDPOINT,
-  defaultQuery: { "api-version": "2024-02-15-preview" },
-  defaultHeaders: { "api-key": process.env.AZURE_OPENAI_API_KEY },
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+  apiVersion: process.env.OPENAI_API_VERSION || "2024-02-15-preview",
 });
 
 // System prompt for the chatbot
@@ -154,6 +153,13 @@ exports.sendMessage = async (req, res) => {
     });
   } catch (error) {
     console.error("Error sending message:", error);
+    console.error("Error details:", {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      type: error.type,
+      response: error.response?.data,
+    });
     res.status(500).json({
       status: 500,
       message: "Failed to process message",
