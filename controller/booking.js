@@ -486,7 +486,7 @@ const getuserbookings = async (req, res) => {
       });
     }
 
-    // Fetch bill information for each booking
+    // Fetch bill information for each booking (optional - for additional details)
     try {
       const Bill = require("../models/billSchema");
       const bookingIds = userBookings.map(b => b._id);
@@ -498,17 +498,30 @@ const getuserbookings = async (req, res) => {
         billMap[bill.booking_id.toString()] = bill;
       });
 
-      // Add bill information to each booking
+      // Add pricing information to each booking
+      // Priority: Bill data > Booking totalBill > 0
       const enrichedBookings = userBookings.map(b => {
         const bill = billMap[b._id.toString()];
+        
+        // Use bill data if available, otherwise use booking's totalBill
+        const grandTotal = bill?.total_amount || b.totalBill || 0;
+        const subtotal = bill?.subtotal || b.totalBill || 0;
+        
         return {
           ...b,
-          subtotal: bill?.subtotal || 0,
+          subtotal: subtotal,
           tax_amount: bill?.tax_amount || 0,
-          grandTotal: bill?.total_amount || 0,
+          grandTotal: grandTotal,
           pickupCharges: b.pickupCharges || 0,
         };
       });
+
+      console.log("Enriched bookings with pricing:", enrichedBookings.map(b => ({ 
+        bookingId: b.bookingId, 
+        grandTotal: b.grandTotal,
+        totalBill: b.totalBill,
+        hasBill: !!billMap[b._id.toString()]
+      })));
 
       return res.status(200).json({
         status: 200,
@@ -517,12 +530,21 @@ const getuserbookings = async (req, res) => {
         meta: { total, page, limit, pages: Math.ceil(total / limit) }
       });
     } catch (billError) {
-      console.log("Error fetching bills, returning bookings without bill data:", billError.message);
-      // Return bookings without bill data if bill fetch fails
+      console.log("Error fetching bills, using booking totalBill instead:", billError.message);
+      
+      // Fallback: Use booking's totalBill if bill fetch fails
+      const enrichedBookings = userBookings.map(b => ({
+        ...b,
+        subtotal: b.totalBill || 0,
+        tax_amount: 0,
+        grandTotal: b.totalBill || 0,
+        pickupCharges: b.pickupCharges || 0,
+      }));
+
       return res.status(200).json({
         status: 200,
         success: true,
-        data: userBookings,
+        data: enrichedBookings,
         meta: { total, page, limit, pages: Math.ceil(total / limit) }
       });
     }
@@ -1094,26 +1116,34 @@ async function getBookingDetails(req, res) {
 
     console.log("Booking status:", bookingData.status);
     console.log("Booking ID (custom):", bookingData.bookingId);
+    console.log("Booking totalBill:", bookingData.totalBill);
 
-    // Fetch bill information if it exists
+    // Fetch bill information if it exists (optional - for additional details)
     let billData = null;
     try {
       const Bill = require("../models/billSchema");
       billData = await Bill.findOne({ booking_id: bookingId });
       console.log("Bill found:", !!billData);
+      if (billData) {
+        console.log("Bill total_amount:", billData.total_amount);
+      }
     } catch (err) {
       console.log("Error fetching bill:", err.message);
     }
 
+    // Use bill data if available, otherwise use booking's totalBill
+    const grandTotal = billData?.total_amount || bookingData.totalBill || 0;
+    const subtotal = billData?.subtotal || bookingData.totalBill || 0;
+
     const result = {
       ...bookingData.toObject(),
-      subtotal: billData?.subtotal || 0,
+      subtotal: subtotal,
       tax_amount: billData?.tax_amount || 0,
-      grandTotal: billData?.total_amount || 0,
+      grandTotal: grandTotal,
       pickupCharges: bookingData.pickupCharges || 0,
     };
 
-    console.log("Returning booking details successfully");
+    console.log("Returning booking details with grandTotal:", grandTotal);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     console.error("Error in getBookingDetails:", error);
