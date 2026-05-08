@@ -23,6 +23,7 @@ const {
     updateBookings,
     sendOtpToMobile,
     verifyOtpForMobile,
+    cancelBooking,
     // updateBookingStatusDealer
 } = require("../controller/booking")
 
@@ -38,7 +39,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-/* POST users listing. */
 router.post('/addbooking/:id',addbooking)
 
 // By Prashant 
@@ -62,6 +62,7 @@ router.post('/addNote', addNoteToBooking);
 router.get('/getNotes/:bookingId', getNotesFromBooking);
 router.put('/updateNote', updateNoteInBooking);
 router.post('/deleteNote', deleteNoteFromBooking);
+router.post('/cancelBooking/:bookingId', cancelBooking);
 
 router.get("notification/:receiverId", getNotificationsByReceiverId);
 // router.put('/updateBookingStatus/:booking_id', updateBookingStatusDealer);

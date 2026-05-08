@@ -1951,6 +1951,74 @@ async function getallbookings(req, res) {
   }
 }
 
+// Cancel Booking - User can cancel pending bookings
+async function cancelBooking(req, res) {
+  try {
+    const { bookingId } = req.params;
+
+    if (!bookingId) {
+      return res.status(400).json({
+        status: 400,
+        message: "Booking ID is required"
+      });
+    }
+
+    // Find the booking
+    const bookingData = await booking.findById(bookingId);
+    if (!bookingData) {
+      return res.status(404).json({
+        status: 404,
+        message: "Booking not found"
+      });
+    }
+
+    // Check if booking is in pending status
+    if (bookingData.status !== "pending") {
+      return res.status(400).json({
+        status: 400,
+        message: `Cannot cancel booking with status: ${bookingData.status}. Only pending bookings can be cancelled.`
+      });
+    }
+
+    // Update booking status to cancelled
+    const updatedBooking = await booking.findByIdAndUpdate(
+      bookingId,
+      { $set: { status: "cancelled" } },
+      { new: true }
+    );
+
+    // Update tracking status if exists
+    await Tracking.updateOne(
+      { booking_id: bookingId },
+      { $set: { status: "cancelled" } }
+    );
+
+    // Send notification to user
+    const user = await customers.findById(bookingData.created_by);
+    if (user && (user.device_token || user.ftoken)) {
+      Notification(
+        user.device_token || user.ftoken,
+        `Your booking for ${bookingData.brand} ${bookingData.model} has been cancelled successfully`,
+        user.id
+      );
+    }
+
+    return res.status(200).json({
+      status: 200,
+      message: "Booking cancelled successfully",
+      data: updatedBooking
+    });
+
+  } catch (error) {
+    console.error("Error cancelling booking:", error);
+    return res.status(500).json({
+      status: 500,
+      message: "Internal Server Error",
+      error: error.message
+    });
+  }
+}
+
 module.exports = {
   addbooking,
   getallbookings,
@@ -1970,6 +2038,7 @@ module.exports = {
   updateNoteInBooking,
   deleteNoteFromBooking,
   sendOtpToMobile,
-  verifyOtpForMobile
+  verifyOtpForMobile,
+  cancelBooking
 }
 
