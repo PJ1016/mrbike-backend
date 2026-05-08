@@ -59,15 +59,52 @@ async function addbooking(req, res) {
 
     const customer = await customers.findById(user_id);
 
+    // Log the incoming request body
+    console.log("=== CREATE BOOKING REQUEST ===");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("User ID:", user_id);
+    console.log("Services array:", req.body.services);
+    console.log("Additional services:", req.body.additionalServices);
+    console.log("Estimated cost:", req.body.estimated_cost);
+    console.log("================================");
+
     // let services = await service.findById(req.params.id)
     // let services = await service.findById(req.params.id)
-    const servicelist = req.body.Servicelist;
+    const servicelist = req.body.services || req.body.Servicelist;
     const dealerIdToCheck = servicelist[0]?.dealerId;
 
 
     if (!servicelist.every(service => service.dealerId === dealerIdToCheck)) {
       return res.status(400).json({ message: 'All dealerId should be from the same dealer.' });
     }
+
+    // Fetch service details to calculate pricing
+    let totalServicePrice = 0;
+    let serviceDetails = [];
+    
+    if (servicelist && servicelist.length > 0) {
+      try {
+        // Fetch all services to get their pricing
+        const AdminService = require("../models/adminService");
+        const fetchedServices = await AdminService.find({ _id: { $in: servicelist } }).lean();
+        
+        console.log("Fetched services:", fetchedServices);
+        
+        totalServicePrice = fetchedServices.reduce((sum, svc) => {
+          console.log(`Service ${svc._id}: price = ${svc.price}`);
+          return sum + (svc.price || 0);
+        }, 0);
+        
+        serviceDetails = fetchedServices;
+        console.log("Total service price calculated:", totalServicePrice);
+      } catch (err) {
+        console.log("Error fetching service details:", err.message);
+      }
+    }
+
+    // Use calculated price or fallback to estimated_cost
+    const finalTotalBill = totalServicePrice > 0 ? totalServicePrice : (req.body.estimated_cost || 0);
+    console.log("Final total bill:", finalTotalBill);
 
 
     // const serviceIds = servicelist.map(service => service._id);
@@ -118,7 +155,7 @@ async function addbooking(req, res) {
             if (count == size) {
               const data = {
                 // service_id: services._id,
-                services: Servicelist,
+                services: servicelist,
                 bullet_points: bullet_points,
                 additonal_options: additonal_options,
                 model: bikes.model,
@@ -128,7 +165,7 @@ async function addbooking(req, res) {
                 city: city.toLowerCase(),
                 address: address,
                 description: description,
-                totalBill: estimated_cost,
+                totalBill: finalTotalBill,
                 created_by: user_id,
                 assigned_to: dealers[0].name,
                 assigned_toid: dealers[0].id,
@@ -190,7 +227,7 @@ async function addbooking(req, res) {
       } else {
         const data = {
           // service_id: services._id,
-          services: Servicelist,
+          services: servicelist,
           bullet_points: bullet_points,
           additonal_options: additonal_options,
           model: bikes.model,
@@ -200,7 +237,7 @@ async function addbooking(req, res) {
           city: city.toLowerCase(),
           address: address,
           description: description,
-          totalBill: estimated_cost,
+          totalBill: finalTotalBill,
           created_by: user_id,
           assigned_to: dealers[0].name,
           assigned_toid: dealers[0].id,
@@ -263,7 +300,7 @@ async function addbooking(req, res) {
     else {
       const data = {
         // service_id: services._id,
-        services: Servicelist,
+        services: servicelist,
         bullet_points: bullet_points,
         //additonal_options:additonal_options,
         model: bikes.model,
@@ -273,7 +310,7 @@ async function addbooking(req, res) {
         city: city.toLowerCase(),
         address: address,
         description: description,
-        estimated_cost: estimated_cost,
+        totalBill: finalTotalBill,
         created_by: user_id,
         assigned_to: dealers[0].name,
         assigned_toid: dealers[0].id,
