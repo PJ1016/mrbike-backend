@@ -118,6 +118,11 @@ const bookingSchema = new mongoose.Schema(
     additionalNotes: { type: [String], default: [] },
 
     pickupDate: { type: Date, default: null },
+
+    // Optional scheduling preferences
+    scheduleDate: { type: String, default: null },   // e.g. "2026-05-10"
+    timeSlot: { type: String, default: null },        // e.g. "10:00 AM - 12:00 PM"
+
     bookingId: { type: String, unique: true },
 
     create_date: { type: Date, default: Date.now },

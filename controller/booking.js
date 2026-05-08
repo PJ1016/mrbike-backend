@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 const booking = require("../models/Booking");
 const additionaloptions = require("../models/additionalOptionsModel");
 const AdditionalService = require("../models/additionalServiceSchema");
@@ -960,7 +960,7 @@ async function createBooking(req, res) {
     const data = jwt_decode(req.headers.token);
     const user_id = data.user_id;
 
-    const { dealer_id, services, pickupAndDropId, userBike_id, pickupDate } = req.body;
+    const { dealer_id, services, pickupAndDropId, userBike_id, pickupDate, scheduleDate, timeSlot } = req.body;
 
     if (!dealer_id || !services || services.length === 0) {
       return res.status(400).json({ success: false, message: "Dealer and at least one service are required" });
@@ -999,6 +999,8 @@ async function createBooking(req, res) {
       pickupAndDropId: pickupAndDropId || null,
       userBike_id,
       pickupDate: pickupDate || null,
+      scheduleDate: scheduleDate || null,
+      timeSlot: timeSlot || null,
       pickupOtp,
       deliveryOtp,
       totalBill,
