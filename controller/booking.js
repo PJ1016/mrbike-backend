@@ -1060,9 +1060,16 @@ async function getBookingDetails(req, res) {
   try {
     const bookingId = req.params.id;
 
+    if (!bookingId) {
+      return res.status(400).json({ success: false, message: "Booking ID is required" });
+    }
+
+    console.log("Fetching booking details for ID:", bookingId);
+
     // First, verify the booking exists without population
     const bookingExists = await booking.findById(bookingId);
     if (!bookingExists) {
+      console.log("Booking not found for ID:", bookingId);
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
@@ -1134,7 +1141,7 @@ async function getBookingDetails(req, res) {
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     console.error("Error in getBookingDetails:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Internal Server Error", error: error.message });
   }
 }
 
