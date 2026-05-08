@@ -676,10 +676,9 @@ async function deleteAdminService(req, res) {
 }
 
 /**
- * NEW: Dealer Services (Read-Only)
- * GET /dealer/services
+ * GET /dealer/services?dealerId=...
+ * Returns all services (base + additional) for a specific dealer with full pricing.
  */
-
 async function getDealerServices(req, res) {
   try {
     let dealer_id = req.query.dealerId;
@@ -1476,6 +1475,62 @@ async function saveDealerServices(req, res) {
   }
 }
 
+/**
+ * GET /bikedoctor/dealer/by-service/:baseServiceId
+ * Returns all active dealers that offer a specific base service.
+ * Used by the mobile app when a user taps a service category on the home screen.
+ */
+async function getDealersByService(req, res) {
+  try {
+    const { baseServiceId } = req.params;
+
+    if (!baseServiceId || !mongoose.Types.ObjectId.isValid(baseServiceId)) {
+      return res.status(400).json({
+        status: false,
+        message: "Valid baseServiceId is required",
+      });
+    }
+
+    // Find all active admin-service entries for this base service
+    const serviceEntries = await adminservices
+      .find({ base_service_id: baseServiceId, isActive: true })
+      .select("dealer_id")
+      .lean();
+
+    if (!serviceEntries.length) {
+      return res.status(200).json({
+        status: true,
+        message: "No dealers found for this service",
+        data: [],
+      });
+    }
+
+    // Unique dealer IDs
+    const dealerIds = [...new Set(serviceEntries.map((s) => String(s.dealer_id)))];
+
+    // Fetch those dealers (active, not blocked)
+    const dealers = await Dealer.find({
+      _id: { $in: dealerIds },
+      isBlock: { $ne: true },
+    })
+      .select(
+        "shopName shopContact permanentAddress city latitude longitude pickupCharges rating shopImages image"
+      )
+      .lean();
+
+    return res.status(200).json({
+      status: true,
+      message: dealers.length
+        ? "Dealers fetched successfully"
+        : "No active dealers found for this service",
+      data: dealers,
+    });
+  } catch (error) {
+    console.error("Error in getDealersByService:", error);
+    return res.status(500).json({ status: false, message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   servicelist,
   singleService,
@@ -1497,4 +1552,5 @@ module.exports = {
   getDealerServices,
   saveDealerServices,
   getAdminServicesByDealer,
+  getDealersByService,
 }

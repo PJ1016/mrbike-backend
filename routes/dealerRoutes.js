@@ -27,7 +27,7 @@ var {
   setDealerOnline,
   getActiveDealers,
 } = require("../controller/dealer")
-const { getDealerServices, saveDealerServices } = require("../controller/service")
+const { getDealerServices, saveDealerServices, getDealersByService } = require("../controller/service")
 const { processDealer } = require("../controller/dealerController")
 const { log } = require("console")
 
@@ -36,6 +36,9 @@ const router = express.Router()
 // Dealer Services
 router.get("/services", getDealerServices)
 router.post("/services", saveDealerServices)
+
+// Get all dealers offering a specific base service (used by mobile home screen categories)
+router.get("/by-service/:baseServiceId", getDealersByService)
 
 // Process dealer files
 router.post("/process", processDealer)
