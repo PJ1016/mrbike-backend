@@ -5,12 +5,20 @@ const Vendor = require("../../models/dealerModel");
 exports.createBooking = async (req, res) => {
   try {
     console.log("=== V2 Create Booking ===");
-    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Full request body:", JSON.stringify(req.body, null, 2));
+    console.log("Keys in request:", Object.keys(req.body));
+    console.log("userId:", req.body.userId);
+    console.log("dealerId:", req.body.dealerId);
+    console.log("items:", req.body.items);
+    console.log("schedule:", req.body.schedule);
+    console.log("totals:", req.body.totals);
+    console.log("otp:", req.body.otp);
 
     const { userId, dealerId, items, logistics, schedule, totals, otp } = req.body;
 
     // Validate required fields
     if (!dealerId) {
+      console.log("VALIDATION FAILED: dealerId is missing");
       return res.status(400).json({
         status: false,
         message: "Dealer and at least one service are required",
@@ -18,6 +26,7 @@ exports.createBooking = async (req, res) => {
     }
 
     if (!items || items.length === 0) {
+      console.log("VALIDATION FAILED: items is missing or empty");
       return res.status(400).json({
         status: false,
         message: "Dealer and at least one service are required",
@@ -25,6 +34,7 @@ exports.createBooking = async (req, res) => {
     }
 
     if (!userId) {
+      console.log("VALIDATION FAILED: userId is missing");
       return res.status(400).json({
         status: false,
         message: "User ID is required",
@@ -32,6 +42,7 @@ exports.createBooking = async (req, res) => {
     }
 
     if (!schedule || !schedule.date || !schedule.timeSlot) {
+      console.log("VALIDATION FAILED: schedule is missing or incomplete");
       return res.status(400).json({
         status: false,
         message: "Schedule date and time slot are required",
@@ -39,6 +50,7 @@ exports.createBooking = async (req, res) => {
     }
 
     if (!totals || totals.grandTotal === undefined) {
+      console.log("VALIDATION FAILED: totals is missing or incomplete");
       return res.status(400).json({
         status: false,
         message: "Totals are required",
@@ -46,6 +58,7 @@ exports.createBooking = async (req, res) => {
     }
 
     if (!otp) {
+      console.log("VALIDATION FAILED: otp is missing");
       return res.status(400).json({
         status: false,
         message: "OTP is required",
