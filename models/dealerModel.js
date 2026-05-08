@@ -114,6 +114,10 @@ const dealerModel = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    minWalletAmount: {
+      type: Number,
+      default: 0,
+    },
     formProgress: {
       currentStep: { type: Number, default: 1 },
       completedSteps: {

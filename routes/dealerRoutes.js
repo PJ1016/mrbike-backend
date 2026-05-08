@@ -419,6 +419,9 @@ router.put(
       if (req.body.pickupCharges !== undefined) {
         updateData.pickupCharges = req.body.pickupCharges === "" ? 0 : Number.parseFloat(req.body.pickupCharges)
       }
+      if (req.body.minWalletAmount !== undefined) {
+        updateData.minWalletAmount = req.body.minWalletAmount === "" ? 0 : Number.parseFloat(req.body.minWalletAmount)
+      }
 
       // Handle bank details
       if (
