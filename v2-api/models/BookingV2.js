@@ -19,7 +19,7 @@ const bookingV2Schema = new mongoose.Schema(
     items: [
       {
         serviceId: { type: mongoose.Schema.Types.ObjectId, ref: "AdminService" },
-        variantId: { type: mongoose.Schema.Types.ObjectId },
+        variantId: { type: mongoose.Schema.Types.ObjectId, default: null },
         serviceName: { type: String, required: true },
         bikeName: { type: String, required: true },
         price: { type: Number, required: true },
