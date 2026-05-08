@@ -1064,32 +1064,14 @@ async function getBookingDetails(req, res) {
       return res.status(400).json({ success: false, message: "Booking ID is required" });
     }
 
-    console.log("Fetching booking details for ID:", bookingId, "Type:", typeof bookingId);
+    console.log("=== getBookingDetails ===");
+    console.log("Booking ID received:", bookingId);
+    console.log("Is valid ObjectId:", mongoose.Types.ObjectId.isValid(bookingId));
 
-    // Convert string to MongoDB ObjectId if needed
-    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
-      console.log("Invalid MongoDB ObjectId format:", bookingId);
-      return res.status(400).json({ success: false, message: "Invalid booking ID format" });
-    }
-
-    bookingId = mongoose.Types.ObjectId(bookingId);
-
-    // First, verify the booking exists without population
-    const bookingExists = await booking.findById(bookingId);
-    if (!bookingExists) {
-      console.log("Booking not found for ID:", bookingId);
-      return res.status(404).json({ success: false, message: "Booking not found" });
-    }
-
-    console.log("Booking found, populating details...");
-
-    // Then populate with debug logging
-    const bookings = await booking.findById(bookingId)
+    // Try to find the booking
+    const bookingData = await booking.findById(bookingId)
       .populate("user_id")
-      .populate({
-        path: "dealer_id",
-        model: "Vendor"
-      })
+      .populate("dealer_id")
       .populate({
         path: "services",
         model: "AdminService",
@@ -1099,59 +1081,47 @@ async function getBookingDetails(req, res) {
           select: "name description image",
         },
       })
+      .populate("additionalServices")
       .populate("pickupAndDropId")
       .populate("userBike_id");
 
-    console.log("Raw populated data:", bookings);
+    console.log("Booking found:", !!bookingData);
 
-    // Check if services array exists but is empty
-    if (!bookings.services || bookings.services.length === 0) {
-      console.log("No services found for booking:", bookingId);
-      return res.status(200).json({
-        success: true,
-        data: bookings,
-        message: "Booking found but no services associated"
-      });
+    if (!bookingData) {
+      console.log("Booking not found for ID:", bookingId);
+      return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    const userBikeCC = parseInt(bookings?.userBike_id?.bike_cc || 0);
-    console.log("Filtering services for bike CC:", userBikeCC);
-
-    const filteredServices = bookings.services
-      .map(service => {
-        const matchingBikes = service.bikes?.filter(b => b.cc === userBikeCC) || [];
-        return {
-          ...service.toObject(),
-          bikes: matchingBikes
-        };
-      })
-      .filter(service => service.bikes.length > 0);
-
-    console.log("Filtered services count:", filteredServices.length);
+    console.log("Booking status:", bookingData.status);
+    console.log("Booking ID (custom):", bookingData.bookingId);
 
     // Fetch bill information if it exists
     let billData = null;
     try {
       const Bill = require("../models/billSchema");
       billData = await Bill.findOne({ booking_id: bookingId });
+      console.log("Bill found:", !!billData);
     } catch (err) {
-      console.log("Bill not found for booking:", bookingId);
+      console.log("Error fetching bill:", err.message);
     }
 
     const result = {
-      ...bookings.toObject(),
-      services: filteredServices.length > 0 ? filteredServices : bookings.services,
-      // Add bill information to booking response
+      ...bookingData.toObject(),
       subtotal: billData?.subtotal || 0,
       tax_amount: billData?.tax_amount || 0,
       grandTotal: billData?.total_amount || 0,
-      pickupCharges: bookings.pickupCharges || 0,
+      pickupCharges: bookingData.pickupCharges || 0,
     };
 
+    console.log("Returning booking details successfully");
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     console.error("Error in getBookingDetails:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error", error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Internal Server Error", 
+      error: error.message 
+    });
   }
 }
 
