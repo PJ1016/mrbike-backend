@@ -507,6 +507,15 @@ const getuserbookings = async (req, res) => {
         const grandTotal = bill?.total_amount || b.totalBill || 0;
         const subtotal = bill?.subtotal || b.totalBill || 0;
         
+        console.log(`Booking ${b.bookingId}:`, {
+          hasBill: !!bill,
+          billTotal: bill?.total_amount,
+          bookingTotalBill: b.totalBill,
+          finalGrandTotal: grandTotal,
+          services: b.services?.length || 0,
+          userBike: b.userBike_id?.bike_cc
+        });
+        
         return {
           ...b,
           subtotal: subtotal,
@@ -515,13 +524,6 @@ const getuserbookings = async (req, res) => {
           pickupCharges: b.pickupCharges || 0,
         };
       });
-
-      console.log("Enriched bookings with pricing:", enrichedBookings.map(b => ({ 
-        bookingId: b.bookingId, 
-        grandTotal: b.grandTotal,
-        totalBill: b.totalBill,
-        hasBill: !!billMap[b._id.toString()]
-      })));
 
       return res.status(200).json({
         status: 200,
