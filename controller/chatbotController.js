@@ -237,8 +237,38 @@ async function extractServiceRecommendations(aiResponse, bikeId) {
 
     try {
       const content = response.choices[0].message.content.trim();
-      const recommendations = JSON.parse(content);
-      return Array.isArray(recommendations) ? recommendations : [];
+      let recommendations = JSON.parse(content);
+      
+      if (!Array.isArray(recommendations)) {
+        return [];
+      }
+
+      // Enrich recommendations with service IDs from database
+      const enrichedRecommendations = await Promise.all(
+        recommendations.map(async (rec) => {
+          try {
+            // Find matching service in database
+            const service = await AdminService.findOne({
+              $or: [
+                { "base_service_id.name": { $regex: rec.serviceName, $options: "i" } },
+                { description: { $regex: rec.serviceName, $options: "i" } }
+              ]
+            }).populate("base_service_id");
+
+            return {
+              ...rec,
+              serviceId: service?._id?.toString() || null,
+              baseName: service?.base_service_id?.name || rec.serviceName,
+              variantId: service?._id?.toString() || null,
+            };
+          } catch (err) {
+            console.error("Error enriching recommendation:", err);
+            return rec;
+          }
+        })
+      );
+
+      return enrichedRecommendations;
     } catch (parseError) {
       console.log("Could not parse recommendations as JSON, returning empty array");
       return [];
