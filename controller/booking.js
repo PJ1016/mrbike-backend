@@ -1058,13 +1058,21 @@ async function createBooking(req, res) {
 
 async function getBookingDetails(req, res) {
   try {
-    const bookingId = req.params.id;
+    let bookingId = req.params.id;
 
     if (!bookingId) {
       return res.status(400).json({ success: false, message: "Booking ID is required" });
     }
 
-    console.log("Fetching booking details for ID:", bookingId);
+    console.log("Fetching booking details for ID:", bookingId, "Type:", typeof bookingId);
+
+    // Convert string to MongoDB ObjectId if needed
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      console.log("Invalid MongoDB ObjectId format:", bookingId);
+      return res.status(400).json({ success: false, message: "Invalid booking ID format" });
+    }
+
+    bookingId = mongoose.Types.ObjectId(bookingId);
 
     // First, verify the booking exists without population
     const bookingExists = await booking.findById(bookingId);
@@ -1072,6 +1080,8 @@ async function getBookingDetails(req, res) {
       console.log("Booking not found for ID:", bookingId);
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
+
+    console.log("Booking found, populating details...");
 
     // Then populate with debug logging
     const bookings = await booking.findById(bookingId)
