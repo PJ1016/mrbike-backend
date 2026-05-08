@@ -122,6 +122,7 @@ const bookingSchema = new mongoose.Schema(
     // Optional scheduling preferences
     scheduleDate: { type: String, default: null },   // e.g. "2026-05-10"
     timeSlot: { type: String, default: null },        // e.g. "10:00 AM - 12:00 PM"
+    pickupAddress: { type: String, default: null },   // e.g. "123 MG Road, Bangalore"
 
     bookingId: { type: String, unique: true },
 
