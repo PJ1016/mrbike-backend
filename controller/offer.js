@@ -425,8 +425,52 @@ async function addoffer(req, res) {
       });
     }
 
+    if (!service_id) {
+      return res.status(400).send({
+        status: 400,
+        message: 'Service ID is required!',
+      });
+    }
+
     const promo_codeCheck = await offer.findOne({ promo_code: promo_code });
-    const serviceDetails = await adminservices.findById(service_id);
+    
+    if (promo_codeCheck) {
+      return res.status(409).send({
+        status: 409,
+        message: 'Promo code already exists',
+      });
+    }
+
+    // Check if service_id is a valid MongoDB ObjectId
+    const mongoose = require('mongoose');
+    let serviceDetails = null;
+    let serviceType = "AdminService"; // default
+    
+    if (mongoose.Types.ObjectId.isValid(service_id)) {
+      // Check in adminservices model first
+      serviceDetails = await adminservices.findById(service_id);
+      if (serviceDetails) {
+        serviceType = "AdminService";
+      }
+      
+      // If not found in adminservices, check in BaseService
+      if (!serviceDetails) {
+        const BaseService = require("../models/baseService");
+        serviceDetails = await BaseService.findById(service_id);
+        if (serviceDetails) {
+          serviceType = "BaseService";
+        }
+      }
+      
+      // If not found in base services, check in base additional services
+      if (!serviceDetails) {
+        const BaseAdditionalService = require("../models/baseAdditionalServiceSchema");
+        serviceDetails = await BaseAdditionalService.findById(service_id);
+        if (serviceDetails) {
+          serviceType = "BaseAdditionalService";
+        }
+      }
+    }
 
     if (!serviceDetails) {
       return res.status(404).send({
@@ -435,16 +479,10 @@ async function addoffer(req, res) {
       });
     }
 
-    if (promo_codeCheck) {
-      return res.status(409).send({
-        status: 409,
-        message: 'Promo code already exists',
-      });
-    }
-
-    // Create the offer
+    // Create the offer with service_type
     const newOffer = {
       service_id,
+      service_type: serviceType,
       promo_code,
       start_date,
       end_date,
