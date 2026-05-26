@@ -5,6 +5,10 @@ const bannerSchema = new mongoose.Schema({
   id: {
     type: Number,
   },
+  bannerId: {
+    type: String,
+    unique: true,
+  },
   name: String,
   banner_image: {
     type: String,
@@ -28,5 +32,21 @@ const bannerSchema = new mongoose.Schema({
 });
 
 bannerSchema.plugin(AutoIncrement, { id: "banner_seq", inc_field: "id" });
+
+// Pre-save hook to generate readable bannerId (6 characters)
+bannerSchema.pre("save", async function (next) {
+  if (!this.isNew || this.bannerId) return next();
+
+  try {
+    // Generate bannerId in format: BAN + 3-digit sequence
+    // Example: BAN001, BAN002, etc.
+    const count = await mongoose.model("Banner").countDocuments();
+    const sequence = String(count + 1).padStart(3, "0");
+    this.bannerId = `BAN${sequence}`;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = mongoose.model("Banner", bannerSchema);
