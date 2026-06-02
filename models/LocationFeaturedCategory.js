@@ -54,6 +54,11 @@ const locationFeaturedCategorySchema = new mongoose.Schema(
       enum: ["active", "inactive"],
       default: "active",
     },
+    serviceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BaseService",
+      default: null,
+    },
     createdBy: {
       type: String,
     },

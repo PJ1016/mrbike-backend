@@ -27,6 +27,7 @@ async function getList(req, res) {
         .sort({ displayOrder: 1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .populate("serviceId", "name _id")
         .lean(),
     ]);
 
@@ -52,7 +53,9 @@ async function getSingle(req, res) {
       return res.status(400).json({ status: 400, message: "Invalid ID" });
     }
 
-    const data = await LocationFeaturedCategory.findById(id).lean();
+    const data = await LocationFeaturedCategory.findById(id)
+      .populate("serviceId", "name _id")
+      .lean();
 
     if (!data) {
       return res
@@ -80,6 +83,7 @@ async function create(req, res) {
       radius,
       displayOrder,
       status,
+      serviceId,
     } = req.body;
 
     if (!categoryName || !categoryName.trim()) {
@@ -122,6 +126,11 @@ async function create(req, res) {
         .status(400)
         .json({ status: 400, message: "status must be active or inactive" });
     }
+    if (serviceId && !mongoose.Types.ObjectId.isValid(serviceId)) {
+      return res
+        .status(400)
+        .json({ status: 400, message: "Invalid serviceId" });
+    }
 
     const lat = Number(latitude);
     const lng = Number(longitude);
@@ -137,6 +146,7 @@ async function create(req, res) {
       radius: Number(radius),
       displayOrder: displayOrder !== undefined ? Number(displayOrder) : 0,
       status: status || "active",
+      serviceId: serviceId ? new mongoose.Types.ObjectId(serviceId) : null,
       createdBy: req.user_id,
       updatedBy: req.user_id,
     });
@@ -176,6 +186,7 @@ async function update(req, res) {
       radius,
       displayOrder,
       status,
+      serviceId,
     } = req.body;
 
     if (status && !["active", "inactive"].includes(status)) {
@@ -193,6 +204,12 @@ async function update(req, res) {
         .status(400)
         .json({ status: 400, message: "displayOrder must be numeric" });
     }
+    if (serviceId !== undefined && serviceId !== null && serviceId !== "" &&
+        !mongoose.Types.ObjectId.isValid(serviceId)) {
+      return res
+        .status(400)
+        .json({ status: 400, message: "Invalid serviceId" });
+    }
 
     const updateData = { updatedBy: req.user_id };
 
@@ -203,6 +220,12 @@ async function update(req, res) {
     if (displayOrder !== undefined) updateData.displayOrder = Number(displayOrder);
     if (status) updateData.status = status;
     if (req.file) updateData.categoryImage = req.file.location;
+    if (serviceId !== undefined) {
+      updateData.serviceId =
+        serviceId === null || serviceId === ""
+          ? null
+          : new mongoose.Types.ObjectId(serviceId);
+    }
 
     if (latitude !== undefined || longitude !== undefined) {
       const lat = Number(latitude !== undefined ? latitude : existing.latitude);
@@ -431,6 +454,18 @@ async function getUserFeaturedCategories(req, res) {
         },
       },
       { $sort: { displayOrder: 1 } },
+      {
+        $lookup: {
+          from: "baseservices",
+          localField: "serviceId",
+          foreignField: "_id",
+          as: "serviceId",
+          pipeline: [{ $project: { name: 1, _id: 1 } }],
+        },
+      },
+      {
+        $unwind: { path: "$serviceId", preserveNullAndEmptyArrays: true },
+      },
     ]);
 
     return res.status(200).json({
