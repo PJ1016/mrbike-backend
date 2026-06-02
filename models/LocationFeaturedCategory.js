@@ -55,10 +55,10 @@ const locationFeaturedCategorySchema = new mongoose.Schema(
       default: "active",
     },
     createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
     },
     updatedBy: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
     },
   },
   {
