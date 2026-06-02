@@ -724,7 +724,7 @@ async function getDealerServices(req, res) {
 
     // Fetch Base Services
     const baseServices = await adminservices.find({ dealer_id, isActive: true })
-      .populate("base_service_id", "name image")
+      .populate("base_service_id", "name image description")
       .populate({
         path: "bikes.variant_id",
         populate: {
@@ -741,7 +741,7 @@ async function getDealerServices(req, res) {
     let addlServices = [];
     if (typeof additionalService !== 'undefined') {
       addlServices = await additionalService.find({ dealer_id, isActive: true })
-        .populate("base_additional_service_id", "name image")
+        .populate("base_additional_service_id", "name image description")
         .populate({
           path: "bikes.variant_id",
           populate: {
@@ -783,6 +783,7 @@ async function getDealerServices(req, res) {
           serviceId: doc.base_service_id?._id || doc.base_service_id,
           serviceName: doc.base_service_id?.name,
           serviceImage: doc.base_service_id?.image,
+          description: doc.base_service_id?.description || "",
           bikeName: bikeName,
           companyName: companyName,
           modelName: modelName,
@@ -808,6 +809,7 @@ async function getDealerServices(req, res) {
           serviceId: doc.base_additional_service_id?._id || doc.base_additional_service_id,
           serviceName: doc.base_additional_service_id?.name,
           serviceImage: doc.base_additional_service_id?.image,
+          description: doc.base_additional_service_id?.description || "",
           bikeName: bikeName,
           companyName: companyName,
           modelName: modelName,
