@@ -324,7 +324,18 @@ async function addAdminService(req, res) {
     }
 
     /* =========================
-       4. Create admin service
+       4. Duplicate check
+    ========================== */
+    const existingService = await adminservices.findOne({ dealer_id, base_service_id })
+    if (existingService) {
+      return res.status(409).json({
+        status: 409,
+        message: "This major service is already added for this dealer.",
+      })
+    }
+
+    /* =========================
+       5. Create admin service
     ========================== */
     const newService = await adminservices.create({
       base_service_id,
@@ -509,6 +520,21 @@ async function updateAdminService(req, res) {
         status: false,
         message: "Valid dealer_id is required",
         field: "dealer_id",
+      })
+    }
+
+    /* =========================
+       Duplicate check
+    ========================== */
+    const existingService = await adminservices.findOne({
+      dealer_id,
+      base_service_id,
+      _id: { $ne: req.params.id },
+    })
+    if (existingService) {
+      return res.status(409).json({
+        status: 409,
+        message: "This major service is already added for this dealer.",
       })
     }
 
