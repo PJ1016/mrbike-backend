@@ -168,6 +168,13 @@ const paymentWebhook = async (req, res) => {
         await payment.save();
         console.log(`✅ Payment updated in database: ${orderId} -> ${mappedStatus}`);
 
+        // Wallet top-up: credit dealer wallet, skip booking/bill logic
+        if (mappedStatus === "SUCCESS" && payment.payment_type === "WALLET_TOPUP") {
+            await creditDealerWalletOnTopup(payment);
+            console.log(`🎉 Wallet top-up webhook done: orderId=${orderId}`);
+            return res.status(200).send("Webhook processed successfully");
+        }
+
         // ✅ NEW: Generate Bill if payment is successful
         if (mappedStatus === "SUCCESS") {
             await generateBill(payment);
@@ -1087,7 +1094,141 @@ const getUserBillDetails = async (req, res) => {
     }
 };
 
-module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, generateBill };
+// ─── Dealer Wallet Top-Up ────────────────────────────────────────────────────
+
+const CASHFREE_ORDERS_URL =
+    process.env.CASHFREE_ENV === "production"
+        ? "https://api.cashfree.com/pg/orders"
+        : "https://sandbox.cashfree.com/pg/orders";
+
+const cashfreeHeaders = () => ({
+    "x-client-id": process.env.CASHFREE_APP_ID || process.env.APP_ID,
+    "x-client-secret": process.env.CASHFREE_SECRET_KEY || process.env.SECRET_KEY,
+    "x-api-version": "2023-08-01",
+    "Content-Type": "application/json",
+});
+
+// Idempotent wallet credit — called by webhook when WALLET_TOPUP payment succeeds.
+// Guards against duplicate credits using Wallet.orderId uniqueness.
+async function creditDealerWalletOnTopup(payment) {
+    const existing = await Wallet.findOne({ orderId: payment.orderId, order_status: "APPROVED" });
+    if (existing) {
+        console.log(`Wallet already credited for order: ${payment.orderId}`);
+        return;
+    }
+
+    const dealer = await Dealer.findById(payment.dealer_id);
+    if (!dealer) {
+        console.error(`Dealer not found for wallet top-up: ${payment.dealer_id}`);
+        return;
+    }
+
+    const preBalance = parseFloat(dealer.wallet) || 0;
+    dealer.wallet = parseFloat((preBalance + payment.orderAmount).toFixed(2));
+    await dealer.save();
+
+    await Wallet.create({
+        orderId: payment.orderId,
+        dealer_id: payment.dealer_id,
+        Amount: payment.orderAmount,
+        Type: "Credit",
+        Note: `Wallet top-up via Cashfree (Order: ${payment.orderId})`,
+        Total: dealer.wallet,
+        pre_balance: preBalance,
+        order_status: "APPROVED",
+        transaction_type: "deposit",
+    });
+
+    console.log(`Wallet credited ₹${payment.orderAmount} to dealer ${payment.dealer_id}. New balance: ₹${dealer.wallet}`);
+}
+
+const createOrderForAdd = async (req, res) => {
+    try {
+        let tokenData = {};
+        try {
+            tokenData = jwt_decode(req.headers.token);
+        } catch (_) {
+            return res.status(401).json({ success: false, message: "Invalid or missing token" });
+        }
+
+        const { user_id: tokenUserId, user_type } = tokenData;
+        const { dealer_id, amount } = req.body;
+
+        if (!dealer_id || !amount) {
+            return res.status(400).json({ success: false, message: "dealer_id and amount are required" });
+        }
+
+        const topupAmount = parseFloat(amount);
+        if (isNaN(topupAmount) || topupAmount < 1) {
+            return res.status(400).json({ success: false, message: "amount must be at least ₹1" });
+        }
+
+        // Dealer can only top up their own wallet
+        if (user_type === 2 && tokenUserId !== dealer_id) {
+            return res.status(403).json({ success: false, message: "Dealers can only top up their own wallet" });
+        }
+
+        const dealer = await Dealer.findById(dealer_id);
+        if (!dealer) {
+            return res.status(404).json({ success: false, message: "Dealer not found" });
+        }
+
+        const orderId = `WTOP_${Date.now()}_${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+
+        const payload = {
+            order_id: orderId,
+            order_amount: topupAmount,
+            order_currency: "INR",
+            customer_details: {
+                customer_id: dealer._id.toString(),
+                customer_name: dealer.ownerName || dealer.shopName || "Dealer",
+                customer_email: dealer.email || "dealer@mrbikedoctor.com",
+                customer_phone: dealer.phone || "9999999999",
+            },
+            order_meta: {
+                return_url: `${process.env.FRONTEND_URL || "https://mrbikedoctor.com"}/wallet/topup?order_id={order_id}`,
+                notify_url: `${process.env.BACKEND_URL || "https://api.mrbikedoctor.com"}/bikedoctor/payment/webhook`,
+            },
+            order_note: `Wallet top-up by ${dealer.shopName || dealer._id}`,
+        };
+
+        const cfResponse = await axios.post(CASHFREE_ORDERS_URL, payload, { headers: cashfreeHeaders() });
+        const cfData = cfResponse.data;
+
+        await Payment.create({
+            cf_order_id: cfData.cf_order_id,
+            orderId,
+            dealer_id: dealer._id,
+            orderAmount: topupAmount,
+            payment_type: "WALLET_TOPUP",
+            order_currency: "INR",
+            order_status: "PENDING",
+            order_token: cfData.payment_session_id || "pending",
+            payment_by: "dealer",
+            metadata: {
+                payment_session_id: cfData.payment_session_id,
+                initiated_by: tokenUserId,
+                created_at: new Date(),
+            },
+        });
+
+        return res.status(200).json({
+            success: true,
+            payment_session_id: cfData.payment_session_id,
+            order_id: orderId,
+        });
+
+    } catch (error) {
+        console.error("createOrderForAdd error:", error.response?.data || error.message);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to create wallet top-up order",
+            error: error.response?.data || error.message,
+        });
+    }
+};
+
+module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, generateBill, createOrderForAdd };
 
 // const axios = require('axios');
 // const Payment = require("../models/Payment");

@@ -1,14 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const { getAllPayments,getBillByBookingId,getUserBillsSimple,getUserBillDetails,getAllBills, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink } = require("../controller/payment");
+const { getAllPayments,getBillByBookingId,getUserBillsSimple,getUserBillDetails,getAllBills, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, createOrderForAdd } = require("../controller/payment");
 
 router.post("/initiate", initiatePayment);
 router.post("/create-checkout", createCheckoutUrl);
 router.post('/create-checkout-session', createCheckoutSession);
 router.post('/link', createPaymentLink);
+router.post("/createOrderForAdd", createOrderForAdd);
 router.get("/all-payments", getAllPayments);
 router.get("/single-payment-detail/:id", getPaymentById);
 router.get("/webhook", paymentWebhook);
+router.post("/webhook", paymentWebhook);
 router.get('/bills/booking/:booking_id', getBillByBookingId);
 router.get('/bills/all', getAllBills);
 router.get('/user/:user_id/bills/simple', getUserBillsSimple);
