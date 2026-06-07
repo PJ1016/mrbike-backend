@@ -13,6 +13,7 @@ const Admin = require('../models/admin_model')
 const { Notification } = require("../helper/pushNotification");
 const { handleBookingCompletion } = require("../controller/reward")
 const { generateBill } = require("../controller/payment")
+const { settleBookingWallet } = require("../helper/walletSettlement")
 const UserBike = require("../models/userBikeModel");
 const AdminService = require("../models/adminService");
 const Customer = require("../models/customer_model");
@@ -1452,6 +1453,20 @@ async function updateBookingStatus(req, res) {
         });
       } catch (billError) {
         console.error("Bill generation failed for cash payment:", billError);
+      }
+    }
+
+    // Automatic wallet settlement — debit commission owed to platform for cash booking
+    if (status === "cash received") {
+      try {
+        const settlement = await settleBookingWallet(existingBooking._id, "CASH");
+        if (settlement) {
+          console.log(`✅ Cash commission settled: dealer debited ₹${settlement.txnAmount} (order ₹${settlement.orderAmount}, commission ${settlement.commissionRate}%)`);
+        } else {
+          console.log(`ℹ️ Wallet already settled for booking: ${existingBooking._id}`);
+        }
+      } catch (settlementErr) {
+        console.error(`❌ Cash commission settlement failed for booking ${existingBooking._id}:`, settlementErr.message);
       }
     }
 

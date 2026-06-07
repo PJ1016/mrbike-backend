@@ -20,6 +20,8 @@ var {
   getWallet,
   getPendingWallets,
   updateWalletStatus,
+  createWithdrawalRequest,
+  createDeposit,
   getAllDealersWithDocFalse,
   getAllDealersWithVerifyFalse,
   updateDealerDocStatus,
@@ -569,7 +571,9 @@ router.post(
 )
 
 router.get("/pending", getPendingWallets)
-router.put("/updatepending", updateWalletStatus)
+router.put("/updatepending/:wallet_id", updateWalletStatus)
+router.post("/withdrawal", createWithdrawalRequest)
+router.post("/deposit", createDeposit)
 router.put("/updateDocStatus", updateDealerDocStatus)
 router.put("/updateVerification", updateDealerVerfication)
 

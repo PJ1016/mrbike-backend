@@ -1,5 +1,6 @@
 var crypto = require('crypto');
 const jwt_decode = require("jwt-decode");
+const { settleBookingWallet } = require("../helper/walletSettlement");
 const { type } = require("os");
 const Booking = require("../models/Booking");
 // const Booking = require("../models/Booking");
@@ -189,6 +190,18 @@ const paymentWebhook = async (req, res) => {
                 },
             });
             console.log(`✅ Booking updated: ${payment.booking_id}`);
+
+            // Automatic wallet settlement — credit dealer net of commission
+            try {
+                const settlement = await settleBookingWallet(payment.booking_id, "ONLINE");
+                if (settlement) {
+                    console.log(`✅ Wallet settled: dealer credited ₹${settlement.txnAmount} (order ₹${settlement.orderAmount}, commission ${settlement.commissionRate}%)`);
+                } else {
+                    console.log(`ℹ️ Wallet already settled for booking: ${payment.booking_id}`);
+                }
+            } catch (settlementErr) {
+                console.error(`❌ Wallet settlement failed for booking ${payment.booking_id}:`, settlementErr.message);
+            }
         }
 
         console.log(`🎉 Webhook processed successfully: orderId=${orderId}, status=${mappedStatus}`);
