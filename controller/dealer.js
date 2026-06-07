@@ -1430,7 +1430,7 @@ async function getShopDetails(req, res) {
 
     // Fetch dealer details
     const dealer = await Vendor.findById(dealer_id)
-      .select("shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services");
+      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges minWalletAmount ownerName phone fullAddress registrationStatus");
 
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found!" });
