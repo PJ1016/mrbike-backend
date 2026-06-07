@@ -17,7 +17,8 @@ const paymentSchema = new mongoose.Schema(
     booking_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Booking",
-      required: true,
+      required: false,
+      default: null,
     },
     dealer_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -27,7 +28,8 @@ const paymentSchema = new mongoose.Schema(
     user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "customers",
-      required: true,
+      required: false,
+      default: null,
     },
     orderAmount: {
       type: Number,
@@ -37,7 +39,7 @@ const paymentSchema = new mongoose.Schema(
     payment_type: {
       type: String,
       required: true,
-      enum: ["ONLINE", "OFFLINE", "WALLET", "UPI_QR", "UPI", "CARD", "NETBANKING"], // Added UPI_QR as payment type option
+      enum: ["ONLINE", "OFFLINE", "WALLET", "UPI_QR", "UPI", "CARD", "NETBANKING", "WALLET_TOPUP"],
     },
     order_currency: {
       type: String,
