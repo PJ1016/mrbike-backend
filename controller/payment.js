@@ -174,12 +174,18 @@ const paymentWebhook = async (req, res) => {
 
         // Update booking if payment successful
         if (mappedStatus === "SUCCESS") {
+            const currentBooking = await Booking.findById(payment.booking_id);
+            const finalStatuses = ["completed", "cash received"];
+            const statusUpdate = currentBooking && finalStatuses.includes(currentBooking.status)
+                ? {}
+                : { status: "confirmed" };
+
             await Booking.findByIdAndUpdate(payment.booking_id, {
                 $set: {
                     billStatus: "paid",
-                    status: "confirmed",
                     paymentStatus: "completed",
-                    paymentDate: new Date(paymentTime || Date.now())
+                    paymentDate: new Date(paymentTime || Date.now()),
+                    ...statusUpdate
                 },
             });
             console.log(`✅ Booking updated: ${payment.booking_id}`);
@@ -1068,7 +1074,7 @@ const getUserBillDetails = async (req, res) => {
     }
 };
 
-module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink };
+module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, generateBill };
 
 // const axios = require('axios');
 // const Payment = require("../models/Payment");
