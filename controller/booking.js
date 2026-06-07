@@ -1073,6 +1073,8 @@ async function createBooking(req, res) {
 
     // Calculate initial bill based on services and bike CC
     let totalBill = 0;
+    // User App sends BaseService IDs; resolve to AdminService IDs for correct pricing and refs
+    let resolvedServiceIds = services;
     try {
       const bikeData = await UserBike.findById(userBike_id);
       console.log("=== Calculating totalBill ===");
@@ -1080,19 +1082,35 @@ async function createBooking(req, res) {
       if (bikeData) {
         console.log("Bike CC:", bikeData.bike_cc);
         const bikeCC = parseInt(bikeData.bike_cc || 0);
-        const serviceDocs = await AdminService.find({ _id: { $in: services } });
-        console.log("Services found:", serviceDocs.length);
+
+        // Primary: incoming IDs are BaseService IDs — find AdminService for this dealer
+        let serviceDocs = await AdminService.find({
+          base_service_id: { $in: services },
+          dealer_id: dealer_id,
+          isActive: true,
+        });
+        console.log("Services found via base_service_id:", serviceDocs.length);
+
+        // Fallback: IDs may already be AdminService IDs (e.g. other clients)
+        if (serviceDocs.length === 0) {
+          serviceDocs = await AdminService.find({ _id: { $in: services } });
+          console.log("Services found via direct _id:", serviceDocs.length);
+        }
+
+        if (serviceDocs.length > 0) {
+          resolvedServiceIds = serviceDocs.map(s => s._id);
+        }
 
         serviceDocs.forEach((svc, idx) => {
           console.log(`Service ${idx}:`, {
-            name: svc.serviceName,
+            base_service_id: svc.base_service_id,
             bikesCount: svc.bikes?.length || 0,
             bikes: svc.bikes?.map(b => ({ cc: b.cc, price: b.price }))
           });
-          
+
           const matchingBike = svc.bikes?.find(b => b.cc === bikeCC);
           console.log(`Matching bike for CC ${bikeCC}:`, matchingBike);
-          
+
           if (matchingBike) {
             totalBill += matchingBike.price;
             console.log(`Added ${matchingBike.price} to totalBill. New total: ${totalBill}`);
@@ -1112,7 +1130,7 @@ async function createBooking(req, res) {
     const newBooking = new booking({
       user_id,
       dealer_id,
-      services,
+      services: resolvedServiceIds,
       pickupAndDropId: pickupAndDropId || null,
       userBike_id,
       pickupDate: pickupDate || null,
