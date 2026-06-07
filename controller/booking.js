@@ -12,6 +12,8 @@ const Role = require('../models/Roles_modal')
 const Admin = require('../models/admin_model')
 const { Notification } = require("../helper/pushNotification");
 const { handleBookingCompletion } = require("../controller/reward")
+const { generateBill } = require("../controller/payment")
+const { settleBookingWallet } = require("../helper/walletSettlement")
 const UserBike = require("../models/userBikeModel");
 const AdminService = require("../models/adminService");
 const Customer = require("../models/customer_model");
@@ -1428,11 +1430,44 @@ async function updateBookingStatus(req, res) {
 
     // Update status
     existingBooking.status = status;
+
+    if (status === "cash received") {
+      existingBooking.billStatus = "paid";
+    }
+
     await existingBooking.save();
 
     // Handle completion logic if needed
     if (status === "completed") {
       await handleBookingCompletion(existingBooking);
+    }
+
+    // Generate invoice for cash payment if not already generated
+    if (status === "cash received" && !existingBooking.billGenerated) {
+      try {
+        await generateBill({
+          booking_id: existingBooking._id,
+          payment_method: "CASH",
+          transaction_id: null,
+          _id: null
+        });
+      } catch (billError) {
+        console.error("Bill generation failed for cash payment:", billError);
+      }
+    }
+
+    // Automatic wallet settlement — debit commission owed to platform for cash booking
+    if (status === "cash received") {
+      try {
+        const settlement = await settleBookingWallet(existingBooking._id, "CASH");
+        if (settlement) {
+          console.log(`✅ Cash commission settled: dealer debited ₹${settlement.txnAmount} (order ₹${settlement.orderAmount}, commission ${settlement.commissionRate}%)`);
+        } else {
+          console.log(`ℹ️ Wallet already settled for booking: ${existingBooking._id}`);
+        }
+      } catch (settlementErr) {
+        console.error(`❌ Cash commission settlement failed for booking ${existingBooking._id}:`, settlementErr.message);
+      }
     }
 
     // Notify customer if they're not the one making the update
@@ -1781,6 +1816,10 @@ const verifyBookingOTP = async (req, res) => {
     }
 
     await b.save();
+
+    if (stage === "delivery") {
+      await handleBookingCompletion(b);
+    }
 
     return res.status(200).json({
       success: true,

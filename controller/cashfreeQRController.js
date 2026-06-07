@@ -289,12 +289,18 @@ const checkPaymentStatus = async (req, res) => {
 
         // Update booking if payment successful
         if (mappedStatus === "SUCCESS") {
+          const currentBooking = await Booking.findById(payment.booking_id)
+          const finalStatuses = ["completed", "cash received"]
+          const statusUpdate = currentBooking && finalStatuses.includes(currentBooking.status)
+            ? {}
+            : { status: "confirmed" }
+
           await Booking.findByIdAndUpdate(payment.booking_id, {
             $set: {
               billStatus: "paid",
-              status: "confirmed",
               paymentStatus: "completed",
               paymentDate: new Date(),
+              ...statusUpdate
             },
           })
         }
@@ -414,12 +420,18 @@ const cashfreeWebhook = async (req, res) => {
 
     // Update booking if payment successful
     if (mappedStatus === "SUCCESS") {
+      const currentBooking = await Booking.findById(payment.booking_id)
+      const finalStatuses = ["completed", "cash received"]
+      const statusUpdate = currentBooking && finalStatuses.includes(currentBooking.status)
+        ? {}
+        : { status: "confirmed" }
+
       await Booking.findByIdAndUpdate(payment.booking_id, {
         $set: {
           billStatus: "paid",
-          status: "confirmed",
           paymentStatus: "completed",
           paymentDate: new Date(),
+          ...statusUpdate
         },
       })
       console.log(`Booking ${payment.booking_id} marked as paid`)

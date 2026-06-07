@@ -25,8 +25,24 @@ const walletSchema = new mongoose.Schema({
     },
     order_status: {
         type: String,
-        enum: ["ACTIVE", "PAID", "PENDING", "FAILED", "EXPIRED", "APPROVED", "REJECTED"],
+        enum: ["ACTIVE", "PAID", "PENDING", "IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED", "APPROVED", "REJECTED"],
         default: "PENDING",
+    },
+    // settlement_online | settlement_cash | withdrawal | deposit | manual
+    transaction_type: {
+        type: String,
+        enum: ["settlement_online", "settlement_cash", "withdrawal", "deposit", "manual"],
+        default: "manual",
+    },
+    pre_balance: {
+        type: Number,
+    },
+    booking_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Booking",
+    },
+    performed_by: {
+        type: mongoose.Schema.Types.ObjectId,
     },
 }, {
     timestamps: true,

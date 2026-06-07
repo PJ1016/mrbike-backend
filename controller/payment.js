@@ -1,5 +1,6 @@
 var crypto = require('crypto');
 const jwt_decode = require("jwt-decode");
+const { settleBookingWallet } = require("../helper/walletSettlement");
 const { type } = require("os");
 const Booking = require("../models/Booking");
 // const Booking = require("../models/Booking");
@@ -174,15 +175,33 @@ const paymentWebhook = async (req, res) => {
 
         // Update booking if payment successful
         if (mappedStatus === "SUCCESS") {
+            const currentBooking = await Booking.findById(payment.booking_id);
+            const finalStatuses = ["completed", "cash received"];
+            const statusUpdate = currentBooking && finalStatuses.includes(currentBooking.status)
+                ? {}
+                : { status: "confirmed" };
+
             await Booking.findByIdAndUpdate(payment.booking_id, {
                 $set: {
                     billStatus: "paid",
-                    status: "confirmed",
                     paymentStatus: "completed",
-                    paymentDate: new Date(paymentTime || Date.now())
+                    paymentDate: new Date(paymentTime || Date.now()),
+                    ...statusUpdate
                 },
             });
             console.log(`✅ Booking updated: ${payment.booking_id}`);
+
+            // Automatic wallet settlement — credit dealer net of commission
+            try {
+                const settlement = await settleBookingWallet(payment.booking_id, "ONLINE");
+                if (settlement) {
+                    console.log(`✅ Wallet settled: dealer credited ₹${settlement.txnAmount} (order ₹${settlement.orderAmount}, commission ${settlement.commissionRate}%)`);
+                } else {
+                    console.log(`ℹ️ Wallet already settled for booking: ${payment.booking_id}`);
+                }
+            } catch (settlementErr) {
+                console.error(`❌ Wallet settlement failed for booking ${payment.booking_id}:`, settlementErr.message);
+            }
         }
 
         console.log(`🎉 Webhook processed successfully: orderId=${orderId}, status=${mappedStatus}`);
@@ -1068,7 +1087,7 @@ const getUserBillDetails = async (req, res) => {
     }
 };
 
-module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink };
+module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, generateBill };
 
 // const axios = require('axios');
 // const Payment = require("../models/Payment");

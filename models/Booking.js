@@ -127,6 +127,7 @@ const bookingSchema = new mongoose.Schema(
     bookingId: { type: String, unique: true },
 
     create_date: { type: Date, default: Date.now },
+    walletSettled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
