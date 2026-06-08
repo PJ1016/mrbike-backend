@@ -930,16 +930,16 @@ const GetwalletInfo = async (req, res) => {
       credits: 0, debits: 0, pending: 0, count: 0, currentBalance: 0
     };
 
-    const dealerDoc = await Vendor.findById(dealerId).select("wallet minWalletAmount").lean();
+    const dealerDoc = await Vendor.findById(dealerId).select("wallet").lean();
     const walletAmount = parseFloat(dealerDoc?.wallet) || 0;
-    const minWalletAmount = parseFloat(dealerDoc?.minWalletAmount) || 0;
+    const CREDIT_LIMIT = -500;
 
     return res.status(200).json({
       success: true,
       message: "Wallet information",
       data: {
         walletAmount,
-        minWalletAmount,
+        creditLimit: CREDIT_LIMIT,
         summary,
         transactions,
         pagination: {
@@ -1096,13 +1096,13 @@ const WalletAdd = async (req, res) => {
       });
     }
 
-    // Enforce minimum wallet balance on debit
+    // Enforce credit limit on admin debit
     if (Type === "Debit") {
-      const minBalance = Number(dealer.minWalletAmount) || 0;
-      if ((dealer.wallet - Number(Amount)) < minBalance) {
+      const CREDIT_LIMIT = -500;
+      if ((dealer.wallet - Number(Amount)) < CREDIT_LIMIT) {
         return res.status(200).json({
           status: 200,
-          message: `Insufficient balance. Minimum wallet balance of ₹${minBalance} must be maintained`
+          message: `Insufficient balance. Wallet cannot go below the credit limit of ₹${Math.abs(CREDIT_LIMIT)}`
         });
       }
     }
@@ -2123,13 +2123,13 @@ const createWithdrawalRequest = async (req, res) => {
       return res.status(200).json({ status: false, message: "You can only withdraw from your own wallet" });
     }
 
-    const minBalance = parseFloat(dealer.minWalletAmount) || 0;
+    const WITHDRAWAL_MIN_REMAINING = 200;
     const currentWallet = parseFloat(dealer.wallet) || 0;
 
-    if (currentWallet - withdrawAmount < minBalance) {
+    if (currentWallet - withdrawAmount < WITHDRAWAL_MIN_REMAINING) {
       return res.status(200).json({
         status: false,
-        message: `Insufficient balance. Minimum wallet balance of ₹${minBalance} must be maintained`,
+        message: `Insufficient balance. Minimum remaining balance of ₹${WITHDRAWAL_MIN_REMAINING} required after withdrawal`,
       });
     }
 
