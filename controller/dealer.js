@@ -1640,24 +1640,28 @@ const addDealerDocuments = async (req, res) => {
 };
 
 const getPendingWallets = async (req, res) => {
+  console.log('getPendingWallets called');
   try {
-    const pendingWallets = await Wallet.find({
+    const data = await Wallet.find({
       order_status: 'PENDING',
       Type: { $nin: ['Credit', 'Pending'] }
     })
       .sort({ createdAt: -1 })
       .populate('dealer_id');
 
+    console.log('pending wallets count', data.length);
+
     return res.status(200).json({
       status: true,
       message: "Filtered pending wallet entries retrieved successfully",
-      data: pendingWallets
+      data
     });
   } catch (error) {
     console.error("Error fetching pending wallets:", error);
+    console.error(error.stack);
     return res.status(500).json({
       status: false,
-      message: "Internal server error"
+      message: error.message || "Internal server error"
     });
   }
 };
