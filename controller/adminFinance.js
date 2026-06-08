@@ -175,61 +175,69 @@ const getPayouts = async (req, res) => {
 // totalDealerEarnings = totalBookingValue − totalCommissionEarned − totalTaxCollected
 //
 const getFinanceSummary = async (req, res) => {
+  console.log('[financeSummary] called');
   try {
-    const [bookingStats, dealerWalletStats, activeDealers, totalBookings, withdrawalStats] =
-      await Promise.all([
-        // Booking value / tax / commission – only walletSettled bookings for accuracy
-        Booking.aggregate([
-          { $match: { walletSettled: true } },
-          {
-            $lookup: {
-              from: "vendors",
-              localField: "dealer_id",
-              foreignField: "_id",
-              as: "dealer",
+    // ── 1. Booking value / tax / commission (walletSettled only) ──
+    console.log('[financeSummary] running Booking.aggregate (bookingStats)');
+    const bookingStats = await Booking.aggregate([
+      { $match: { walletSettled: true } },
+      {
+        $lookup: {
+          from: "vendors",
+          localField: "dealer_id",
+          foreignField: "_id",
+          as: "dealer",
+        },
+      },
+      { $unwind: { path: "$dealer", preserveNullAndEmpty: false } },
+      {
+        $group: {
+          _id: null,
+          totalBookingValue: { $sum: "$totalBill" },
+          totalTaxCollected: { $sum: "$tax" },
+          totalCommissionEarned: {
+            $sum: {
+              $multiply: [
+                "$totalBill",
+                { $divide: [{ $ifNull: ["$dealer.commission", 0] }, 100] },
+              ],
             },
           },
-          { $unwind: { path: "$dealer", preserveNullAndEmpty: false } },
-          {
-            $group: {
-              _id: null,
-              totalBookingValue: { $sum: "$totalBill" },
-              totalTaxCollected: { $sum: "$tax" },
-              totalCommissionEarned: {
-                $sum: {
-                  $multiply: [
-                    "$totalBill",
-                    { $divide: [{ $ifNull: ["$dealer.commission", 0] }, 100] },
-                  ],
-                },
-              },
-            },
-          },
-        ]),
+        },
+      },
+    ]);
+    console.log('[financeSummary] bookingStats result:', JSON.stringify(bookingStats));
 
-        // Live sum of all dealer wallet balances
-        Vendor.aggregate([
-          { $group: { _id: null, totalWalletBalance: { $sum: "$wallet" } } },
-        ]),
+    // ── 2. Live sum of all dealer wallet balances ──
+    console.log('[financeSummary] running Vendor.aggregate (dealerWalletStats)');
+    const dealerWalletStats = await Vendor.aggregate([
+      { $group: { _id: null, totalWalletBalance: { $sum: "$wallet" } } },
+    ]);
+    console.log('[financeSummary] dealerWalletStats result:', JSON.stringify(dealerWalletStats));
 
-        // Active dealers count
-        Vendor.countDocuments({ isActive: true }),
+    // ── 3. Active dealers count ──
+    console.log('[financeSummary] running Vendor.countDocuments (activeDealers)');
+    const activeDealers = await Vendor.countDocuments({ isActive: true });
+    console.log('[financeSummary] activeDealers:', activeDealers);
 
-        // All-time booking count
-        Booking.countDocuments(),
+    // ── 4. All-time booking count ──
+    console.log('[financeSummary] running Booking.countDocuments (totalBookings)');
+    const totalBookings = await Booking.countDocuments();
+    console.log('[financeSummary] totalBookings:', totalBookings);
 
-        // Withdrawal breakdown by status
-        Wallet.aggregate([
-          { $match: { transaction_type: "withdrawal" } },
-          {
-            $group: {
-              _id: "$order_status",
-              count: { $sum: 1 },
-              totalAmount: { $sum: "$Amount" },
-            },
-          },
-        ]),
-      ]);
+    // ── 5. Withdrawal breakdown by status ──
+    console.log('[financeSummary] running Wallet.aggregate (withdrawalStats)');
+    const withdrawalStats = await Wallet.aggregate([
+      { $match: { transaction_type: "withdrawal" } },
+      {
+        $group: {
+          _id: "$order_status",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$Amount" },
+        },
+      },
+    ]);
+    console.log('[financeSummary] withdrawalStats result:', JSON.stringify(withdrawalStats));
 
     const bStats = bookingStats[0] || {
       totalBookingValue: 0,
@@ -266,6 +274,17 @@ const getFinanceSummary = async (req, res) => {
       (totalBookingValue - totalCommissionEarned - totalTaxCollected).toFixed(2)
     );
 
+    console.log('[financeSummary] aggregation complete —', {
+      totalBookingValue,
+      totalCommissionEarned,
+      totalTaxCollected,
+      totalDealerEarnings,
+      totalWalletBalance,
+      withdrawals: wBuckets,
+      activeDealers,
+      totalBookings,
+    });
+
     return res.status(200).json({
       success: true,
       data: {
@@ -285,7 +304,8 @@ const getFinanceSummary = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("getFinanceSummary error:", error);
+    console.error('[financeSummary] CAUGHT ERROR:', error);
+    console.error('[financeSummary] stack:', error.stack);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
