@@ -795,6 +795,17 @@ async function updateBookings(req, res) {
       return;
     }
 
+    // Block booking acceptance if dealer has exceeded credit limit
+    if (status === "confirmed") {
+      const BOOKING_CREDIT_LIMIT = -500;
+      if (parseFloat(dealers.wallet) < BOOKING_CREDIT_LIMIT) {
+        return res.status(200).json({
+          status: 200,
+          message: "Booking cannot be accepted. Please clear your outstanding dues to continue accepting bookings."
+        });
+      }
+    }
+
     const datas =
     {
       status: status,
@@ -1444,6 +1455,19 @@ async function updateBookingStatus(req, res) {
         success: false,
         message: "Unauthorized to update this booking"
       });
+    }
+
+    // Block booking acceptance if dealer has exceeded credit limit
+    if (status === "confirmed") {
+      const BOOKING_CREDIT_LIMIT = -500;
+      const dealerForCheck = await Vendor.findById(existingBooking.dealer_id).select("wallet").lean();
+      const dealerWallet = parseFloat(dealerForCheck?.wallet) || 0;
+      if (dealerWallet < BOOKING_CREDIT_LIMIT) {
+        return res.status(200).json({
+          success: false,
+          message: "Booking cannot be accepted. Please clear your outstanding dues to continue accepting bookings."
+        });
+      }
     }
 
     // Update status
