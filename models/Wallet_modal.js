@@ -28,10 +28,10 @@ const walletSchema = new mongoose.Schema({
         enum: ["ACTIVE", "PAID", "PENDING", "IN_PROGRESS", "COMPLETED", "FAILED", "EXPIRED", "APPROVED", "REJECTED"],
         default: "PENDING",
     },
-    // settlement_online | settlement_cash | withdrawal | deposit | manual
+    // settlement_online | settlement_cash | withdrawal | deposit | manual | reconciliation | rollback
     transaction_type: {
         type: String,
-        enum: ["settlement_online", "settlement_cash", "withdrawal", "deposit", "manual"],
+        enum: ["settlement_online", "settlement_cash", "withdrawal", "deposit", "manual", "reconciliation", "rollback"],
         default: "manual",
     },
     pre_balance: {

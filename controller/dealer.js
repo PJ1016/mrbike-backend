@@ -895,8 +895,9 @@ const GetwalletInfo = async (req, res) => {
           ],
           // counts for pagination
           meta: [{ $count: "total" }],
-          // summary (totals)
+          // summary (totals) — excludes REJECTED and rollback entries so they don't skew currentBalance
           summary: [
+            { $match: { order_status: { $ne: "REJECTED" }, transaction_type: { $ne: "rollback" } } },
             {
               $group: {
                 _id: null,
@@ -913,8 +914,6 @@ const GetwalletInfo = async (req, res) => {
               }
             },
             {
-              // currentBalance excludes Pending; if your "Total" is running balance,
-              // you can also take the latest doc's Total instead.
               $addFields: {
                 currentBalance: { $subtract: ["$credits", "$debits"] }
               }
@@ -931,10 +930,16 @@ const GetwalletInfo = async (req, res) => {
       credits: 0, debits: 0, pending: 0, count: 0, currentBalance: 0
     };
 
+    const dealerDoc = await Vendor.findById(dealerId).select("wallet minWalletAmount").lean();
+    const walletAmount = parseFloat(dealerDoc?.wallet) || 0;
+    const minWalletAmount = parseFloat(dealerDoc?.minWalletAmount) || 0;
+
     return res.status(200).json({
       success: true,
       message: "Wallet information",
       data: {
+        walletAmount,
+        minWalletAmount,
         summary,
         transactions,
         pagination: {
@@ -1675,15 +1680,32 @@ const updateWalletStatus = async (req, res) => {
     if (new_status === "REJECTED" && ["PENDING", "IN_PROGRESS"].includes(walletEntry.order_status)) {
       const dealer = await Vendor.findById(walletEntry.dealer_id);
       if (dealer) {
+        const preRollbackBalance = parseFloat(dealer.wallet) || 0;
+
         if (walletEntry.pre_balance !== undefined && walletEntry.pre_balance !== null) {
-          // Precise rollback using the snapshot taken at transaction creation
           dealer.wallet = walletEntry.pre_balance;
         } else {
-          // Fallback for older records without pre_balance
           if (walletEntry.Type === "Credit") dealer.wallet -= walletEntry.Amount;
           else if (walletEntry.Type === "Debit") dealer.wallet += walletEntry.Amount;
         }
         await dealer.save();
+
+        // Compensating ledger entry for full audit trail.
+        // transaction_type "rollback" is excluded from summary.currentBalance by GetwalletInfo,
+        // so this entry does not affect the computed balance — it only appears in history.
+        await Wallet.create({
+          orderId: `ROLLBACK-${walletEntry.orderId}`,
+          dealer_id: walletEntry.dealer_id,
+          Amount: walletEntry.Amount,
+          Type: walletEntry.Type === "Credit" ? "Debit" : "Credit",
+          Note: `Rollback: rejected txn ${walletEntry.orderId}`,
+          Total: dealer.wallet,
+          pre_balance: preRollbackBalance,
+          order_status: "APPROVED",
+          transaction_type: "rollback",
+          ...(walletEntry.booking_id ? { booking_id: walletEntry.booking_id } : {}),
+          ...(walletEntry.performed_by ? { performed_by: walletEntry.performed_by } : {}),
+        });
       }
     }
 
