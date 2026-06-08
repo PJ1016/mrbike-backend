@@ -2075,7 +2075,22 @@ async function getActiveDealers(req, res) {
 // Admin progresses: PENDING → IN_PROGRESS → COMPLETED  (or REJECTED to rollback)
 const createWithdrawalRequest = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    console.log('withdrawal headers', req.headers);
+    console.log('withdrawal body', req.body);
+
+    if (!req.headers.token) {
+      return res.status(401).json({ status: false, message: "Token is required" });
+    }
+
+    let data;
+    try {
+      data = jwt_decode(req.headers.token);
+    } catch (err) {
+      return res.status(401).json({ status: false, message: "Invalid token" });
+    }
+
+    console.log('decoded token', data);
+
     const { user_id, user_type } = data;
     const { dealer_id, amount, note } = req.body;
 
@@ -2088,10 +2103,17 @@ const createWithdrawalRequest = async (req, res) => {
       return res.status(200).json({ status: false, message: "Invalid withdrawal amount" });
     }
 
+    if (!mongoose.Types.ObjectId.isValid(dealer_id)) {
+      return res.status(400).json({ status: false, message: "Invalid dealer id" });
+    }
+
     const dealer = await Vendor.findById(dealer_id);
+    console.log('dealer', dealer);
     if (!dealer) {
       return res.status(200).json({ status: false, message: "Dealer not found" });
     }
+
+    console.log('wallet balance', dealer?.wallet);
 
     if (user_type === 2 && dealer._id.toString() !== user_id) {
       return res.status(200).json({ status: false, message: "You can only withdraw from your own wallet" });
@@ -2131,8 +2153,9 @@ const createWithdrawalRequest = async (req, res) => {
       newBalance: dealer.wallet,
     });
   } catch (error) {
-    console.error("Withdrawal request error:", error);
-    return res.status(500).json({ status: false, message: "Internal server error" });
+    console.error('Withdrawal Error:', error);
+    console.error(error.stack);
+    return res.status(500).json({ status: false, message: error.message || "Internal server error" });
   }
 };
 
