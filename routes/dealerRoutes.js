@@ -32,6 +32,7 @@ var {
 const { getDealerServices, saveDealerServices, getDealersByService } = require("../controller/service")
 const { processDealer } = require("../controller/dealerController")
 const { log } = require("console")
+const { getPayouts, getDealerWalletsSummary } = require("../controller/adminFinance")
 
 const router = express.Router()
 
@@ -570,6 +571,13 @@ router.post(
   addDealerDocuments,
 )
 
+// ── Finance admin routes (must precede param-based routes) ───────────────────
+// GET /bikedoctor/dealer/payouts?status=ALL|PENDING|IN_PROGRESS|APPROVED|REJECTED
+router.get("/payouts", getPayouts)
+// GET /bikedoctor/dealer/wallets/summary
+router.get("/wallets/summary", getDealerWalletsSummary)
+
+// ── Existing wallet routes (preserved for backward compatibility) ─────────────
 router.get("/pending", getPendingWallets)
 router.put("/updatepending/:wallet_id", updateWalletStatus)
 router.post("/withdrawal", createWithdrawalRequest)
