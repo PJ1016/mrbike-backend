@@ -47,6 +47,8 @@ const getPayouts = async (req, res) => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
     const skip = (pageNum - 1) * limitNum;
 
+    console.log('[getPayouts] called — status:', status, 'page:', pageNum, 'limit:', limitNum, 'dealer_id:', dealer_id || 'none');
+
     // Base filter shared by both count and list queries
     const baseFilter = { transaction_type: "withdrawal" };
 
@@ -63,6 +65,8 @@ const getPayouts = async (req, res) => {
         baseFilter.createdAt.$lte = toDate;
       }
     }
+
+    console.log('[getPayouts] baseFilter:', JSON.stringify(baseFilter));
 
     // ── Tab badge counts (single aggregation, always across all statuses) ──
     const countsAgg = await Wallet.aggregate([
@@ -104,8 +108,11 @@ const getPayouts = async (req, res) => {
       }
     }
 
+    console.log('[getPayouts] status counts:', JSON.stringify(counts));
+
     // ── Payout list for the requested tab ──
     const listFilter = { ...baseFilter, ...buildWithdrawalStatusFilter(status) };
+    console.log('[getPayouts] listFilter:', JSON.stringify(listFilter));
 
     const [data, total] = await Promise.all([
       Wallet.find(listFilter)
@@ -116,6 +123,8 @@ const getPayouts = async (req, res) => {
         .lean(),
       Wallet.countDocuments(listFilter),
     ]);
+
+    console.log('[getPayouts] dealer payouts query result', data.length, '/ total:', total);
 
     const rows = data.map((w) => ({
       _id: w._id,
