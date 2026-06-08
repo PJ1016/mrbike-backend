@@ -119,7 +119,7 @@ const getPayouts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum)
-        .populate("dealer_id", "shopName ownerName phone email")
+        .populate("dealer_id", "shopName ownerName phone email id")
         .lean(),
       Wallet.countDocuments(listFilter),
     ]);
@@ -132,6 +132,9 @@ const getPayouts = async (req, res) => {
       dealer: w.dealer_id
         ? {
             _id: w.dealer_id._id,
+            dealerId: w.dealer_id.id
+              ? `MRBD${w.dealer_id.id.toString().padStart(4, "0")}`
+              : null,
             name: w.dealer_id.shopName || w.dealer_id.ownerName,
             phone: w.dealer_id.phone,
             email: w.dealer_id.email,
