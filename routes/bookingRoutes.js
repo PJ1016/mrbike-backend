@@ -24,6 +24,7 @@ const {
     sendOtpToMobile,
     verifyOtpForMobile,
     cancelBooking,
+    getBookingTimerStatus,
     // updateBookingStatusDealer
 } = require("../controller/booking")
 
@@ -63,6 +64,7 @@ router.get('/getNotes/:bookingId', getNotesFromBooking);
 router.put('/updateNote', updateNoteInBooking);
 router.post('/deleteNote', deleteNoteFromBooking);
 router.post('/cancelBooking/:bookingId', cancelBooking);
+router.get('/getBookingTimerStatus/:bookingId', getBookingTimerStatus);
 
 router.get("notification/:receiverId", getNotificationsByReceiverId);
 // router.put('/updateBookingStatus/:booking_id', updateBookingStatusDealer);

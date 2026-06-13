@@ -28,6 +28,7 @@ var {
   updateDealerVerfication,
   setDealerOnline,
   getActiveDealers,
+  registerDealerToken,
 } = require("../controller/dealer")
 const { getDealerServices, saveDealerServices, getDealersByService } = require("../controller/service")
 const { processDealer } = require("../controller/dealerController")
@@ -588,5 +589,7 @@ router.put("/updateVerification", updateDealerVerfication)
 router.post("/vendor/:dealerId/online", setDealerOnline)
 
 router.get("/vendor/active", getActiveDealers)
+
+router.post("/register-token", registerDealerToken)
 
 module.exports = router

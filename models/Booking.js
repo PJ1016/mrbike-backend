@@ -83,9 +83,17 @@ const bookingSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "confirmed", "completed", "Payment", "rejected", "user_cancelled", "cancelled", "cash received"],
+      enum: ["pending", "confirmed", "completed", "Payment", "rejected", "user_cancelled", "cancelled", "cash received", "expired"],
       default: "pending",
     },
+
+    dealerResponseStatus: {
+      type: String,
+      enum: ["awaiting", "accepted", "rejected", "expired"],
+      default: "awaiting",
+    },
+
+    timerExpiresAt: { type: Date, default: null },
 
     userBike_id: { type: mongoose.Schema.Types.ObjectId, ref: "UserBike", required: true },
 
@@ -172,10 +180,12 @@ bookingSchema.pre("save", async function (next) {
 bookingSchema.plugin(AutoIncrement, { id: "booking_seq", inc_field: "id" });
 
 bookingSchema.virtual("vehicleLifecycleStatus").get(function () {
-  // 1. Cancelled states
+  // 1. Cancelled / terminal states
   if (["rejected", "user_cancelled", "cancelled"].includes(this.status)) {
     return "Cancelled";
   }
+
+  if (this.status === "expired") return "Dealer Did Not Respond";
 
   // 2. Initial Booking
   if (this.status === "pending") return "Booking Created";

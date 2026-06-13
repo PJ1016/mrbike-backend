@@ -1151,9 +1151,39 @@ async function createBooking(req, res) {
       pickupOtp,
       deliveryOtp,
       totalBill,
+      status: "pending",
+      dealerResponseStatus: "awaiting",
+      timerExpiresAt: new Date(Date.now() + 60 * 1000),
     });
 
     await newBooking.save();
+
+    console.log(`[BOOKING-CREATED] Booking created with timer: ${newBooking._id}`);
+
+    // ── Notify dealer: socket + FCM ──────────────────────────────────────────
+    try {
+      const dealer = await Vendor.findById(dealer_id).select("device_token").lean();
+
+      // Socket: push booking:new to dealer's personal room
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`dealer:${dealer_id}`).emit("booking:new", {
+          bookingId: newBooking._id,
+          timerExpiresAt: newBooking.timerExpiresAt,
+        });
+      }
+
+      // FCM: push notification to dealer app
+      if (dealer?.device_token) {
+        Notification(
+          dealer.device_token,
+          "New booking request! You have 60 seconds to accept.",
+          dealer_id.toString()
+        );
+      }
+    } catch (notifyErr) {
+      console.error("[BOOKING-CREATED] Dealer notification error:", notifyErr.message);
+    }
 
     return res.status(201).json({
       success: true,
@@ -1161,6 +1191,8 @@ async function createBooking(req, res) {
       data: newBooking,
       pickupOtp,
       deliveryOtp,
+      timerExpiresAt: newBooking.timerExpiresAt,
+      dealerResponseStatus: newBooking.dealerResponseStatus,
     });
   } catch (error) {
     console.error("createBooking error:", error);
@@ -1457,6 +1489,24 @@ async function updateBookingStatus(req, res) {
       });
     }
 
+    // ── Expiry window guard (confirmed / rejected only) ──────────────────────
+    // Transitions like completed / cash received happen after the booking is
+    // already confirmed, so timerExpiresAt being in the past is expected there.
+    // Only dealer accept / reject responses must be within the 60-second window.
+    if (status === "confirmed" || status === "rejected") {
+      if (
+        existingBooking.status === "expired" ||
+        existingBooking.dealerResponseStatus === "expired" ||
+        (existingBooking.timerExpiresAt && existingBooking.timerExpiresAt < new Date())
+      ) {
+        console.log(`[BOOKING-EXPIRED-BLOCKED] Dealer blocked from "${status}" on expired booking: ${bookingId}`);
+        return res.status(400).json({
+          success: false,
+          message: "Booking response window has expired. The user will be notified to choose another dealer."
+        });
+      }
+    }
+
     // Block booking acceptance if dealer has exceeded credit limit
     if (status === "confirmed") {
       const BOOKING_CREDIT_LIMIT = -500;
@@ -1470,14 +1520,63 @@ async function updateBookingStatus(req, res) {
       }
     }
 
-    // Update status
-    existingBooking.status = status;
+    // ── Update status ─────────────────────────────────────────────────────────
+    if (status === "confirmed" || status === "rejected") {
+      // Atomic write: only succeeds if the booking is still pending+awaiting
+      // within the timer window. If the expiry job fired between our read above
+      // and this update, findOneAndUpdate returns null and we block the response.
+      const atomicResult = await booking.findOneAndUpdate(
+        {
+          _id: existingBooking._id,
+          status: "pending",
+          dealerResponseStatus: "awaiting",
+          timerExpiresAt: { $gt: new Date() },
+        },
+        {
+          $set: {
+            status: status,
+            dealerResponseStatus: status === "confirmed" ? "accepted" : "rejected",
+          },
+        },
+        { new: true }
+      );
 
-    if (status === "cash received") {
-      existingBooking.billStatus = "paid";
+      if (!atomicResult) {
+        // Expiry job won the race between our read and this write
+        console.log(`[BOOKING-EXPIRED-BLOCKED] Race condition caught — booking already expired: ${bookingId}`);
+        return res.status(400).json({
+          success: false,
+          message: "Booking response window has expired. The user will be notified to choose another dealer."
+        });
+      }
+
+      existingBooking = atomicResult;
+
+      if (status === "confirmed") {
+        console.log(`[BOOKING-ACCEPTED] Dealer accepted booking: ${bookingId}`);
+      } else {
+        console.log(`[BOOKING-REJECTED] Dealer rejected booking: ${bookingId}`);
+      }
+
+      // Notify user via socket
+      const io = req.app.get("io");
+      if (io) {
+        const eventName = status === "confirmed" ? "booking:confirmed" : "booking:rejected";
+        io.to(`booking:${bookingId}`).emit(eventName, {
+          bookingId,
+          dealerResponseStatus: existingBooking.dealerResponseStatus,
+        });
+      }
+    } else {
+      // All other transitions (completed, cash received, cancelled, etc.)
+      existingBooking.status = status;
+
+      if (status === "cash received") {
+        existingBooking.billStatus = "paid";
+      }
+
+      await existingBooking.save();
     }
-
-    await existingBooking.save();
 
     // Handle completion logic if needed
     if (status === "completed") {
@@ -2176,6 +2275,51 @@ async function cancelBooking(req, res) {
   }
 }
 
+async function getBookingTimerStatus(req, res) {
+  try {
+    const { bookingId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({ success: false, message: "Invalid booking ID" });
+    }
+
+    const bookingData = await booking
+      .findById(bookingId)
+      .select("_id bookingId status dealerResponseStatus timerExpiresAt")
+      .lean();
+
+    if (!bookingData) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    const now = new Date();
+
+    // secondsRemaining is 0 for any terminal dealer-response state
+    const isTerminal =
+      !bookingData.timerExpiresAt ||
+      bookingData.status === "expired" ||
+      bookingData.dealerResponseStatus === "accepted" ||
+      bookingData.dealerResponseStatus === "rejected" ||
+      bookingData.dealerResponseStatus === "expired";
+
+    const secondsRemaining = isTerminal
+      ? 0
+      : Math.max(0, Math.floor((new Date(bookingData.timerExpiresAt) - now) / 1000));
+
+    return res.status(200).json({
+      success: true,
+      bookingId: bookingData._id,
+      status: bookingData.status,
+      dealerResponseStatus: bookingData.dealerResponseStatus,
+      timerExpiresAt: bookingData.timerExpiresAt,
+      secondsRemaining,
+    });
+  } catch (error) {
+    console.error("getBookingTimerStatus error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   addbooking,
   getallbookings,
@@ -2196,6 +2340,7 @@ module.exports = {
   deleteNoteFromBooking,
   sendOtpToMobile,
   verifyOtpForMobile,
-  cancelBooking
+  cancelBooking,
+  getBookingTimerStatus,
 }
 

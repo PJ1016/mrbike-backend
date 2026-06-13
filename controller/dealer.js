@@ -2219,6 +2219,42 @@ const createDeposit = async (req, res) => {
   }
 };
 
+async function registerDealerToken(req, res) {
+  try {
+    const data = jwt_decode(req.headers.token);
+    const dealer_id = data.user_id;
+
+    if (!dealer_id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { device_token } = req.body;
+
+    if (!device_token || typeof device_token !== "string" || device_token.trim() === "") {
+      return res.status(400).json({ success: false, message: "device_token is required" });
+    }
+
+    const dealer = await Vendor.findByIdAndUpdate(
+      dealer_id,
+      { device_token: device_token.trim() },
+      { new: true, select: "_id shopName device_token" }
+    );
+
+    if (!dealer) {
+      return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Device token registered successfully",
+      data: { dealer_id: dealer._id, device_token: dealer.device_token },
+    });
+  } catch (error) {
+    console.error("registerDealerToken error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   getActiveDealers,
   editDealer,
@@ -2245,4 +2281,5 @@ module.exports = {
   setDealerOnline,
   createWithdrawalRequest,
   createDeposit,
+  registerDealerToken,
 };
