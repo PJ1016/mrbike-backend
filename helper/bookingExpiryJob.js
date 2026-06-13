@@ -1,7 +1,7 @@
 const Booking = require("../models/Booking");
 const Tracking = require("../models/Tracking");
 const Customer = require("../models/customer_model");
-const { Notification } = require("./pushNotification");
+const { sendBookingNotification } = require("./pushNotification");
 
 const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
 
@@ -28,11 +28,15 @@ async function expireBooking(bookingDoc, io) {
     const customer = await Customer.findById(bookingDoc.user_id).select("device_token ftoken").lean();
     const userToken = customer?.device_token || customer?.ftoken;
     if (userToken) {
-      await Notification(
-        userToken,
-        "Dealer did not respond in time. Please choose another dealer for your booking.",
-        bookingDoc.user_id.toString()
-      );
+      await sendBookingNotification({
+        token: userToken,
+        title: "Booking Expired",
+        body: "The dealer did not respond within 60 seconds.",
+        data: { type: "booking_expired", bookingId: bookingId.toString() },
+        receiverId: bookingDoc.user_id,
+        receiverType: "user",
+        bookingId: bookingDoc._id,
+      });
     }
 
     // ── 3. Socket.IO event to user's booking room ────────────────────────────

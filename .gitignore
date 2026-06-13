@@ -1,3 +1,6 @@
 /node_modules
 .env
-helper/firebase/drbike-1bd1a-firebase-adminsdk-fiyfv-c918ee06ee.json
+helper/firebase/drbike-1bd1a-firebase-adminsdk-fiyfv-c918ee06ee.jsonhelper/firebase/*.json
+helper/firebase/*.json
+
+

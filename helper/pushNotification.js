@@ -200,6 +200,52 @@ async function Notification(deviceToken, messageBody, dealer_id) {
   }
 }
 
+// Structured booking notification — title, body, data, receiverType all explicit.
+// FCM data payload requires all values to be strings.
+async function sendBookingNotification({ token, title, body, data, receiverId, receiverType, bookingId }) {
+  if (!token) return;
+
+  const fcmData = Object.fromEntries(
+    Object.entries(data).map(([k, v]) => [k, String(v)])
+  );
+
+  const message = {
+    token,
+    notification: { title, body },
+    data: fcmData,
+    android: {
+      priority: "high",
+      notification: { sound: "notifi", channel_id: "Provider.channel" },
+    },
+  };
+
+  const notificationEntry = new NotificationModel({
+    title,
+    body,
+    data,
+    receiverId,
+    receiverType,
+    bookingId,
+    status: "pending",
+  });
+
+  try {
+    await notificationEntry.save();
+    const response = await admin.messaging().send(message);
+    console.log(`[FCM-SENT] ${title} → ${receiverType}:${receiverId} | ${response}`);
+    notificationEntry.status = "sent";
+    notificationEntry.sentAt = new Date();
+    await notificationEntry.save();
+  } catch (err) {
+    console.error(`[FCM-FAILED] ${title} → ${receiverType}:${receiverId} | ${err.message}`);
+    if (notificationEntry._id) {
+      notificationEntry.status = "failed";
+      await notificationEntry.save().catch(() => {});
+    }
+  }
+}
+
 module.exports = {
   Notification,
+  sendBookingNotification,
 };
