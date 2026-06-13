@@ -10,7 +10,7 @@ const customers = require("../models/customer_model");
 const Dealer = require("../models/Dealer");
 const Role = require('../models/Roles_modal')
 const Admin = require('../models/admin_model')
-const { Notification } = require("../helper/pushNotification");
+const { Notification, sendBookingNotification } = require("../helper/pushNotification");
 const { handleBookingCompletion } = require("../controller/reward")
 const { generateBill } = require("../controller/payment")
 const { settleBookingWallet } = require("../helper/walletSettlement")
@@ -1175,11 +1175,15 @@ async function createBooking(req, res) {
 
       // FCM: push notification to dealer app
       if (dealer?.device_token) {
-        Notification(
-          dealer.device_token,
-          "New booking request! You have 60 seconds to accept.",
-          dealer_id.toString()
-        );
+        sendBookingNotification({
+          token: dealer.device_token,
+          title: "New Booking Request",
+          body: "You have received a new booking request.",
+          data: { type: "new_booking", bookingId: newBooking._id.toString() },
+          receiverId: dealer_id,
+          receiverType: "dealer",
+          bookingId: newBooking._id,
+        });
       }
     } catch (notifyErr) {
       console.error("[BOOKING-CREATED] Dealer notification error:", notifyErr.message);
@@ -1566,6 +1570,32 @@ async function updateBookingStatus(req, res) {
           bookingId,
           dealerResponseStatus: existingBooking.dealerResponseStatus,
         });
+      }
+
+      // FCM: push notification to user on accept / reject
+      try {
+        const userForNotif = await Customer.findById(existingBooking.user_id)
+          .select("device_token ftoken")
+          .lean();
+        const userToken = userForNotif?.device_token || userForNotif?.ftoken;
+        if (userToken) {
+          await sendBookingNotification({
+            token: userToken,
+            title: status === "confirmed" ? "Booking Accepted" : "Booking Rejected",
+            body: status === "confirmed"
+              ? "Your booking has been accepted by the dealer."
+              : "The dealer rejected your booking request.",
+            data: {
+              type: status === "confirmed" ? "booking_accepted" : "booking_rejected",
+              bookingId: bookingId.toString(),
+            },
+            receiverId: existingBooking.user_id,
+            receiverType: "user",
+            bookingId: existingBooking._id,
+          });
+        }
+      } catch (notifyErr) {
+        console.error("[BOOKING-RESPONSE] User FCM notification error:", notifyErr.message);
       }
     } else {
       // All other transitions (completed, cash received, cancelled, etc.)
