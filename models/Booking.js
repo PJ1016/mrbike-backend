@@ -83,7 +83,21 @@ const bookingSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "confirmed", "completed", "Payment", "rejected", "user_cancelled", "cancelled", "cash received", "expired"],
+      enum: [
+        "pending",
+        "confirmed",
+        "completed",
+        "awaiting_payment",
+        "payment_selected",
+        "ready_for_delivery",
+        "delivered",
+        "Payment",
+        "rejected",
+        "user_cancelled",
+        "cancelled",
+        "cash received",
+        "expired",
+      ],
       default: "pending",
     },
 
@@ -136,6 +150,16 @@ const bookingSchema = new mongoose.Schema(
 
     create_date: { type: Date, default: Date.now },
     walletSettled: { type: Boolean, default: false },
+
+    payment_method:      { type: String, enum: ["ONLINE", "CASH"], default: null },
+    payment_status:      { type: String, enum: ["pending", "completed", "failed"], default: "pending" },
+    payment_verified:    { type: Boolean, default: false },
+
+    otp_verified:        { type: Boolean, default: false },
+    delivered_at:        { type: Date, default: null },
+
+    otp_regen_count:     { type: Number, default: 0 },
+    otp_failed_attempts: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
@@ -210,12 +234,32 @@ bookingSchema.virtual("vehicleLifecycleStatus").get(function () {
       return "Bill Generated (Pending Payment)";
   }
 
-  // 5. Payment & Delivery closure
+  // 5. Payment selection
+  if (this.status === "awaiting_payment") {
+    return "Service Completed — Select Payment Method";
+  }
+
+  if (this.status === "payment_selected") {
+    return this.payment_method === "CASH"
+      ? "Cash Payment — Awaiting Dealer Confirmation"
+      : "Online Payment — Awaiting Confirmation";
+  }
+
+  // 6. Payment & Delivery closure (legacy paths)
   if (
     this.billStatus === "paid" ||
     ["Payment", "cash received"].includes(this.status)
   ) {
     return "Payment Completed (Ready for Delivery)";
+  }
+
+  // 7. Post-payment delivery
+  if (this.status === "ready_for_delivery") {
+    return "Payment Confirmed — Awaiting Handover OTP";
+  }
+
+  if (this.status === "delivered") {
+    return "Bike Delivered";
   }
 
   return "Unknown Status";

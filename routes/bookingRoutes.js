@@ -25,6 +25,11 @@ const {
     verifyOtpForMobile,
     cancelBooking,
     getBookingTimerStatus,
+    serviceComplete,
+    selectPaymentMethod,
+    confirmCashReceived,
+    verifyDeliveryOtp,
+    regenerateDeliveryOtp,
     // updateBookingStatusDealer
 } = require("../controller/booking")
 
@@ -65,6 +70,11 @@ router.put('/updateNote', updateNoteInBooking);
 router.post('/deleteNote', deleteNoteFromBooking);
 router.post('/cancelBooking/:bookingId', cancelBooking);
 router.get('/getBookingTimerStatus/:bookingId', getBookingTimerStatus);
+router.post('/:bookingId/service-complete', serviceComplete);
+router.post('/:bookingId/select-payment-method', selectPaymentMethod);
+router.post('/:bookingId/confirm-cash-received', confirmCashReceived);
+router.post('/verify-delivery-otp', verifyDeliveryOtp);
+router.post('/:bookingId/regenerate-delivery-otp', regenerateDeliveryOtp);
 
 router.get("notification/:receiverId", getNotificationsByReceiverId);
 // router.put('/updateBookingStatus/:booking_id', updateBookingStatusDealer);
