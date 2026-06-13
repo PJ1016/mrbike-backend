@@ -284,6 +284,7 @@ require("dotenv").config();
 const apiRouter = require("./routes/index");
 const db = require("./models/index");
 const errorMiddleware = require("./middlewares/error");
+const bookingExpiryJob = require("./helper/bookingExpiryJob");
 
 const app = express();
 const server = http.createServer(app);
@@ -321,6 +322,16 @@ io.on("connection", (socket) => {
   });
   socket.on("ticket:leave", ({ ticketId }) => {
     if (ticketId) socket.leave(String(ticketId));
+  });
+
+  // Dealer joins their personal room to receive new booking alerts
+  socket.on("booking:joinDealer", ({ dealerId }) => {
+    if (dealerId) socket.join(`dealer:${dealerId}`);
+  });
+
+  // User joins their booking room to receive accept/reject/expired events
+  socket.on("booking:joinUser", ({ bookingId }) => {
+    if (bookingId) socket.join(`booking:${bookingId}`);
   });
 });
 
@@ -370,9 +381,10 @@ db.mongoose
     useUnifiedTopology: true,
     useNewUrlParser: true,
   })
-  .then((data) =>
-    console.log("Mongodb connected with:", data.connection.host)
-  )
+  .then((data) => {
+    console.log("Mongodb connected with:", data.connection.host);
+    bookingExpiryJob.start(io);
+  })
   .catch((err) => console.log("MongoDB error:", err));
 
 /* ==============================

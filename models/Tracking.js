@@ -8,7 +8,7 @@ const trackingSchema = new mongoose.Schema({
       },
     status:{
         type:String,
-        enum : ["Order Placed","Order Confirmed","Order Completed","Payment","rejected","cash recieved"],
+        enum : ["Order Placed","Order Confirmed","Order Completed","Payment","rejected","cash recieved","expired"],
         default:'Order Placed',
     },
     service_id:{
