@@ -1,5 +1,6 @@
 var crypto = require('crypto');
 const jwt_decode = require("jwt-decode");
+const { sendBookingNotification } = require("../helper/pushNotification");
 const { settleBookingWallet } = require("../helper/walletSettlement");
 const { type } = require("os");
 const Booking = require("../models/Booking");
@@ -173,6 +174,85 @@ const paymentWebhook = async (req, res) => {
             await creditDealerWalletOnTopup(payment);
             console.log(`🎉 Wallet top-up webhook done: orderId=${orderId}`);
             return res.status(200).send("Webhook processed successfully");
+        }
+
+        // ONLINE payment flow: payment_selected → ready_for_delivery
+        // Idempotency guard: payment_verified === false ensures this block runs exactly once
+        if (mappedStatus === "SUCCESS") {
+            const onlineBooking = await Booking.findById(payment.booking_id);
+            if (
+                onlineBooking &&
+                onlineBooking.payment_method === "ONLINE" &&
+                onlineBooking.status === "payment_selected" &&
+                onlineBooking.payment_verified === false
+            ) {
+                const deliveryOtp = Math.floor(1000 + Math.random() * 9000);
+
+                await Booking.findByIdAndUpdate(payment.booking_id, {
+                    $set: {
+                        payment_status: "completed",
+                        payment_verified: true,
+                        deliveryOtp,
+                        status: "ready_for_delivery",
+                        billStatus: "paid",
+                        paymentDate: new Date(paymentTime || Date.now()),
+                    },
+                });
+                console.log(`[WEBHOOK-ONLINE] Booking ${payment.booking_id} → ready_for_delivery`);
+
+                await generateBill(payment);
+
+                try {
+                    const settlement = await settleBookingWallet(payment.booking_id, "ONLINE");
+                    if (settlement) {
+                        console.log(`[WEBHOOK-ONLINE] Wallet settled: ₹${settlement.txnAmount}`);
+                    } else {
+                        console.log(`[WEBHOOK-ONLINE] Wallet already settled for: ${payment.booking_id}`);
+                    }
+                } catch (settlementErr) {
+                    console.error(`[WEBHOOK-ONLINE] Wallet settlement failed:`, settlementErr.message);
+                }
+
+                // Notify dealer — no OTP in body or data
+                try {
+                    const dealer = await Dealer.findById(onlineBooking.dealer_id).select("device_token").lean();
+                    if (dealer?.device_token) {
+                        await sendBookingNotification({
+                            token: dealer.device_token,
+                            title: "Payment Received",
+                            body: "Customer payment received",
+                            data: { type: "online_payment_received", bookingId: payment.booking_id.toString() },
+                            receiverId: onlineBooking.dealer_id,
+                            receiverType: "dealer",
+                            bookingId: onlineBooking._id,
+                        });
+                    }
+                } catch (notifyErr) {
+                    console.error(`[WEBHOOK-ONLINE] Dealer notify error:`, notifyErr.message);
+                }
+
+                // Notify user — OTP only in data.otp, never in body
+                try {
+                    const user = await Customer.findById(onlineBooking.user_id).select("device_token ftoken").lean();
+                    const userToken = user?.device_token || user?.ftoken;
+                    if (userToken) {
+                        await sendBookingNotification({
+                            token: userToken,
+                            title: "Bike Ready for Pickup",
+                            body: "Your bike is ready for pickup",
+                            data: { type: "ready_for_delivery", bookingId: payment.booking_id.toString(), otp: String(deliveryOtp) },
+                            receiverId: onlineBooking.user_id,
+                            receiverType: "user",
+                            bookingId: onlineBooking._id,
+                        });
+                    }
+                } catch (notifyErr) {
+                    console.error(`[WEBHOOK-ONLINE] User notify error:`, notifyErr.message);
+                }
+
+                console.log(`[WEBHOOK-ONLINE] Done: orderId=${orderId}`);
+                return res.status(200).send("Webhook processed successfully");
+            }
         }
 
         // ✅ NEW: Generate Bill if payment is successful

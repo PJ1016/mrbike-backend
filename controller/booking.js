@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
+const axios = require("axios");
 const booking = require("../models/Booking");
+const Payment = require("../models/Payment");
 const additionaloptions = require("../models/additionalOptionsModel");
 const AdditionalService = require("../models/additionalServiceSchema");
 const service = require("../models/service_model");
@@ -2350,6 +2352,629 @@ async function getBookingTimerStatus(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVICE COMPLETE → PAYMENT → DELIVERY OTP FLOW
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CASHFREE_ORDERS_URL =
+  process.env.CASHFREE_ENV === "production"
+    ? "https://api.cashfree.com/pg/orders"
+    : "https://sandbox.cashfree.com/pg/orders";
+
+// 1. Dealer marks service as complete
+// POST /bookings/:bookingId/service-complete  { user_id }
+const serviceComplete = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { user_id } = req.body;
+
+    if (!bookingId || !user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "bookingId (param) and user_id (body) are required",
+      });
+    }
+
+    const bookingDoc = await booking.findById(bookingId);
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    if (bookingDoc.dealer_id.toString() !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assigned dealer can mark service as complete",
+      });
+    }
+
+    if (bookingDoc.status !== "confirmed") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot mark service complete. Current status: ${bookingDoc.status}. Expected: confirmed`,
+      });
+    }
+
+    bookingDoc.status = "awaiting_payment";
+    await bookingDoc.save();
+
+    console.log(`[SERVICE-COMPLETE] Booking ${bookingId} → awaiting_payment`);
+
+    // Push notification to user
+    try {
+      const user = await Customer.findById(bookingDoc.user_id)
+        .select("device_token ftoken")
+        .lean();
+      const userToken = user?.device_token || user?.ftoken;
+      if (userToken) {
+        await sendBookingNotification({
+          token: userToken,
+          title: "Service Completed",
+          body: "Your bike service has been completed. Please select a payment method.",
+          data: { type: "service_completed", bookingId: bookingId.toString() },
+          receiverId: bookingDoc.user_id,
+          receiverType: "user",
+          bookingId: bookingDoc._id,
+        });
+      }
+    } catch (notifyErr) {
+      console.error("[SERVICE-COMPLETE] FCM error:", notifyErr.message);
+    }
+
+    // Socket emit to user room
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${bookingDoc.user_id}`).emit("booking:service_complete", {
+        bookingId,
+        status: "awaiting_payment",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Service marked complete. User notified to select payment method.",
+      data: { bookingId, status: "awaiting_payment" },
+    });
+  } catch (error) {
+    console.error("[SERVICE-COMPLETE] Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// 2. User selects ONLINE or CASH payment method
+// POST /bookings/:bookingId/select-payment-method  { user_id, payment_method }
+const selectPaymentMethod = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { user_id, payment_method } = req.body;
+
+    if (!bookingId || !user_id || !payment_method) {
+      return res.status(400).json({
+        success: false,
+        message: "bookingId (param), user_id and payment_method are required",
+      });
+    }
+
+    if (!["ONLINE", "CASH"].includes(payment_method)) {
+      return res.status(400).json({
+        success: false,
+        message: "payment_method must be 'ONLINE' or 'CASH'",
+      });
+    }
+
+    const bookingDoc = await booking.findById(bookingId);
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    // User-only guard
+    if (bookingDoc.user_id.toString() !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the booking owner can select a payment method",
+      });
+    }
+
+    // Status guard
+    if (bookingDoc.status !== "awaiting_payment") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot select payment method. Current status: ${bookingDoc.status}. Expected: awaiting_payment`,
+      });
+    }
+
+    // Immutability guard — cannot change once selected
+    if (bookingDoc.payment_method !== null && bookingDoc.payment_method !== undefined) {
+      return res.status(409).json({
+        success: false,
+        message: `Payment method already set to '${bookingDoc.payment_method}'. Cannot be changed.`,
+      });
+    }
+
+    bookingDoc.payment_method = payment_method;
+    bookingDoc.status = "payment_selected";
+    await bookingDoc.save();
+
+    console.log(`[SELECT-PAYMENT] Booking ${bookingId} → payment_selected (${payment_method})`);
+
+    const io = req.app.get("io");
+
+    // ── ONLINE PATH ────────────────────────────────────────────────────────────
+    if (payment_method === "ONLINE") {
+      try {
+        const userDoc = await Customer.findById(user_id)
+          .select("first_name last_name email phone")
+          .lean();
+
+        const orderId = `ORD_${Date.now()}_${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+
+        const cfPayload = {
+          order_id: orderId,
+          order_amount: parseFloat(bookingDoc.totalBill) || 1,
+          order_currency: "INR",
+          customer_details: {
+            customer_id: user_id,
+            customer_name: `${userDoc?.first_name || "Customer"} ${userDoc?.last_name || ""}`.trim(),
+            customer_email: userDoc?.email || "customer@example.com",
+            customer_phone: String(userDoc?.phone || "9999999999").slice(-10),
+          },
+          order_meta: {
+            return_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment/callback?order_id={order_id}`,
+            notify_url: `${process.env.BACKEND_URL || "http://localhost:8001"}/api/payments/webhook`,
+          },
+          order_note: `Service payment for booking ${bookingDoc.bookingId || bookingId}`,
+        };
+
+        const cfResponse = await axios.post(CASHFREE_ORDERS_URL, cfPayload, {
+          headers: {
+            "x-client-id": process.env.CASHFREE_APP_ID || process.env.APP_ID,
+            "x-client-secret": process.env.CASHFREE_SECRET_KEY || process.env.SECRET_KEY,
+            "x-api-version": "2022-09-01",
+            "Content-Type": "application/json",
+          },
+        });
+
+        const cfData = cfResponse.data;
+
+        await Payment.create({
+          cf_order_id: cfData.cf_order_id,
+          orderId,
+          booking_id: bookingDoc._id,
+          dealer_id: bookingDoc.dealer_id,
+          user_id: bookingDoc.user_id,
+          orderAmount: bookingDoc.totalBill || 0,
+          payment_type: "ONLINE",
+          order_currency: "INR",
+          order_status: cfData.order_status === "ACTIVE" ? "PENDING" : (cfData.order_status || "PENDING"),
+          order_token: cfData.order_token || `temp_${Date.now()}`,
+          payment_by: "user",
+        });
+
+        let checkoutUrl = cfData.payment_link;
+        if (!checkoutUrl && cfData.payment_session_id) {
+          const cfDomain = process.env.CASHFREE_ENV === "production"
+            ? "payments.cashfree.com"
+            : "sandbox.cashfree.com";
+          checkoutUrl = `https://${cfDomain}/pg/orders/${orderId}/payments`;
+        }
+
+        return res.status(200).json({
+          success: true,
+          payment_method: "ONLINE",
+          message: "Payment order created. Redirect user to checkout.",
+          data: {
+            orderId,
+            checkout_url: checkoutUrl,
+            payment_session_id: cfData.payment_session_id,
+            amount: bookingDoc.totalBill,
+          },
+        });
+      } catch (cfError) {
+        console.error("[SELECT-PAYMENT] Cashfree error:", cfError.response?.data || cfError.message);
+        // Rollback — Cashfree order creation failed
+        bookingDoc.status = "awaiting_payment";
+        bookingDoc.payment_method = null;
+        await bookingDoc.save();
+        return res.status(502).json({
+          success: false,
+          message: "Failed to create payment order. Please try again.",
+          error: cfError.response?.data || cfError.message,
+        });
+      }
+    }
+
+    // ── CASH PATH ──────────────────────────────────────────────────────────────
+    try {
+      const dealer = await Vendor.findById(bookingDoc.dealer_id)
+        .select("device_token ftoken")
+        .lean();
+      const dealerToken = dealer?.device_token || dealer?.ftoken;
+      if (dealerToken) {
+        await sendBookingNotification({
+          token: dealerToken,
+          title: "Cash Payment Expected",
+          body: "Customer will pay cash at pickup. Please confirm when cash is received.",
+          data: {
+            type: "cash_payment_selected",
+            bookingId: bookingId.toString(),
+          },
+          receiverId: bookingDoc.dealer_id,
+          receiverType: "dealer",
+          bookingId: bookingDoc._id,
+        });
+      }
+    } catch (notifyErr) {
+      console.error("[SELECT-PAYMENT] Dealer FCM error:", notifyErr.message);
+    }
+
+    if (io) {
+      io.to(`dealer:${bookingDoc.dealer_id}`).emit("booking:cash_payment_selected", {
+        bookingId,
+        status: "payment_selected",
+        payment_method: "CASH",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      payment_method: "CASH",
+      message: "Cash payment selected. Dealer has been notified.",
+      data: { bookingId, status: "payment_selected" },
+    });
+  } catch (error) {
+    console.error("[SELECT-PAYMENT] Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// 3. Dealer confirms cash received from customer
+// POST /bookings/:bookingId/confirm-cash-received  { user_id }
+const confirmCashReceived = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { user_id } = req.body;
+
+    if (!bookingId || !user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "bookingId (param) and user_id (body) are required",
+      });
+    }
+
+    const bookingDoc = await booking.findById(bookingId);
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    // Dealer-only guard
+    if (bookingDoc.dealer_id.toString() !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assigned dealer can confirm cash receipt",
+      });
+    }
+
+    // Payment method guard
+    if (bookingDoc.payment_method !== "CASH") {
+      return res.status(400).json({
+        success: false,
+        message: `This endpoint is for CASH payments only. Current payment_method: ${bookingDoc.payment_method}`,
+      });
+    }
+
+    // Status guard
+    if (bookingDoc.status !== "payment_selected") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot confirm cash. Current status: ${bookingDoc.status}. Expected: payment_selected`,
+      });
+    }
+
+    const freshOtp = genOtp();
+
+    bookingDoc.payment_status   = "completed";
+    bookingDoc.payment_verified = true;
+    bookingDoc.deliveryOtp      = freshOtp;
+    bookingDoc.status           = "ready_for_delivery";
+    bookingDoc.billStatus       = "paid";
+    await bookingDoc.save();
+
+    console.log(`[CASH-CONFIRM] Booking ${bookingId} → ready_for_delivery | OTP: ${freshOtp}`);
+
+    // Bill generation — reuse existing generateBill
+    try {
+      await generateBill({
+        booking_id: bookingDoc._id,
+        payment_method: "CASH",
+        transaction_id: null,
+        _id: null,
+      });
+    } catch (billErr) {
+      console.error("[CASH-CONFIRM] Bill generation failed:", billErr.message);
+    }
+
+    // Wallet settlement — reuse existing settleBookingWallet
+    try {
+      const settlement = await settleBookingWallet(bookingDoc._id, "CASH");
+      if (settlement) {
+        console.log(`[CASH-CONFIRM] Wallet settled: ₹${settlement.txnAmount} debited (commission ${settlement.commissionRate}%)`);
+      } else {
+        console.log(`[CASH-CONFIRM] Wallet already settled for booking: ${bookingId}`);
+      }
+    } catch (settlErr) {
+      console.error("[CASH-CONFIRM] Wallet settlement failed:", settlErr.message);
+    }
+
+    // Push OTP to user — OTP is in data payload only, NOT in notification body
+    try {
+      const user = await Customer.findById(bookingDoc.user_id)
+        .select("device_token ftoken")
+        .lean();
+      const userToken = user?.device_token || user?.ftoken;
+      if (userToken) {
+        await sendBookingNotification({
+          token: userToken,
+          title: "Cash Confirmed — Show OTP to Dealer",
+          body: "Cash payment confirmed. Show the OTP to the dealer to collect your bike.",
+          data: {
+            type: "otp_ready",
+            bookingId: bookingId.toString(),
+            otp: String(freshOtp),
+          },
+          receiverId: bookingDoc.user_id,
+          receiverType: "user",
+          bookingId: bookingDoc._id,
+        });
+      }
+    } catch (notifyErr) {
+      console.error("[CASH-CONFIRM] User FCM error:", notifyErr.message);
+    }
+
+    // Socket emit to user room
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${bookingDoc.user_id}`).emit("booking:ready_for_delivery", {
+        bookingId,
+        status: "ready_for_delivery",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Cash confirmed. Delivery OTP sent to customer.",
+      data: { bookingId, status: "ready_for_delivery" },
+    });
+  } catch (error) {
+    console.error("[CASH-CONFIRM] Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// 4. Dealer verifies the handover OTP shown by the customer
+// POST /bookings/verify-delivery-otp  { bookingId, otp, user_id }
+const verifyDeliveryOtp = async (req, res) => {
+  try {
+    const { bookingId, otp, user_id } = req.body;
+
+    if (!bookingId || !otp || !user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "bookingId, otp and user_id are required",
+      });
+    }
+
+    const incoming = String(otp).trim();
+    if (!/^\d{4}$/.test(incoming)) {
+      return res.status(400).json({ success: false, message: "OTP must be exactly 4 digits" });
+    }
+
+    const bookingDoc = await booking.findById(bookingId);
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    // Dealer-only guard
+    if (bookingDoc.dealer_id.toString() !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assigned dealer can verify the handover OTP",
+      });
+    }
+
+    // Status guard
+    if (bookingDoc.status !== "ready_for_delivery") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot verify delivery OTP. Current status: ${bookingDoc.status}. Expected: ready_for_delivery`,
+      });
+    }
+
+    // Lockout guard — checked before touching DB again
+    if (bookingDoc.otp_failed_attempts >= 5) {
+      return res.status(423).json({
+        success: false,
+        message: "OTP verification locked after 5 failed attempts. Please contact support.",
+        locked: true,
+      });
+    }
+
+    // OTP presence guard
+    if (bookingDoc.deliveryOtp == null) {
+      return res.status(409).json({
+        success: false,
+        message: "Delivery OTP not present or already used.",
+      });
+    }
+
+    const storedOtp = String(bookingDoc.deliveryOtp).trim();
+
+    // ── OTP MISMATCH ───────────────────────────────────────────────────────────
+    if (incoming !== storedOtp) {
+      bookingDoc.otp_failed_attempts += 1;
+      await bookingDoc.save();
+      const remaining = 5 - bookingDoc.otp_failed_attempts;
+      return res.status(401).json({
+        success: false,
+        message: `Invalid OTP. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`,
+        attempts_remaining: remaining,
+      });
+    }
+
+    // ── OTP MATCHED — close the booking ───────────────────────────────────────
+    bookingDoc.deliveryOtp          = null;
+    bookingDoc.otp_verified         = true;
+    bookingDoc.delivered_at         = new Date();
+    bookingDoc.status               = "delivered";
+    await bookingDoc.save();
+
+    console.log(`[VERIFY-OTP] Booking ${bookingId} → delivered`);
+
+    // Rewards / loyalty
+    try {
+      await handleBookingCompletion(bookingDoc);
+    } catch (rewardErr) {
+      console.error("[VERIFY-OTP] handleBookingCompletion error:", rewardErr.message);
+    }
+
+    // Push "Bike Delivered" to user
+    try {
+      const user = await Customer.findById(bookingDoc.user_id)
+        .select("device_token ftoken")
+        .lean();
+      const userToken = user?.device_token || user?.ftoken;
+      if (userToken) {
+        await sendBookingNotification({
+          token: userToken,
+          title: "Bike Delivered",
+          body: "Your bike has been handed over. Ride safe!",
+          data: { type: "bike_delivered", bookingId: bookingId.toString() },
+          receiverId: bookingDoc.user_id,
+          receiverType: "user",
+          bookingId: bookingDoc._id,
+        });
+      }
+    } catch (notifyErr) {
+      console.error("[VERIFY-OTP] User FCM error:", notifyErr.message);
+    }
+
+    // Socket emit to user room
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${bookingDoc.user_id}`).emit("booking:delivered", {
+        bookingId,
+        status: "delivered",
+        delivered_at: bookingDoc.delivered_at,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Delivery OTP verified. Bike delivered successfully.",
+      data: {
+        bookingId,
+        status: "delivered",
+        delivered_at: bookingDoc.delivered_at,
+      },
+    });
+  } catch (error) {
+    console.error("[VERIFY-OTP] Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// 5. Dealer regenerates delivery OTP (customer didn't receive it)
+// POST /bookings/:bookingId/regenerate-delivery-otp  { user_id }
+const regenerateDeliveryOtp = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { user_id } = req.body;
+
+    if (!bookingId || !user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "bookingId (param) and user_id (body) are required",
+      });
+    }
+
+    const bookingDoc = await booking.findById(bookingId);
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    // Dealer-only guard
+    if (bookingDoc.dealer_id.toString() !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assigned dealer can regenerate the OTP",
+      });
+    }
+
+    // Status guard
+    if (bookingDoc.status !== "ready_for_delivery") {
+      return res.status(400).json({
+        success: false,
+        message: `OTP can only be regenerated when status is ready_for_delivery. Current: ${bookingDoc.status}`,
+      });
+    }
+
+    // Rate limit guard
+    if (bookingDoc.otp_regen_count >= 5) {
+      return res.status(429).json({
+        success: false,
+        message: "Maximum OTP regeneration limit (5) reached. Please contact support.",
+        regens_used: 5,
+        regens_remaining: 0,
+      });
+    }
+
+    const freshOtp = genOtp();
+    bookingDoc.deliveryOtp      = freshOtp;
+    bookingDoc.otp_regen_count += 1;
+    await bookingDoc.save();
+
+    console.log(`[REGEN-OTP] Booking ${bookingId} | regen #${bookingDoc.otp_regen_count}`);
+
+    // Push new OTP to user — in data payload only
+    try {
+      const user = await Customer.findById(bookingDoc.user_id)
+        .select("device_token ftoken")
+        .lean();
+      const userToken = user?.device_token || user?.ftoken;
+      if (userToken) {
+        await sendBookingNotification({
+          token: userToken,
+          title: "New Handover OTP",
+          body: "A new OTP has been generated for your bike handover.",
+          data: {
+            type: "otp_regenerated",
+            bookingId: bookingId.toString(),
+            otp: String(freshOtp),
+          },
+          receiverId: bookingDoc.user_id,
+          receiverType: "user",
+          bookingId: bookingDoc._id,
+        });
+      }
+    } catch (notifyErr) {
+      console.error("[REGEN-OTP] User FCM error:", notifyErr.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "New OTP sent to customer.",
+      data: {
+        bookingId,
+        regens_used: bookingDoc.otp_regen_count,
+        regens_remaining: 5 - bookingDoc.otp_regen_count,
+      },
+    });
+  } catch (error) {
+    console.error("[REGEN-OTP] Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 module.exports = {
   addbooking,
   getallbookings,
@@ -2372,5 +2997,10 @@ module.exports = {
   verifyOtpForMobile,
   cancelBooking,
   getBookingTimerStatus,
+  serviceComplete,
+  selectPaymentMethod,
+  confirmCashReceived,
+  verifyDeliveryOtp,
+  regenerateDeliveryOtp,
 }
 
