@@ -278,7 +278,11 @@ router.patch("/:id/status", async (req, res) => {
       })
     }
 
-    const dealer = await Vendor.findByIdAndUpdate(id, { isActive }, { new: true, runValidators: true })
+    const dealer = await Vendor.findByIdAndUpdate(
+      id,
+      { isActive, "status.isActive": isActive },
+      { new: true, runValidators: true }
+    )
 
     if (!dealer) {
       return res.status(404).json({
@@ -428,6 +432,17 @@ router.put(
       }
       if (req.body.minWalletAmount !== undefined) {
         updateData.minWalletAmount = req.body.minWalletAmount === "" ? 0 : Number.parseFloat(req.body.minWalletAmount)
+      }
+
+      // service capability fields
+      if (req.body.providesPickup !== undefined) {
+        updateData.providesPickup = req.body.providesPickup === "true" || req.body.providesPickup === true
+      }
+      if (req.body.providesDrop !== undefined) {
+        updateData.providesDrop = req.body.providesDrop === "true" || req.body.providesDrop === true
+      }
+      if (req.body.dropCharges !== undefined) {
+        updateData.dropCharges = req.body.dropCharges === "" ? 0 : Number.parseFloat(req.body.dropCharges)
       }
 
       // Handle bank details

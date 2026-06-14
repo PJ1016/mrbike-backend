@@ -80,9 +80,9 @@ const dealerWithInRange = async (req, res) => {
 
     const dealers = await Vendor.find({
       is_online: "on",
-      online: true, 
+      online: true,
       wallet: { $gt: -500 },
-      isBlock: false,
+      isBlocked: { $ne: true },
       latitude: { $gte: latitude - 0.03, $lte: latitude + 0.03 },
       longitude: { $gte: longitude - 0.03, $lte: longitude + 0.03 },
     });
@@ -141,7 +141,7 @@ const dealerWithInRange2 = async (req, res) => {
     const dealers = await Dealer.find({
       is_online: "on",
       wallet: { $gt: -500 },
-      isBlock: false
+      isBlocked: { $ne: true },
     });
 
     console.log(`✅ Total Dealers Found: ${dealers.length}`);
@@ -630,12 +630,12 @@ async function editDealerStatus(req, res) {
     }
 
 
-    const { dealer_id, status, isBlock } = req.body;
+    const { dealer_id, status, isBlock, blockedReason } = req.body;
 
     const datas = {
       is_online: status,
-      isBlock
-
+      isBlocked: isBlock,
+      ...(blockedReason !== undefined && { blockedReason }),
     };
     var where = { _id: dealer_id };
 
