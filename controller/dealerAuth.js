@@ -1516,6 +1516,8 @@ const Admin = require("../models/admin_model");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const { sendemails } = require("../helper/helper");
+const twilio = require("twilio");
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function sendOtp(req, res) {
   try {
@@ -1634,17 +1636,11 @@ async function usersignin(req, res) {
       });
     }
 
-    const otp = "9999";
-    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
-
     let dealer = await Vendor.findOne({ phone });
 
     if (!dealer) {
-      // new dealer creation
       dealer = new Vendor({
         phone,
-        otp,
-        otpExpiry,
         ftoken,
         device_token,
         isActive: true,
@@ -1653,15 +1649,17 @@ async function usersignin(req, res) {
         isDoc: false,
       });
     } else {
-      // update existing dealer
-      dealer.otp = otp;
-      dealer.otpExpiry = otpExpiry;
       dealer.ftoken = ftoken || dealer.ftoken;
       dealer.device_token = device_token || dealer.device_token;
       dealer.isActive = true;
     }
 
     await dealer.save({ validateModifiedOnly: true });
+
+    await twilioClient.verify.v2
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verifications
+      .create({ to: `+91${phone}`, channel: "sms" });
 
     return res.status(dealer.isNew ? 201 : 200).json({
       success: true,
@@ -1689,21 +1687,26 @@ async function verifyOTP(req, res) {
   try {
     const { otp, phone } = req.body;
 
-    if (!phone) {
+    if (!phone || !otp) {
       return res.status(400).json({
         success: false,
-        message: "Phone number is required",
+        message: "Phone number and OTP are required",
       });
     }
 
-    const dealer = await Vendor.findOne({ phone });
+    const verificationCheck = await twilioClient.verify.v2
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verificationChecks
+      .create({ to: `+91${phone}`, code: otp });
 
-    if (otp !== "9999") {
+    if (verificationCheck.status !== "approved") {
       return res.status(401).json({
         success: false,
         message: "Incorrect OTP",
       });
     }
+
+    const dealer = await Vendor.findOne({ phone });
 
     if (!dealer) {
       const newDealer = new Vendor({
@@ -1756,7 +1759,7 @@ async function verifyOTP(req, res) {
     console.error("OTP verification error:", error);
 
     if (error.code === 11000) {
-      if (error.keyPattern.phone) {
+      if (error.keyPattern && error.keyPattern.phone) {
         return res.status(409).json({
           success: false,
           message: "Phone number already registered",
