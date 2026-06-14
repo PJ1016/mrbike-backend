@@ -1673,11 +1673,14 @@ async function usersignin(req, res) {
     console.log("[dealerAuth/signin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
     console.log("[dealerAuth/signin] VERIFY_SID:", verifySid);
 
+    const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+    console.log("Twilio TO:", phoneNumber);
+
     const twilioClient = getTwilioClient();
     const sendResult = await twilioClient.verify.v2
       .services(verifySid)
       .verifications
-      .create({ to: `+91${phone}`, channel: "sms" });
+      .create({ to: phoneNumber, channel: "sms" });
 
     console.log("[dealerAuth/signin] Twilio send status:", sendResult.status, "| SID:", sendResult.sid);
 
@@ -1718,11 +1721,14 @@ async function verifyOTP(req, res) {
     console.log("[dealerAuth/verifyotp] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
     console.log("[dealerAuth/verifyotp] VERIFY_SID:", verifySid);
 
+    const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+    console.log("Twilio TO:", phoneNumber);
+
     const twilioClient = getTwilioClient();
     const verificationCheck = await twilioClient.verify.v2
       .services(verifySid)
       .verificationChecks
-      .create({ to: `+91${phone}`, code: otp });
+      .create({ to: phoneNumber, code: otp });
 
     if (verificationCheck.status !== "approved") {
       return res.status(401).json({
