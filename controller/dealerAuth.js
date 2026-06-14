@@ -1508,6 +1508,8 @@
 //   rejectDealer
 // };
 
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
 var validation = require("../helper/validation");
 const otpAuth = require("../helper/otpAuth");
 const Dealer = require("../models/Dealer");
@@ -1517,7 +1519,18 @@ const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const { sendemails } = require("../helper/helper");
 const twilio = require("twilio");
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+function getTwilioClient() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken  = process.env.TWILIO_AUTH_TOKEN;
+  const verifySid  = process.env.TWILIO_VERIFY_SERVICE_SID;
+  console.log("[Twilio] ACCOUNT_SID :", accountSid  || "MISSING");
+  console.log("[Twilio] VERIFY_SID  :", verifySid   || "MISSING");
+  console.log("[Twilio] AUTH_TOKEN  :", authToken ? authToken.slice(0, 8) + "..." : "MISSING");
+  if (!verifySid) throw new Error("[Twilio] TWILIO_VERIFY_SERVICE_SID is undefined — check .env on server");
+  if (!accountSid) throw new Error("[Twilio] TWILIO_ACCOUNT_SID is undefined — check .env on server");
+  return twilio(accountSid, authToken);
+}
 
 async function sendOtp(req, res) {
   try {
@@ -1656,10 +1669,17 @@ async function usersignin(req, res) {
 
     await dealer.save({ validateModifiedOnly: true });
 
-    await twilioClient.verify.v2
-      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
+    console.log("[dealerAuth/signin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
+    console.log("[dealerAuth/signin] VERIFY_SID:", verifySid);
+
+    const twilioClient = getTwilioClient();
+    const sendResult = await twilioClient.verify.v2
+      .services(verifySid)
       .verifications
       .create({ to: `+91${phone}`, channel: "sms" });
+
+    console.log("[dealerAuth/signin] Twilio send status:", sendResult.status, "| SID:", sendResult.sid);
 
     return res.status(dealer.isNew ? 201 : 200).json({
       success: true,
@@ -1694,8 +1714,13 @@ async function verifyOTP(req, res) {
       });
     }
 
+    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
+    console.log("[dealerAuth/verifyotp] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
+    console.log("[dealerAuth/verifyotp] VERIFY_SID:", verifySid);
+
+    const twilioClient = getTwilioClient();
     const verificationCheck = await twilioClient.verify.v2
-      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .services(verifySid)
       .verificationChecks
       .create({ to: `+91${phone}`, code: otp });
 
