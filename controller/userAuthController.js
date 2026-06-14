@@ -1,8 +1,20 @@
+const path = require('path');
 var validation = require('../helper/validation');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const customers = require('../models/customer_model');
 const twilio = require('twilio');
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+function getTwilioClient() {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken  = process.env.TWILIO_AUTH_TOKEN;
+    const verifySid  = process.env.TWILIO_VERIFY_SERVICE_SID;
+    console.log("[Twilio] ACCOUNT_SID :", accountSid  || "MISSING");
+    console.log("[Twilio] VERIFY_SID  :", verifySid   || "MISSING");
+    console.log("[Twilio] AUTH_TOKEN  :", authToken ? authToken.slice(0, 8) + "..." : "MISSING");
+    if (!verifySid) throw new Error("[Twilio] TWILIO_VERIFY_SERVICE_SID is undefined — check .env on server");
+    if (!accountSid) throw new Error("[Twilio] TWILIO_ACCOUNT_SID is undefined — check .env on server");
+    return twilio(accountSid, authToken);
+}
 
 async function userLogin(req, res) {
     try {
@@ -23,10 +35,17 @@ async function userLogin(req, res) {
             await user.save({ validateModifiedOnly: true });
         }
 
-        await twilioClient.verify.v2
-            .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+        const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
+        console.log("[userAuth/userLogin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
+        console.log("[userAuth/userLogin] VERIFY_SID:", verifySid);
+
+        const twilioClient = getTwilioClient();
+        const sendResult = await twilioClient.verify.v2
+            .services(verifySid)
             .verifications
             .create({ to: `+91${phone}`, channel: 'sms' });
+
+        console.log("[userAuth/userLogin] Twilio send status:", sendResult.status, "| SID:", sendResult.sid);
 
         const isNew = !user.isVerified;
         return res.status(isNew ? 201 : 200).json({
@@ -48,10 +67,17 @@ async function otpVerify(req, res) {
             return res.status(400).json({ success: false, message: "Phone and OTP are required" });
         }
 
+        const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
+        console.log("[userAuth/otpVerify] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
+        console.log("[userAuth/otpVerify] VERIFY_SID:", verifySid);
+
+        const twilioClient = getTwilioClient();
         const verificationCheck = await twilioClient.verify.v2
-            .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+            .services(verifySid)
             .verificationChecks
             .create({ to: `+91${phone}`, code: otp });
+
+        console.log("[userAuth/otpVerify] Twilio check status:", verificationCheck.status);
 
         if (verificationCheck.status !== 'approved') {
             return res.status(400).json({ success: false, message: "Incorrect OTP" });
@@ -91,6 +117,7 @@ async function resendOtp(req, res) {
             return res.status(404).json({ success: false, message: "User not found" });
         }
 
+        const twilioClient = getTwilioClient();
         await twilioClient.verify.v2
             .services(process.env.TWILIO_VERIFY_SERVICE_SID)
             .verifications
