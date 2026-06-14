@@ -39,11 +39,14 @@ async function userLogin(req, res) {
         console.log("[userAuth/userLogin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
         console.log("[userAuth/userLogin] VERIFY_SID:", verifySid);
 
+        const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+        console.log("Twilio TO:", phoneNumber);
+
         const twilioClient = getTwilioClient();
         const sendResult = await twilioClient.verify.v2
             .services(verifySid)
             .verifications
-            .create({ to: `+91${phone}`, channel: 'sms' });
+            .create({ to: phoneNumber, channel: 'sms' });
 
         console.log("[userAuth/userLogin] Twilio send status:", sendResult.status, "| SID:", sendResult.sid);
 
@@ -71,11 +74,14 @@ async function otpVerify(req, res) {
         console.log("[userAuth/otpVerify] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
         console.log("[userAuth/otpVerify] VERIFY_SID:", verifySid);
 
+        const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+        console.log("Twilio TO:", phoneNumber);
+
         const twilioClient = getTwilioClient();
         const verificationCheck = await twilioClient.verify.v2
             .services(verifySid)
             .verificationChecks
-            .create({ to: `+91${phone}`, code: otp });
+            .create({ to: phoneNumber, code: otp });
 
         console.log("[userAuth/otpVerify] Twilio check status:", verificationCheck.status);
 
@@ -117,11 +123,14 @@ async function resendOtp(req, res) {
             return res.status(404).json({ success: false, message: "User not found" });
         }
 
+        const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+        console.log("Twilio TO:", phoneNumber);
+
         const twilioClient = getTwilioClient();
         await twilioClient.verify.v2
             .services(process.env.TWILIO_VERIFY_SERVICE_SID)
             .verifications
-            .create({ to: `+91${phone}`, channel: 'sms' });
+            .create({ to: phoneNumber, channel: 'sms' });
 
         res.status(200).json({ success: true, message: "OTP sent successfully" });
     } catch (error) {
