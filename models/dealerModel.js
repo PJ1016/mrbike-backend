@@ -236,6 +236,7 @@ const dealerModel = new mongoose.Schema(
     },
     online: { type: Boolean, default: false },
     device_token: { type: String, default: null },
+    ftoken: { type: String, default: null },
 
     // --- Creator metadata for admin/self created
     createdBy: {

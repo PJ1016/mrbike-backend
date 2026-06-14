@@ -1,11 +1,12 @@
 var validation = require('../helper/validation');
 require('dotenv').config();
 const customers = require('../models/customer_model');
-const otpAuth = require("../helper/otpAuth");
+const twilio = require('twilio');
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function userLogin(req, res) {
     try {
-        const { phone, device_token } = req.body;
+        const { phone, ftoken, device_token } = req.body;
 
         if (!phone) {
             return res.status(400).json({ success: false, message: "Phone number is required" });
@@ -14,18 +15,25 @@ async function userLogin(req, res) {
         let user = await customers.findOne({ phone });
 
         if (!user) {
-            const otpData = await otpAuth.otp(phone);
-            user = new customers({ phone, otp: otpData.otp, device_token, isVerified: false });
+            user = new customers({ phone, ftoken, device_token, isVerified: false });
             await user.save({ validateModifiedOnly: true });
-            return res.status(201).json({ success: true, message: "User created and OTP sent to your mobile.", user: { phone: user.phone, isVerified: user.isVerified } });
+        } else {
+            user.device_token = device_token || user.device_token;
+            user.ftoken = ftoken || user.ftoken;
+            await user.save({ validateModifiedOnly: true });
         }
 
-        const otpData = await otpAuth.otp(phone);
-        user.otp = otpData.otp;
-        user.device_token = device_token;
-        await user.save({ validateModifiedOnly: true });
+        await twilioClient.verify.v2
+            .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+            .verifications
+            .create({ to: `+91${phone}`, channel: 'sms' });
 
-        res.status(200).json({ success: true, message: "OTP sent to your mobile." });
+        const isNew = !user.isVerified;
+        return res.status(isNew ? 201 : 200).json({
+            success: true,
+            message: "OTP sent to your mobile.",
+            user: { phone: user.phone, isVerified: user.isVerified },
+        });
     } catch (error) {
         console.error("userLogin error:", error);
         res.status(500).json({ success: false, message: error.message });
@@ -34,10 +42,19 @@ async function userLogin(req, res) {
 
 async function otpVerify(req, res) {
     try {
-        const { phone, otp, device_token } = req.body;
+        const { phone, otp, ftoken, device_token } = req.body;
 
         if (!phone || !otp) {
             return res.status(400).json({ success: false, message: "Phone and OTP are required" });
+        }
+
+        const verificationCheck = await twilioClient.verify.v2
+            .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+            .verificationChecks
+            .create({ to: `+91${phone}`, code: otp });
+
+        if (verificationCheck.status !== 'approved') {
+            return res.status(400).json({ success: false, message: "Incorrect OTP" });
         }
 
         const user = await customers.findOne({ phone });
@@ -45,19 +62,17 @@ async function otpVerify(req, res) {
             return res.status(404).json({ success: false, message: "User not found" });
         }
 
-        if (otp != user.otp && otp != 9999) {
-            return res.status(400).json({ success: false, message: "Incorrect OTP" });
-        }
-
         user.isVerified = true;
-        user.device_token = device_token;
+        if (device_token) user.device_token = device_token;
+        if (ftoken) user.ftoken = ftoken;
         await user.save({ validateModifiedOnly: true });
 
-        // Fallback for older users who might not have isProfile set but have a name
         const hasProfile = user.isProfile || (user.first_name && user.first_name.trim().length > 0);
 
         const token = validation.generateUserToken(user._id, 'logged', 4);
-        return res.status(200).cookie("token", token, { expires: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), httpOnly: true }).json({ success: true, message: "OTP verified successfully", token, user_id: user._id, isProfile: hasProfile });
+        return res.status(200)
+            .cookie("token", token, { expires: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), httpOnly: true })
+            .json({ success: true, message: "OTP verified successfully", token, user_id: user._id, isProfile: hasProfile });
     } catch (error) {
         console.error("otpVerify error:", error);
         res.status(500).json({ success: false, message: error.message });
@@ -76,9 +91,10 @@ async function resendOtp(req, res) {
             return res.status(404).json({ success: false, message: "User not found" });
         }
 
-        const otpData = await otpAuth.otp(phone);
-        user.otp = otpData.otp;
-        await user.save({ validateModifiedOnly: true });
+        await twilioClient.verify.v2
+            .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+            .verifications
+            .create({ to: `+91${phone}`, channel: 'sms' });
 
         res.status(200).json({ success: true, message: "OTP sent successfully" });
     } catch (error) {
@@ -89,4 +105,3 @@ async function resendOtp(req, res) {
 
 
 module.exports = { userLogin, otpVerify, resendOtp };
-
