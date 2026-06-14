@@ -269,35 +269,58 @@ router.post(
 router.patch("/:id/status", async (req, res) => {
   try {
     const { id } = req.params
-    const { isActive } = req.body
+    const { isActive, isBlocked, blockedReason } = req.body
 
-    if (typeof isActive !== "boolean") {
+    if (isActive === undefined && isBlocked === undefined) {
       return res.status(400).json({
         success: false,
-        message: "isActive must be a boolean value",
+        message: "At least one of isActive or isBlocked must be provided",
       })
     }
-
-    const dealer = await Vendor.findByIdAndUpdate(
-      id,
-      { isActive, "status.isActive": isActive },
-      { new: true, runValidators: true }
-    )
-
-    if (!dealer) {
-      return res.status(404).json({
-        success: false,
-        message: "Dealer not found",
-      })
+    if (isActive !== undefined && typeof isActive !== "boolean") {
+      return res.status(400).json({ success: false, message: "isActive must be a boolean value" })
     }
+    if (isBlocked !== undefined && typeof isBlocked !== "boolean") {
+      return res.status(400).json({ success: false, message: "isBlocked must be a boolean value" })
+    }
+
+    const updateData = {}
+    if (isActive !== undefined) {
+      updateData.isActive = isActive
+      updateData["status.isActive"] = isActive
+    }
+    if (isBlocked !== undefined) {
+      updateData.isBlocked = isBlocked
+    }
+    if (blockedReason !== undefined) {
+      updateData.blockedReason = blockedReason
+    }
+
+    const dealerBefore = await Vendor.findById(id)
+    if (!dealerBefore) {
+      return res.status(404).json({ success: false, message: "Dealer not found" })
+    }
+    console.log("Dealer before update", dealerBefore)
+    console.log("Update object", updateData)
+
+    const dealer = await Vendor.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true })
+    console.log("Dealer after update", dealer)
 
     res.status(200).json({
       success: true,
-      message: `Dealer status updated to ${dealer.isActive ? "Active" : "Inactive"}`,
+      message: isActive !== undefined
+        ? `Dealer ${dealer.isActive ? "activated" : "deactivated"} successfully`
+        : `Dealer ${dealer.isBlocked ? "blocked" : "unblocked"} successfully`,
       data: {
-        id: dealer._id,
+        _id: dealer._id,
         isActive: dealer.isActive,
-        shopName: dealer.shopName,
+        status: {
+          isActive: dealer.status?.isActive,
+          adminApproved: dealer.status?.adminApproved,
+        },
+        isBlocked: dealer.isBlocked,
+        blockedReason: dealer.blockedReason,
+        registrationStatus: dealer.registrationStatus,
       },
     })
   } catch (error) {
