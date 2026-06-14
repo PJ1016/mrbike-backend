@@ -1941,12 +1941,26 @@ async function getProgress(req, res) {
       });
     }
 
-    // 5. Return progress data
+    // 5. Build completedSteps with backward-compat for approved dealers
+    const completedSteps = Object.fromEntries(vendor.formProgress.completedSteps);
+    if (
+      vendor.registrationStatus === "Approved" &&
+      completedSteps.liveVerification === undefined
+    ) {
+      completedSteps.liveVerification = true;
+    }
+
+    // Build a Map-like proxy so determineNextStep can use .get()
+    const completedStepsMap = {
+      get: (key) => completedSteps[key],
+    };
+
     res.status(200).json({
       success: true,
+      totalSteps: 6,
       currentStep: vendor.formProgress.currentStep,
-      nextStep: determineNextStep(vendor.formProgress.completedSteps),
-      completedSteps: Object.fromEntries(vendor.formProgress.completedSteps),
+      nextStep: determineNextStep(completedStepsMap),
+      completedSteps,
       timestamps: vendor.completionTimestamps,
       status: {
         adminApproved: vendor.status.adminApproved || false,
@@ -1986,6 +2000,7 @@ function determineNextStep(completedSteps) {
     "locationInfo",
     "shopDetails",
     "documents",
+    "liveVerification",
     "bankDetails",
   ];
   for (const step of stepsOrder) {
@@ -2002,6 +2017,7 @@ async function updateProgress(req, res) {
       "locationInfo",
       "shopDetails",
       "documents",
+      "liveVerification",
       "bankDetails",
     ];
 
@@ -2217,7 +2233,7 @@ async function updateLocationInfo(req, res) {
 async function updateShopDetails(req, res) {
   try {
     const { id } = req.params;
-    const { shopName, shopEmail, shopContact, holiday } = req.body;
+    const { shopName, shopEmail, shopContact, holiday, storeDescription, openingTime, closingTime } = req.body;
 
     console.log(
       `[updateShopDetails] Updating shop details for vendor ID: ${id}`,
@@ -2263,6 +2279,10 @@ async function updateShopDetails(req, res) {
       },
     };
 
+    if (storeDescription !== undefined) updateData.$set.storeDescription = storeDescription;
+    if (openingTime !== undefined) updateData.$set["businessHours.open"] = openingTime;
+    if (closingTime !== undefined) updateData.$set["businessHours.close"] = closingTime;
+
     if (shopImages.length > 0) {
       updateData.$push = { shopImages: { $each: shopImages } };
     }
@@ -2276,7 +2296,7 @@ async function updateShopDetails(req, res) {
       new: true,
       runValidators: true,
     }).select(
-      "shopName shopEmail shopContact holiday shopImages formProgress completionTimestamps",
+      "shopName shopEmail shopContact holiday storeDescription businessHours shopImages formProgress completionTimestamps",
     );
 
     if (!updatedVendor) {
@@ -2300,6 +2320,9 @@ async function updateShopDetails(req, res) {
           email: updatedVendor.shopEmail,
           contact: updatedVendor.shopContact,
           holiday: updatedVendor.holiday,
+          storeDescription: updatedVendor.storeDescription,
+          openingTime: updatedVendor.businessHours?.open,
+          closingTime: updatedVendor.businessHours?.close,
           imageCount: updatedVendor.shopImages.length,
         },
         progress: {
@@ -2680,7 +2703,7 @@ async function uploadDocuments(req, res) {
 async function updateBankDetails(req, res) {
   try {
     const { id } = req.params;
-    const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
+    const { accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body;
     const passbookImage = req.file?.location || req.file?.path;
 
     // Validate required fields
@@ -2721,16 +2744,19 @@ async function updateBankDetails(req, res) {
       });
     }
 
+    const bankDetailsUpdate = {
+      accountHolderName,
+      accountNumber,
+      ifscCode,
+      bankName,
+      passbookImage,
+    };
+    if (upiId !== undefined) bankDetailsUpdate.upiId = upiId;
+
     const updatedVendor = await Vendor.findByIdAndUpdate(
       id,
       {
-        bankDetails: {
-          accountHolderName,
-          accountNumber,
-          ifscCode,
-          bankName,
-          passbookImage,
-        },
+        bankDetails: bankDetailsUpdate,
         "formProgress.completedSteps.bankDetails": true,
         "completionTimestamps.bankDetails": new Date(),
         updatedAt: new Date(),
@@ -2784,6 +2810,82 @@ async function updateBankDetails(req, res) {
     res.status(500).json({
       success: false,
       message: "Error updating bank details",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+}
+
+async function uploadLiveVerification(req, res) {
+  try {
+    const { id } = req.params;
+    const { latitude, longitude, timestamp } = req.body;
+    const shopLivePhoto = req.file?.location || req.file?.path;
+
+    if (!shopLivePhoto) {
+      return res.status(400).json({
+        success: false,
+        message: "shopLivePhoto image is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid vendor ID format",
+      });
+    }
+
+    const liveVerificationData = {
+      shopLivePhoto,
+      capturedAt: new Date(),
+    };
+    if (latitude !== undefined) liveVerificationData.latitude = parseFloat(latitude);
+    if (longitude !== undefined) liveVerificationData.longitude = parseFloat(longitude);
+    if (timestamp) liveVerificationData.timestamp = new Date(timestamp);
+
+    const updatedVendor = await Vendor.findByIdAndUpdate(
+      id,
+      {
+        liveVerification: liveVerificationData,
+        "formProgress.completedSteps.liveVerification": true,
+        "completionTimestamps.liveVerification": new Date(),
+        updatedAt: new Date(),
+      },
+      { new: true, runValidators: true },
+    ).select("liveVerification formProgress completionTimestamps");
+
+    if (!updatedVendor) {
+      return res.status(404).json({
+        success: false,
+        message: "Vendor not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Live verification uploaded successfully",
+      data: {
+        liveVerification: updatedVendor.liveVerification,
+        progress: {
+          completed: updatedVendor.formProgress.completedSteps.get("liveVerification"),
+          lastUpdated: updatedVendor.completionTimestamps.liveVerification,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Live verification upload error:", error);
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: Object.values(error.errors).map((e) => e.message),
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Error uploading live verification",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
@@ -3173,7 +3275,8 @@ function getStepNumber(section) {
     locationInfo: 2,
     shopDetails: 3,
     documents: 4,
-    bankDetails: 5,
+    liveVerification: 5,
+    bankDetails: 6,
   };
   return stepMap[section];
 }
@@ -3184,12 +3287,13 @@ function getNextStepAfter(section) {
     "locationInfo",
     "shopDetails",
     "documents",
+    "liveVerification",
     "bankDetails",
   ];
   const currentIndex = stepsOrder.indexOf(section);
   return currentIndex < stepsOrder.length - 1
     ? getStepNumber(stepsOrder[currentIndex + 1])
-    : 5;
+    : 6;
 }
 
 // async function notifyAdmin(vendorId) {
@@ -3227,6 +3331,7 @@ module.exports = {
   updateLocationInfo,
   updateShopDetails,
   uploadDocuments,
+  uploadLiveVerification,
   updateBankDetails,
   submitForApproval,
   checkApprovalStatus,

@@ -3,7 +3,7 @@ var router = require('express').Router();
 const { verifyUser } = require("../helper/verifyAuth");
 const { createS3Upload } = require("../utils/s3Upload");
 
-var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
+var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
 
 const upload = createS3Upload("vendors");
 
@@ -31,6 +31,7 @@ router.post('/upload-documents/:id',
   ]),
   uploadDocuments
 );
+router.post('/live-verification/:id', upload.single('shopLivePhoto'), uploadLiveVerification);
 router.post('/bank-details/:id', upload.single('passbookImage'), updateBankDetails);
 
 // Registration Submission & Status
