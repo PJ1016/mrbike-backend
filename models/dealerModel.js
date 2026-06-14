@@ -72,6 +72,7 @@ const dealerModel = new mongoose.Schema(
     personalEmail: { type: String, required: false },
     personalPhone: { type: String, required: false },
     holiday: { type: String, required: false },
+    storeDescription: { type: String, required: false },
     alternatePhone: { type: String, required: false },
     permanentAddress: {
       address: { type: String, required: false },
@@ -96,6 +97,14 @@ const dealerModel = new mongoose.Schema(
       bankName: { type: String, required: false },
       accountNumber: { type: String, required: false },
       passbookImage: { type: String, required: false },
+      upiId: { type: String, required: false },
+    },
+    liveVerification: {
+      shopLivePhoto: { type: String, required: false },
+      latitude: { type: Number, required: false },
+      longitude: { type: Number, required: false },
+      timestamp: { type: Date, required: false },
+      capturedAt: { type: Date, required: false },
     },
     commission: {
       type: Number,
@@ -132,6 +141,7 @@ const dealerModel = new mongoose.Schema(
           locationInfo: false,
           shopDetails: false,
           documents: false,
+          liveVerification: false,
           bankDetails: false,
         },
       },
@@ -142,6 +152,7 @@ const dealerModel = new mongoose.Schema(
       locationInfo: Date,
       shopDetails: Date,
       documents: Date,
+      liveVerification: Date,
       bankDetails: Date,
     },
     registrationStatus: {
