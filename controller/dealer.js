@@ -630,37 +630,69 @@ async function editDealerStatus(req, res) {
     }
 
 
-    const { dealer_id, status, isBlock, blockedReason } = req.body;
+    const { dealer_id, status, isBlock, isActive, isBlocked, blockedReason } = req.body;
 
-    const datas = {
-      is_online: status,
-      isBlocked: isBlock,
-      ...(blockedReason !== undefined && { blockedReason }),
-    };
-    var where = { _id: dealer_id };
+    if (!dealer_id) {
+      return res.status(400).json({ success: false, message: "dealer_id is required" });
+    }
 
-    Dealer.findByIdAndUpdate(
-      where,
-      { $set: datas },
-      { new: true },
-      async function (err, docs) {
-        if (err) {
-          var response = {
-            status: 201,
-            message: err,
-          };
-          return res.status(201).send(response);
-        } else {
-          var response = {
-            status: 200,
-            message: "status updated successfully",
-            data: docs,
-            // _url: process.env.BASE_URL + '/employee',
-          };
-          return res.status(200).send(response);
-        }
-      }
-    );
+    // Build update payload — support both old field names (isBlock, status) and
+    // the new canonical names (isBlocked, isActive) sent by the admin panel.
+    const updateData = {};
+
+    // isActive / status.isActive  (activate / deactivate)
+    if (isActive !== undefined) {
+      updateData.isActive = isActive;
+      updateData["status.isActive"] = isActive;
+    }
+
+    // isBlocked / blockedReason  (block / unblock)
+    const blockedValue = isBlocked !== undefined ? isBlocked : (isBlock !== undefined ? isBlock : undefined);
+    if (blockedValue !== undefined) {
+      updateData.isBlocked = blockedValue;
+    }
+    if (blockedReason !== undefined) {
+      updateData.blockedReason = blockedReason;
+    }
+
+    // Legacy: online/offline toggle sent as `status` field
+    if (status !== undefined && isActive === undefined) {
+      updateData.is_online = status;
+    }
+
+    const dealerBefore = await Dealer.findById(dealer_id);
+    if (!dealerBefore) {
+      return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+    console.log("Dealer before update", dealerBefore);
+    console.log("Update object", updateData);
+
+    try {
+      const updatedDealer = await Dealer.findByIdAndUpdate(
+        dealer_id,
+        { $set: updateData },
+        { new: true }
+      );
+      console.log("Dealer after update", updatedDealer);
+
+      return res.status(200).json({
+        success: true,
+        message: "Status updated successfully",
+        data: {
+          _id: updatedDealer._id,
+          isActive: updatedDealer.isActive,
+          status: {
+            isActive: updatedDealer.status?.isActive,
+            adminApproved: updatedDealer.status?.adminApproved,
+          },
+          isBlocked: updatedDealer.isBlocked,
+          blockedReason: updatedDealer.blockedReason,
+          registrationStatus: updatedDealer.registrationStatus,
+        },
+      });
+    } catch (updateErr) {
+      return res.status(500).json({ status: 201, message: updateErr.message });
+    }
   } catch (error) {
     console.log("error", error);
     response = {

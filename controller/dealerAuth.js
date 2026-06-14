@@ -3154,30 +3154,34 @@ async function approveDealer(req, res) {
       });
     }
 
-    // Then try to update
-    const vendor = await Vendor.findByIdAndUpdate(
-      req.params.id,
-      {
-        registrationStatus: "Approved",
-        approvedAt: new Date(),
-        isActive: true,
-        "status.adminApproved": true,
-        "status.isActive": true,
-        "status.isVerified": true,
-      },
-      { new: true },
-    );
+    console.log("Dealer before update", vendorExists);
+
+    const updateData = {
+      registrationStatus: "Approved",
+      approvedAt: new Date(),
+      isActive: true,
+      "status.adminApproved": true,
+      "status.isActive": true,
+      "status.isVerified": true,
+    };
+    console.log("Update object", updateData);
+
+    const vendor = await Vendor.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    console.log("Dealer after update", vendor);
 
     res.status(200).json({
       success: true,
       message: "Vendor approved successfully",
       data: {
-        vendor,
+        _id: vendor._id,
+        isActive: vendor.isActive,
         status: {
-          adminApproved: true,
-          isActive: true,
-          isVerified: true,
+          isActive: vendor.status?.isActive,
+          adminApproved: vendor.status?.adminApproved,
         },
+        isBlocked: vendor.isBlocked,
+        blockedReason: vendor.blockedReason,
+        registrationStatus: vendor.registrationStatus,
       },
     });
   } catch (error) {
@@ -3234,24 +3238,23 @@ async function rejectDealer(req, res) {
   try {
     const { notes } = req.body;
 
-    const vendor = await Vendor.findByIdAndUpdate(
-      req.params.id,
-      {
-        registrationStatus: "Rejected",
-        adminNotes: notes,
-        isActive: false,
-        "status.adminApproved": false,
-        "status.isActive": false,
-      },
-      { new: true }
-    );
-
-    if (!vendor) {
-      return res.status(404).json({
-        success: false,
-        message: "Vendor not found",
-      });
+    const vendorBefore = await Vendor.findById(req.params.id);
+    if (!vendorBefore) {
+      return res.status(404).json({ success: false, message: "Vendor not found" });
     }
+    console.log("Dealer before update", vendorBefore);
+
+    const updateData = {
+      registrationStatus: "Rejected",
+      adminNotes: notes,
+      isActive: false,
+      "status.adminApproved": false,
+      "status.isActive": false,
+    };
+    console.log("Update object", updateData);
+
+    const vendor = await Vendor.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    console.log("Dealer after update", vendor);
 
     await sendRejectionEmail(vendor, notes);
 
@@ -3259,12 +3262,16 @@ async function rejectDealer(req, res) {
       success: true,
       message: "Vendor rejected successfully",
       data: {
-        vendorId: vendor._id,
+        _id: vendor._id,
+        isActive: vendor.isActive,
         status: {
-          adminApproved: false,
-          isActive: false,
-          registrationStatus: "Rejected",
+          isActive: vendor.status?.isActive,
+          adminApproved: vendor.status?.adminApproved,
         },
+        isBlocked: vendor.isBlocked,
+        blockedReason: vendor.blockedReason,
+        registrationStatus: vendor.registrationStatus,
+        adminNotes: vendor.adminNotes,
       },
     });
   } catch (error) {
