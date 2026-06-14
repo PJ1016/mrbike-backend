@@ -182,6 +182,13 @@ const dealerModel = new mongoose.Schema(
     isProfile: { type: Boolean, default: false },
     isDoc: { type: Boolean, default: false },
     isActive: { type: Boolean, default: false },
+    isBlocked: { type: Boolean, default: false },
+    blockedReason: { type: String, required: false },
+
+    // service capabilities
+    providesPickup: { type: Boolean, default: false },
+    providesDrop: { type: Boolean, default: false },
+    dropCharges: { type: Number, default: 0 },
 
     // Explicit status object you want to query against
     status: {

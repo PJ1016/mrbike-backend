@@ -3234,8 +3234,17 @@ async function rejectDealer(req, res) {
   try {
     const { notes } = req.body;
 
-    // Find the vendor first
-    const vendor = await Vendor.findById(req.params.id);
+    const vendor = await Vendor.findByIdAndUpdate(
+      req.params.id,
+      {
+        registrationStatus: "Rejected",
+        adminNotes: notes,
+        isActive: false,
+        "status.adminApproved": false,
+        "status.isActive": false,
+      },
+      { new: true }
+    );
 
     if (!vendor) {
       return res.status(404).json({
@@ -3244,18 +3253,18 @@ async function rejectDealer(req, res) {
       });
     }
 
-    // Send rejection email BEFORE deletion
     await sendRejectionEmail(vendor, notes);
-
-    // Delete vendor after rejection
-    await Vendor.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,
-      message: "Vendor rejected and deleted successfully",
+      message: "Vendor rejected successfully",
       data: {
-        vendorId: req.params.id,
-        deleted: true,
+        vendorId: vendor._id,
+        status: {
+          adminApproved: false,
+          isActive: false,
+          registrationStatus: "Rejected",
+        },
       },
     });
   } catch (error) {

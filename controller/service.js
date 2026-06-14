@@ -1539,7 +1539,7 @@ async function getDealersByService(req, res) {
     // Fetch those dealers (active, not blocked)
     const dealers = await Dealer.find({
       _id: { $in: dealerIds },
-      isBlock: { $ne: true },
+      isBlocked: { $ne: true },
     })
       .select(
         "shopName shopContact permanentAddress city latitude longitude pickupCharges rating shopImages image"
