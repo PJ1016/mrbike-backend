@@ -279,7 +279,7 @@ const morgan = require("morgan");
 const cors = require("cors");
 const serveIndex = require("serve-index");
 const { Server } = require("socket.io");
-require("dotenv").config();
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const apiRouter = require("./routes/index");
 const db = require("./models/index");
