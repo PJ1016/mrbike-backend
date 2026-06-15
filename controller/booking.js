@@ -1185,7 +1185,9 @@ async function createBooking(req, res) {
 
     await newBooking.save();
 
-    console.log('Booking Saved Successfully');
+    console.log('[BOOKING-CREATED] Save successful');
+    console.log(`[BOOKING-CREATED] _id: ${newBooking._id} | bookingId: ${newBooking.bookingId}`);
+    console.log(`[BOOKING-CREATED] status: ${newBooking.status} | payment_method: ${newBooking.payment_method} (null = payment not yet selected — correct)`);
     console.log(`[BOOKING-CREATED] Booking created with timer: ${newBooking._id}`);
 
     // ── Notify dealer: socket + FCM ──────────────────────────────────────────

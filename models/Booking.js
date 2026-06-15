@@ -151,7 +151,19 @@ const bookingSchema = new mongoose.Schema(
     create_date: { type: Date, default: Date.now },
     walletSettled: { type: Boolean, default: false },
 
-    payment_method:      { type: String, enum: ["ONLINE", "CASH"], default: null },
+    payment_method: {
+      type: String,
+      default: null,
+      // Mongoose 6 enum validator rejects null even for non-required String fields.
+      // Custom validator explicitly allows null (payment not yet selected) while
+      // still rejecting any value that is not ONLINE or CASH.
+      validate: {
+        validator: function (v) {
+          return v === null || v === undefined || v === "ONLINE" || v === "CASH";
+        },
+        message: "payment_method must be 'ONLINE' or 'CASH'",
+      },
+    },
     payment_status:      { type: String, enum: ["pending", "completed", "failed"], default: "pending" },
     payment_verified:    { type: Boolean, default: false },
 
