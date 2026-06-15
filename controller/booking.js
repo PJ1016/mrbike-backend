@@ -1072,10 +1072,24 @@ function genOtp() {
 
 async function createBooking(req, res) {
   try {
+    console.log('Booking Started');
+
+    // ── 1. Auth ──────────────────────────────────────────────────────────────
     const data = jwt_decode(req.headers.token);
     const user_id = data.user_id;
 
+    // ── 2. Entry logging ─────────────────────────────────────────────────────
+    console.log('[createBooking] REQUEST BODY:', JSON.stringify(req.body, null, 2));
+    console.log('[createBooking] Authenticated user_id:', user_id);
+
     const { dealer_id, services, pickupAndDropId, userBike_id, pickupDate, scheduleDate, timeSlot, pickupAddress } = req.body;
+
+    // ── 3. Field-level validation logging ────────────────────────────────────
+    console.log('[createBooking] Field check — dealer_id:', dealer_id, '| valid ObjectId:', mongoose.Types.ObjectId.isValid(dealer_id));
+    console.log('[createBooking] Field check — services:', services, '| isArray:', Array.isArray(services), '| length:', Array.isArray(services) ? services.length : 'N/A');
+    console.log('[createBooking] Field check — userBike_id:', userBike_id, '| valid ObjectId:', mongoose.Types.ObjectId.isValid(userBike_id));
+    console.log('[createBooking] Field check — pickupAndDropId:', pickupAndDropId, '| type:', typeof pickupAndDropId);
+    console.log('[createBooking] Field check — pickupDate:', pickupDate, '| parsed Date:', pickupDate ? new Date(pickupDate) : null);
 
     if (!dealer_id || !services || services.length === 0) {
       return res.status(400).json({ success: false, message: "Dealer and at least one service are required" });
@@ -1140,6 +1154,17 @@ async function createBooking(req, res) {
     const pickupOtp = genOtp();
     const deliveryOtp = genOtp();
 
+    // ── 4. Pre-save payload log ───────────────────────────────────────────────
+    console.log('[createBooking] PRE-SAVE payload:', JSON.stringify({
+      user_id,
+      dealer_id,
+      services: resolvedServiceIds,
+      pickupAndDropId: pickupAndDropId || null,
+      userBike_id,
+      pickupDate: pickupDate || null,
+      totalBill,
+    }, null, 2));
+
     const newBooking = new booking({
       user_id,
       dealer_id,
@@ -1160,6 +1185,7 @@ async function createBooking(req, res) {
 
     await newBooking.save();
 
+    console.log('Booking Saved Successfully');
     console.log(`[BOOKING-CREATED] Booking created with timer: ${newBooking._id}`);
 
     // ── Notify dealer: socket + FCM ──────────────────────────────────────────
@@ -1201,8 +1227,15 @@ async function createBooking(req, res) {
       dealerResponseStatus: newBooking.dealerResponseStatus,
     });
   } catch (error) {
-    console.error("createBooking error:", error);
-    return res.status(500).json({ success: false, message: "Internal Server Error" });
+    console.error('[createBooking] FATAL ERROR — name:', error.name);
+    console.error('[createBooking] FATAL ERROR — message:', error.message);
+    console.error('[createBooking] STACK:', error.stack);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Internal Server Error',
+      errorType: error.name,
+      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined,
+    });
   }
 }
 
