@@ -10,7 +10,7 @@ const billSchema = new mongoose.Schema({
     payment_id: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Payment",
-        required: true
+        required: false
     },
     bill_number: {
         type: String,
