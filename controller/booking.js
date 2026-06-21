@@ -497,7 +497,10 @@ const getuserbookings = async (req, res) => {
           select: "name description image",
         },
       })
-        .populate("additionalServices")
+        .populate({
+          path: "additionalServices",
+          populate: { path: "base_additional_service_id", select: "name" },
+        })
         .populate("dealer_id")
         .populate("pickupAndDropId")
         // populate user with optional inner population of user's bikes
@@ -1266,7 +1269,10 @@ async function getBookingDetails(req, res) {
           select: "name description image",
         },
       })
-      .populate("additionalServices")
+      .populate({
+        path: "additionalServices",
+        populate: { path: "base_additional_service_id", select: "name" },
+      })
       .populate("pickupAndDropId")
       .populate("userBike_id");
 
