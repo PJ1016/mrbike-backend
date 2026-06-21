@@ -1387,12 +1387,33 @@ async function updateBooking(req, res) {
       }
     });
 
+    // Recalculate totalBill using per-CC pricing from main + additional services
+    try {
+      const bikeData = await UserBike.findById(existingBooking.userBike_id).select("bike_cc");
+      const bikeCC = parseInt(bikeData?.bike_cc || 0);
+      const resolvePrice = (doc) => {
+        const match = doc.bikes?.find(b => b.cc === bikeCC);
+        return match ? match.price : 0;
+      };
+      const [mainDocs, addlDocs] = await Promise.all([
+        AdminService.find({ _id: { $in: existingBooking.services } }).select("bikes"),
+        AdditionalService.find({ _id: { $in: existingBooking.additionalServices } }).select("bikes"),
+      ]);
+      let recalcTotal = 0;
+      mainDocs.forEach(d => { recalcTotal += resolvePrice(d); });
+      addlDocs.forEach(d => { recalcTotal += resolvePrice(d); });
+      existingBooking.totalBill = recalcTotal;
+    } catch (calcErr) {
+      console.error("[updateBooking] totalBill recalculation failed:", calcErr.message);
+    }
+
     await existingBooking.save();
 
     // ✅ Populate the correct path for an ObjectId[] ref
     await existingBooking.populate({
       path: "additionalServices",
       select: "_id id name image description bikes",
+      populate: { path: "base_additional_service_id", select: "name" }
     });
 
     const data = existingBooking.toObject();

@@ -313,17 +313,29 @@ const generateBill = async (payment) => {
         // Get booking details with populated data
         const booking = await Booking.findById(payment.booking_id)
             .populate("user_id", "first_name last_name email phone")
-            .populate("userBike_id", "model registration_number vin")
+            .populate("userBike_id", "model registration_number vin bike_cc")
             .populate({
-              path: "services",
-              model: "AdminService",
-              select: "name price"
+                path: "services",
+                model: "AdminService",
+                select: "bikes",
+                populate: { path: "base_service_id", select: "name" }
             })
-            .populate("additionalServices", "name price");
+            .populate({
+                path: "additionalServices",
+                select: "bikes",
+                populate: { path: "base_additional_service_id", select: "name" }
+            });
 
         if (!booking) {
             throw new Error("Booking not found for bill generation");
         }
+
+        const bikeCC = parseInt(booking.userBike_id?.bike_cc || 0);
+        const resolvePrice = (doc) => {
+            if (!doc || !Array.isArray(doc.bikes)) return 0;
+            const match = doc.bikes.find(b => b.cc === bikeCC);
+            return match ? match.price : 0;
+        };
 
         // Prepare services array
         const services = [];
@@ -331,31 +343,21 @@ const generateBill = async (payment) => {
 
         // Add main services
         if (booking.services && booking.services.length > 0) {
-            booking.services.forEach(service => {
-                if (service && service.name) {
-                    services.push({
-                        name: service.name,
-                        price: service.price || 0,
-                        quantity: 1,
-                        total: service.price || 0
-                    });
-                    subtotal += service.price || 0;
-                }
+            booking.services.forEach(svc => {
+                const name = svc.base_service_id?.name || "Service";
+                const price = resolvePrice(svc);
+                services.push({ name, price, quantity: 1, total: price });
+                subtotal += price;
             });
         }
 
         // Add additional services
         if (booking.additionalServices && booking.additionalServices.length > 0) {
-            booking.additionalServices.forEach(service => {
-                if (service && service.name) {
-                    services.push({
-                        name: `Additional: ${service.name}`,
-                        price: service.price || 0,
-                        quantity: 1,
-                        total: service.price || 0
-                    });
-                    subtotal += service.price || 0;
-                }
+            booking.additionalServices.forEach(svc => {
+                const name = svc.base_additional_service_id?.name || "Additional Service";
+                const price = resolvePrice(svc);
+                services.push({ name: `Additional: ${name}`, price, quantity: 1, total: price });
+                subtotal += price;
             });
         }
 
