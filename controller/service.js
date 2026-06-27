@@ -736,24 +736,7 @@ async function getDealerServices(req, res) {
           }
         }
       });
-    
-    // Fetch Additional Services
-    let addlServices = [];
-    if (typeof additionalService !== 'undefined') {
-      addlServices = await additionalService.find({ dealer_id, isActive: true })
-        .populate("base_additional_service_id", "name image description")
-        .populate({
-          path: "bikes.variant_id",
-          populate: {
-            path: "model_id",
-            select: "model_name",
-            populate: {
-              path: "company_id",
-              select: "name"
-            }
-          }
-        });
-    }
+
 
     const pricing = [];
     const uniqueCompanies = new Map();
@@ -794,31 +777,7 @@ async function getDealerServices(req, res) {
       });
     });
 
-    addlServices.forEach(doc => {
-      (doc.bikes || []).forEach(bike => {
-        const variant = bike.variant_id;
-        extractCompany(variant);
-        const companyName = variant?.model_id?.company_id?.name || "";
-        const modelName = variant?.model_id?.model_name || "";
-        const bikeName = variant 
-          ? `${companyName} ${modelName} ${variant.variant_name || ""}`.trim()
-          : "Generic Bike";
-
-        pricing.push({
-          type: "additional",
-          serviceId: doc.base_additional_service_id?._id || doc.base_additional_service_id,
-          serviceName: doc.base_additional_service_id?.name,
-          serviceImage: doc.base_additional_service_id?.image,
-          description: doc.base_additional_service_id?.description || "",
-          bikeName: bikeName,
-          companyName: companyName,
-          modelName: modelName,
-          variantId: variant?._id || bike.variant_id || bike.variantId,
-          cc: bike.cc,
-          price: bike.price
-        });
-      });
-    });
+  
 
     return res.status(200).json({
       status: true,
