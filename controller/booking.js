@@ -1,7 +1,5 @@
 const mongoose = require('mongoose');
-const axios = require("axios");
 const booking = require("../models/Booking");
-const Payment = require("../models/Payment");
 const additionaloptions = require("../models/additionalOptionsModel");
 const AdditionalService = require("../models/additionalServiceSchema");
 const service = require("../models/service_model");
@@ -2418,11 +2416,6 @@ async function getBookingTimerStatus(req, res) {
 // SERVICE COMPLETE → PAYMENT → DELIVERY OTP FLOW
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CASHFREE_ORDERS_URL =
-  process.env.CASHFREE_ENV === "production"
-    ? "https://api.cashfree.com/pg/orders"
-    : "https://sandbox.cashfree.com/pg/orders";
-
 // 1. Dealer marks service as complete
 // POST /bookings/:bookingId/service-complete  { user_id }
 const serviceComplete = async (req, res) => {
@@ -2502,8 +2495,11 @@ const serviceComplete = async (req, res) => {
   }
 };
 
-// 2. User selects ONLINE or CASH payment method
+// 2. Dealer selects ONLINE (QR) or CASH payment method on the customer's behalf
 // POST /bookings/:bookingId/select-payment-method  { user_id, payment_method }
+// NOTE: `user_id` here is the dealer's id (kept for backward compatibility with
+// sibling endpoints in this flow, e.g. serviceComplete/confirmCashReceived, which
+// already use `user_id` in the body to mean "the acting dealer").
 const selectPaymentMethod = async (req, res) => {
   try {
     const { bookingId } = req.params;
@@ -2528,11 +2524,11 @@ const selectPaymentMethod = async (req, res) => {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    // User-only guard
-    if (bookingDoc.user_id.toString() !== user_id) {
+    // Dealer-only guard — the user app must not initiate payment anymore
+    if (bookingDoc.dealer_id.toString() !== user_id) {
       return res.status(403).json({
         success: false,
-        message: "Only the booking owner can select a payment method",
+        message: "Only the assigned dealer can select a payment method",
       });
     }
 
@@ -2560,88 +2556,60 @@ const selectPaymentMethod = async (req, res) => {
 
     const io = req.app.get("io");
 
-    // ── ONLINE PATH ────────────────────────────────────────────────────────────
+    // ── ONLINE (QR) PATH ───────────────────────────────────────────────────────
+    // QR generation itself is handled by the existing Cashfree UPI-QR flow
+    // (POST /cashfree/generate-qr), which already lands on the same
+    // invoice + wallet-settlement + delivery-OTP outcome as confirmCashReceived
+    // once payment succeeds. We only flip the booking into payment_selected
+    // (done above) and point the dealer at that endpoint — no second/duplicate
+    // Cashfree order integration here.
     if (payment_method === "ONLINE") {
       try {
-        const userDoc = await Customer.findById(user_id)
-          .select("first_name last_name email phone")
+        const dealer = await Vendor.findById(bookingDoc.dealer_id)
+          .select("device_token ftoken")
           .lean();
-
-        const orderId = `ORD_${Date.now()}_${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-
-        const cfPayload = {
-          order_id: orderId,
-          order_amount: parseFloat(bookingDoc.totalBill) || 1,
-          order_currency: "INR",
-          customer_details: {
-            customer_id: user_id,
-            customer_name: `${userDoc?.first_name || "Customer"} ${userDoc?.last_name || ""}`.trim(),
-            customer_email: userDoc?.email || "customer@example.com",
-            customer_phone: String(userDoc?.phone || "9999999999").slice(-10),
-          },
-          order_meta: {
-            return_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment/callback?order_id={order_id}`,
-            notify_url: `${process.env.BACKEND_URL || "http://localhost:8001"}/api/payments/webhook`,
-          },
-          order_note: `Service payment for booking ${bookingDoc.bookingId || bookingId}`,
-        };
-
-        const cfResponse = await axios.post(CASHFREE_ORDERS_URL, cfPayload, {
-          headers: {
-            "x-client-id": process.env.CASHFREE_APP_ID || process.env.APP_ID,
-            "x-client-secret": process.env.CASHFREE_SECRET_KEY || process.env.SECRET_KEY,
-            "x-api-version": "2022-09-01",
-            "Content-Type": "application/json",
-          },
-        });
-
-        const cfData = cfResponse.data;
-
-        await Payment.create({
-          cf_order_id: cfData.cf_order_id,
-          orderId,
-          booking_id: bookingDoc._id,
-          dealer_id: bookingDoc.dealer_id,
-          user_id: bookingDoc.user_id,
-          orderAmount: bookingDoc.totalBill || 0,
-          payment_type: "ONLINE",
-          order_currency: "INR",
-          order_status: cfData.order_status === "ACTIVE" ? "PENDING" : (cfData.order_status || "PENDING"),
-          order_token: cfData.order_token || `temp_${Date.now()}`,
-          payment_by: "user",
-        });
-
-        let checkoutUrl = cfData.payment_link;
-        if (!checkoutUrl && cfData.payment_session_id) {
-          const cfDomain = process.env.CASHFREE_ENV === "production"
-            ? "payments.cashfree.com"
-            : "sandbox.cashfree.com";
-          checkoutUrl = `https://${cfDomain}/pg/orders/${orderId}/payments`;
+        const dealerToken = dealer?.device_token || dealer?.ftoken;
+        if (dealerToken) {
+          await sendBookingNotification({
+            token: dealerToken,
+            title: "Generate Payment QR",
+            body: "Online payment selected. Generate a QR for the customer to scan and pay.",
+            data: {
+              type: "online_payment_selected",
+              bookingId: bookingId.toString(),
+            },
+            receiverId: bookingDoc.dealer_id,
+            receiverType: "dealer",
+            bookingId: bookingDoc._id,
+          });
         }
+      } catch (notifyErr) {
+        console.error("[SELECT-PAYMENT] Dealer FCM error:", notifyErr.message);
+      }
 
-        return res.status(200).json({
-          success: true,
+      if (io) {
+        io.to(`dealer:${bookingDoc.dealer_id}`).emit("booking:online_payment_selected", {
+          bookingId,
+          status: "payment_selected",
           payment_method: "ONLINE",
-          message: "Payment order created. Redirect user to checkout.",
-          data: {
-            orderId,
-            checkout_url: checkoutUrl,
-            payment_session_id: cfData.payment_session_id,
-            amount: bookingDoc.totalBill,
-          },
-        });
-      } catch (cfError) {
-        console.error("[SELECT-PAYMENT] Cashfree error:", cfError.response?.data || cfError.message);
-        // Rollback — Cashfree order creation failed
-        bookingDoc.status = "awaiting_payment";
-        bookingDoc.payment_method = null;
-        await bookingDoc.save();
-        return res.status(502).json({
-          success: false,
-          message: "Failed to create payment order. Please try again.",
-          error: cfError.response?.data || cfError.message,
         });
       }
+
+      return res.status(200).json({
+        success: true,
+        payment_method: "ONLINE",
+        message: "Online payment selected. Generate a QR via /cashfree/generate-qr to collect payment.",
+        data: {
+          bookingId,
+          status: "payment_selected",
+          amount: bookingDoc.totalBill,
+          next_step: {
+            method: "POST",
+            path: "/bikedoctor/cashfree/generate-qr",
+            body: { booking_id: bookingId, amount: bookingDoc.totalBill },
+          },
+        },
+      });
     }
 
     // ── CASH PATH ──────────────────────────────────────────────────────────────
@@ -2715,7 +2683,8 @@ const confirmCashReceived = async (req, res) => {
       });
     }
 
-    // Payment method guard
+    // Payment method guard — select-payment-method is always the entry point,
+    // so payment_method must already be "CASH" by the time this is called.
     if (bookingDoc.payment_method !== "CASH") {
       return res.status(400).json({
         success: false,

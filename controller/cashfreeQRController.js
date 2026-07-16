@@ -4,6 +4,87 @@ const Payment = require("../models/Payment")
 const Booking = require("../models/Booking")
 const Customer = require("../models/customer_model")
 const Dealer = require("../models/dealerModel")
+const { generateBill } = require("./payment")
+const { settleBookingWallet } = require("../helper/walletSettlement")
+const { sendBookingNotification } = require("../helper/pushNotification")
+
+const genDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000)
+
+// Advance a booking to ready_for_delivery once its QR/UPI payment is confirmed
+// SUCCESS — mirrors confirmCashReceived so both payment methods land in the
+// same place: invoice generated, wallet settled, delivery OTP issued.
+const advanceBookingAfterOnlinePayment = async (payment, io) => {
+  const currentBooking = await Booking.findById(payment.booking_id)
+  if (!currentBooking) return
+
+  const alreadyAdvanced = ["ready_for_delivery", "delivered", "completed", "cash received"].includes(
+    currentBooking.status,
+  )
+  if (alreadyAdvanced) return
+
+  const freshOtp = genDeliveryOtp()
+
+  currentBooking.payment_method   = currentBooking.payment_method || "ONLINE"
+  currentBooking.payment_status   = "completed"
+  currentBooking.payment_verified = true
+  currentBooking.deliveryOtp      = freshOtp
+  currentBooking.status           = "ready_for_delivery"
+  currentBooking.billStatus       = "paid"
+  currentBooking.paymentStatus    = "completed"
+  currentBooking.paymentDate      = new Date()
+  await currentBooking.save()
+
+  console.log(`[CASHFREE] Booking ${payment.booking_id} → ready_for_delivery | OTP: ${freshOtp}`)
+
+  try {
+    await generateBill({
+      booking_id: payment.booking_id,
+      payment_method: payment.payment_method || "ONLINE",
+      transaction_id: payment.transaction_id || payment.cf_order_id || null,
+      _id: payment._id,
+    })
+  } catch (billErr) {
+    console.error("[CASHFREE] Bill generation failed:", billErr.message)
+  }
+
+  try {
+    const settlement = await settleBookingWallet(currentBooking._id, "ONLINE")
+    if (settlement) {
+      console.log(`[CASHFREE] Wallet settled: ₹${settlement.txnAmount} credited (commission ${settlement.commissionRate}%)`)
+    }
+  } catch (settlErr) {
+    console.error("[CASHFREE] Wallet settlement failed:", settlErr.message)
+  }
+
+  try {
+    const user = await Customer.findById(currentBooking.user_id).select("device_token ftoken").lean()
+    const userToken = user?.device_token || user?.ftoken
+    if (userToken) {
+      await sendBookingNotification({
+        token: userToken,
+        title: "Payment Received — Show OTP to Dealer",
+        body: "Your payment has been confirmed. Show the OTP to the dealer to collect your bike.",
+        data: {
+          type: "otp_ready",
+          bookingId: currentBooking._id.toString(),
+          otp: String(freshOtp),
+        },
+        receiverId: currentBooking.user_id,
+        receiverType: "user",
+        bookingId: currentBooking._id,
+      })
+    }
+  } catch (notifyErr) {
+    console.error("[CASHFREE] User FCM error:", notifyErr.message)
+  }
+
+  if (io) {
+    io.to(`user:${currentBooking.user_id}`).emit("booking:ready_for_delivery", {
+      bookingId: currentBooking._id,
+      status: "ready_for_delivery",
+    })
+  }
+}
 
 // Cashfree API Configuration
 const getCashfreeBaseUrl = () =>
@@ -52,6 +133,15 @@ const generateUPIQRCode = async (req, res) => {
       })
     }
 
+    // Entry-point guard — the dealer must have selected ONLINE via
+    // /bookings/:bookingId/select-payment-method before a QR can be generated.
+    if (booking.payment_method !== "ONLINE" || booking.status !== "payment_selected") {
+      return res.status(400).json({
+        success: false,
+        message: "Select ONLINE payment method via /bookings/:bookingId/select-payment-method before generating a QR",
+      })
+    }
+
     // Check if payment already exists and is successful
     const existingPayment = await Payment.findOne({
       booking_id: booking_id,
@@ -87,7 +177,7 @@ const generateUPIQRCode = async (req, res) => {
       customer_details: customerDetails,
       order_meta: {
         return_url: `${process.env.FRONTEND_URL || "https://bikedoctor.app"}/payment-status?order_id={order_id}`,
-        notify_url: `${process.env.BACKEND_URL || "https://api.bikedoctor.app"}/bikedoctor/payment/cashfree-webhook`,
+        notify_url: `${process.env.BACKEND_URL || "https://api.bikedoctor.app"}/bikedoctor/cashfree/webhook`,
         payment_methods: "upi",
       },
       order_expiry_time: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
@@ -289,20 +379,7 @@ const checkPaymentStatus = async (req, res) => {
 
         // Update booking if payment successful
         if (mappedStatus === "SUCCESS") {
-          const currentBooking = await Booking.findById(payment.booking_id)
-          const finalStatuses = ["completed", "cash received"]
-          const statusUpdate = currentBooking && finalStatuses.includes(currentBooking.status)
-            ? {}
-            : { status: "confirmed" }
-
-          await Booking.findByIdAndUpdate(payment.booking_id, {
-            $set: {
-              billStatus: "paid",
-              paymentStatus: "completed",
-              paymentDate: new Date(),
-              ...statusUpdate
-            },
-          })
+          await advanceBookingAfterOnlinePayment(payment, req.app.get("io"))
         }
       }
     }
@@ -420,24 +497,11 @@ const cashfreeWebhook = async (req, res) => {
 
     // Update booking if payment successful
     if (mappedStatus === "SUCCESS") {
-      const currentBooking = await Booking.findById(payment.booking_id)
-      const finalStatuses = ["completed", "cash received"]
-      const statusUpdate = currentBooking && finalStatuses.includes(currentBooking.status)
-        ? {}
-        : { status: "confirmed" }
-
-      await Booking.findByIdAndUpdate(payment.booking_id, {
-        $set: {
-          billStatus: "paid",
-          paymentStatus: "completed",
-          paymentDate: new Date(),
-          ...statusUpdate
-        },
-      })
+      const io = req.app.get("io")
+      await advanceBookingAfterOnlinePayment(payment, io)
       console.log(`Booking ${payment.booking_id} marked as paid`)
 
       // Emit socket event for real-time update
-      const io = req.app.get("io")
       if (io) {
         io.emit("payment:success", {
           order_id: orderId,
