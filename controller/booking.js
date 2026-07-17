@@ -2532,19 +2532,28 @@ const selectPaymentMethod = async (req, res) => {
       });
     }
 
-    // Status guard
-    if (bookingDoc.status !== "awaiting_payment") {
+    // Status guard — the dealer may (re)select a payment method for as long as
+    // the booking is still in the payment-collection stage. This allows e.g.
+    // switching ONLINE → CASH after a QR was generated but never paid. Once
+    // payment actually completes, the booking moves past both of these
+    // statuses (see payment_status guard below and confirmCashReceived /
+    // advanceBookingAfterOnlinePayment), so this list also implicitly blocks
+    // changes after payment_success/ready_for_delivery/delivered/cancelled.
+    const PAYMENT_METHOD_SELECTABLE_STATUSES = ["awaiting_payment", "payment_selected"];
+    if (!PAYMENT_METHOD_SELECTABLE_STATUSES.includes(bookingDoc.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot select payment method. Current status: ${bookingDoc.status}. Expected: awaiting_payment`,
+        message: `Cannot select payment method. Current status: ${bookingDoc.status}. Expected one of: ${PAYMENT_METHOD_SELECTABLE_STATUSES.join(", ")}`,
       });
     }
 
-    // Immutability guard — cannot change once selected
-    if (bookingDoc.payment_method !== null && bookingDoc.payment_method !== undefined) {
+    // Payment-completed guard — once payment has actually succeeded, the
+    // method can never be changed, even if the status guard above were ever
+    // loosened further.
+    if (bookingDoc.payment_status === "completed") {
       return res.status(409).json({
         success: false,
-        message: `Payment method already set to '${bookingDoc.payment_method}'. Cannot be changed.`,
+        message: "Payment has already been completed. Payment method cannot be changed.",
       });
     }
 
