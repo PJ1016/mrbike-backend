@@ -57,7 +57,7 @@ async function checkPermission(user_id, requiredPermission) {
 
 const dealerWithInRange = async (req, res) => {
   try {
-    const { userLat, userLon } = req.query;
+    const { userLat, userLon, serviceId, variant_id, cc } = req.query;
 
     if (!userLat || !userLon) {
       return res.status(400).json({
@@ -89,7 +89,7 @@ const dealerWithInRange = async (req, res) => {
 
     console.log(`✅ Total Dealers Found: ${dealers}`);
 
-    const nearbyDealers = dealers.filter(dealer => {
+    let nearbyDealers = dealers.filter(dealer => {
       const distance = calculateDistance(
         latitude,
         longitude,
@@ -98,6 +98,40 @@ const dealerWithInRange = async (req, res) => {
       );
       return distance <= 3;
     });
+
+    // If the user has selected a service + bike variant, only keep dealers who
+    // actually offer that service for that variant with pricing configured.
+    // (base_service_id is the id the User App sends as serviceId; AdminService
+    // _id is accepted as a fallback, same as the resolution used at booking time.)
+    if (serviceId && variant_id) {
+      const ccFilter = cc !== undefined && cc !== "" ? parseInt(cc, 10) : null;
+      const dealerIds = nearbyDealers.map(dealer => dealer._id);
+
+      const matchingAdminServices = await AdminService.find({
+        dealer_id: { $in: dealerIds },
+        isActive: true,
+        "bikes.variant_id": variant_id,
+        $or: [{ base_service_id: serviceId }, { _id: serviceId }],
+      });
+
+      const eligibleDealerIds = new Set();
+      matchingAdminServices.forEach(svc => {
+        const hasConfiguredBike = (svc.bikes || []).some(bike => {
+          if (!bike.variant_id || String(bike.variant_id) !== String(variant_id)) {
+            return false;
+          }
+          if (ccFilter !== null && bike.cc !== ccFilter) {
+            return false;
+          }
+          return bike.price != null && bike.price > 0;
+        });
+        if (hasConfiguredBike) {
+          eligibleDealerIds.add(String(svc.dealer_id));
+        }
+      });
+
+      nearbyDealers = nearbyDealers.filter(dealer => eligibleDealerIds.has(String(dealer._id)));
+    }
 
     return res.status(200).json({
       success: true,
