@@ -702,13 +702,16 @@ async function deleteAdminService(req, res) {
 }
 
 /**
- * GET /dealer/services?dealerId=...
+ * GET /dealer/services?dealerId=...&variant_id=...&cc=...
  * Returns all services (base + additional) for a specific dealer with full pricing.
+ * If variant_id is provided, only pricing entries matching that variant are returned.
  */
 async function getDealerServices(req, res) {
   try {
     let dealer_id = req.query.dealerId;
-    
+    const variant_id = req.query.variant_id;
+    const cc = req.query.cc;
+
     // Fallback to token if no query param (for Dealer app usage instead of Admin)
     if (!dealer_id) {
       if (!req.headers.token) {
@@ -721,6 +724,12 @@ async function getDealerServices(req, res) {
     if (!dealer_id || !mongoose.Types.ObjectId.isValid(dealer_id)) {
       return res.status(400).json({ status: false, message: "Valid dealerId required" });
     }
+
+    if (variant_id && !mongoose.Types.ObjectId.isValid(variant_id)) {
+      return res.status(400).json({ status: false, message: "Invalid variant_id" });
+    }
+
+    const ccFilter = cc !== undefined ? parseInt(cc, 10) : null;
 
     // Fetch Base Services
     const baseServices = await adminservices.find({ dealer_id, isActive: true })
@@ -754,6 +763,17 @@ async function getDealerServices(req, res) {
     baseServices.forEach(doc => {
       (doc.bikes || []).forEach(bike => {
         const variant = bike.variant_id;
+        const currentVariantId = variant?._id || bike.variant_id || bike.variantId;
+
+        // Primary filter: only include pricing entries for the requested variant.
+        if (variant_id && String(currentVariantId) !== String(variant_id)) {
+          return;
+        }
+        // Secondary/optional validation against cc, when supplied alongside variant_id.
+        if (ccFilter !== null && bike.cc !== ccFilter) {
+          return;
+        }
+
         extractCompany(variant);
         const companyName = variant?.model_id?.company_id?.name || "";
         const modelName = variant?.model_id?.model_name || "";
@@ -770,7 +790,7 @@ async function getDealerServices(req, res) {
           bikeName: bikeName,
           companyName: companyName,
           modelName: modelName,
-          variantId: variant?._id || bike.variant_id || bike.variantId,
+          variantId: currentVariantId,
           cc: bike.cc,
           price: bike.price
         });
