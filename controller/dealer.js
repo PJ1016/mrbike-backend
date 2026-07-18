@@ -1157,11 +1157,19 @@ const updateDealerVerfication = async (req, res) => {
 // By prashant 
 async function dealerList(req, res) {
   try {
-    const dealerResponse = await Vendor.find({
-      "status.adminApproved": true,
-      "status.isActive": true,
-      "status.isVerified": true
-    });
+    // No filter by default — the admin dealer list must show every dealer
+    // (including inactive/blocked ones), otherwise a dealer deactivated via
+    // POST /update_status vanishes from the list and can never be
+    // reactivated. Filtering is opt-in via query params for any consumer
+    // that does need a narrowed set (e.g. status=active).
+    const filter = {};
+    const { adminApproved, isActive, isVerified, isBlocked } = req.query;
+    if (adminApproved !== undefined) filter["status.adminApproved"] = adminApproved === "true";
+    if (isActive !== undefined) filter["status.isActive"] = isActive === "true";
+    if (isVerified !== undefined) filter["status.isVerified"] = isVerified === "true";
+    if (isBlocked !== undefined) filter.isBlocked = isBlocked === "true";
+
+    const dealerResponse = await Vendor.find(filter);
 
     if (dealerResponse.length > 0) {
       return res.status(200).send({
