@@ -2272,14 +2272,52 @@ async function getallbookings(req, res) {
       .populate("dealer_id") // Fetch dealer details
       .populate("pickupAndDropId") // Fetch pickup & drop details
       .populate("user_id") // Fetch user details
-      .populate("userBike_id") // Fetch bike details
+      .populate({
+        path: "userBike_id", // Fetch bike details
+        populate: {
+          path: "variant_id",
+          model: "BikeVariant",
+          select: "variant_name engine_cc model_id",
+          populate: {
+            path: "model_id",
+            model: "BikeModel",
+            select: "model_name company_id",
+            populate: {
+              path: "company_id",
+              model: "BikeCompany",
+              select: "name",
+            },
+          },
+        },
+      })
       .sort({ "_id": -1 });
 
     if (bookingresponce.length > 0) {
+      const data = bookingresponce.map((doc) => {
+        const item = doc.toObject({ virtuals: true });
+        const userBike = item.userBike_id;
+        const variant = userBike?.variant_id;
+        const model = variant?.model_id;
+        const company = model?.company_id;
+
+        // Resolve real catalog names via variant_id chain; userBike_id.name/model
+        // may hold stale free-text (or, for older records, raw ObjectIds) so they
+        // are not used when the catalog chain is available.
+        item.bike = {
+          company_name: company?.name ?? null,
+          model_name: model?.model_name ?? null,
+          variant_name: variant?.variant_name ?? null,
+          engine_cc: variant?.engine_cc ?? null,
+          plate_number: userBike?.plate_number ?? null,
+        };
+
+        return item;
+      });
+
       return res.status(200).json({
         status: 200,
         message: "Successfully retrieved bookings",
-        data: bookingresponce,
+        data,
         image_base_url: process.env.BASE_URL,
       });
     } else {

@@ -8,6 +8,7 @@ const { is } = require("express/lib/request");
 const jwt_decode = require("jwt-decode");
 const otpAuth = require("../helper/otpAuth");
 const UserBike = require("../models/userBikeModel");
+const BikeVariant = require("../models/bikeVariantModel");
 
 // async function customersignup(req, res) {
 
@@ -600,17 +601,40 @@ const addUserBike = async (req, res) => {
       });
     }
 
-    const { name, model, bike_cc, plate_number, variant_id } = req.body;
+    const { plate_number, variant_id } = req.body;
 
     // Check if all required fields are provided
-    if (!name || !model || !bike_cc || !plate_number) {
+    if (!variant_id || !plate_number) {
       console.warn(
         `[addUserBike] Validation failed: Missing required fields for user ID: ${user_id}`,
       );
       return res.status(200).json({
         status: 200,
-        message:
-          "All fields (name, model, bike_cc, plate_number) are required!",
+        message: "All fields (variant_id, plate_number) are required!",
+        data: [],
+      });
+    }
+
+    // Resolve the real company/model names from the selected catalog variant
+    // server-side, rather than trusting client-supplied name/model strings
+    // (which previously leaked raw catalog ObjectIds into these fields).
+    const variant = await BikeVariant.findById(variant_id).populate({
+      path: "model_id",
+      model: "BikeModel",
+      select: "model_name company_id",
+      populate: { path: "company_id", model: "BikeCompany", select: "name" },
+    });
+
+    const resolvedName = variant?.model_id?.company_id?.name;
+    const resolvedModel = variant?.model_id?.model_name;
+
+    if (!variant || !resolvedName || !resolvedModel) {
+      console.warn(
+        `[addUserBike] Validation failed: could not resolve catalog details for variant_id ${variant_id}`,
+      );
+      return res.status(200).json({
+        status: 200,
+        message: "Selected bike variant could not be found!",
         data: [],
       });
     }
@@ -630,9 +654,9 @@ const addUserBike = async (req, res) => {
     // Create a new bike entry
     const newBike = new UserBike({
       user_id,
-      name,
-      model,
-      bike_cc,
+      name: resolvedName,
+      model: resolvedModel,
+      bike_cc: String(variant.engine_cc ?? ""),
       plate_number,
       variant_id,
     });
