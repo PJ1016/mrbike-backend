@@ -254,10 +254,24 @@ async function editDealerStatus(req, res) {
     }
 
 
-    const { dealer_id, status, isBlock, isActive, isBlocked, blockedReason } = req.body;
+    let { dealer_id, status, isBlock, isActive, isBlocked, blockedReason } = req.body;
 
     if (!dealer_id) {
       return res.status(400).json({ success: false, message: "dealer_id is required" });
+    }
+
+    // Legacy string contract: map `status` onto the canonical isActive/isBlocked
+    // booleans instead of a nonexistent `is_online` field.
+    if (status !== undefined) {
+      if (status === "blocked" && isBlocked === undefined && isBlock === undefined) {
+        isBlocked = true;
+      } else if (status === "unblocked" && isBlocked === undefined && isBlock === undefined) {
+        isBlocked = false;
+      } else if (status === "inactive" && isActive === undefined) {
+        isActive = false;
+      } else if (status === "active" && isActive === undefined) {
+        isActive = true;
+      }
     }
 
     // Build update payload — support both old field names (isBlock, status) and
@@ -279,9 +293,8 @@ async function editDealerStatus(req, res) {
       updateData.blockedReason = blockedReason;
     }
 
-    // Legacy: online/offline toggle sent as `status` field
-    if (status !== undefined && isActive === undefined) {
-      updateData.is_online = status;
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ success: false, message: "No valid status field provided" });
     }
 
     const dealerBefore = await Dealer.findById(dealer_id);

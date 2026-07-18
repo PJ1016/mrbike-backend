@@ -669,6 +669,8 @@ const dashboardCounts = async (req, res) => {
     const bookingCount = await bookingSchema.countDocuments()
     const serviceCount = await servicesSchema.countDocuments()
     const dealerCount = await dealersSchema.countDocuments()
+    const blockedDealersCount = await dealersSchema.countDocuments({ isBlocked: true })
+    const inactiveDealersCount = await dealersSchema.countDocuments({ isActive: false })
 
     res.status(200).json({
       status: 200,
@@ -681,6 +683,8 @@ const dashboardCounts = async (req, res) => {
         totalBookings: bookingCount,
         totalServices: serviceCount,
         totalDealers: dealerCount,
+        blockedDealers: blockedDealersCount,
+        inactiveDealers: inactiveDealersCount,
       },
     })
   } catch (error) {
