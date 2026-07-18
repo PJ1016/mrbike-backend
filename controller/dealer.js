@@ -15,6 +15,7 @@ const servicess = require("../models/service_model")
 const AdminService = require("../models/adminService")
 const { sendBookingNotification } = require("../helper/pushNotification");
 const { logDealerActivity } = require("../helper/dealerActivityLog");
+const DealerActivityLog = require("../models/DealerActivityLog");
 const fs = require("fs");
 const mongoose = require('mongoose');
 const { log } = require("console");
@@ -1590,8 +1591,36 @@ async function registerDealerToken(req, res) {
   }
 }
 
+const getDealerActivityHistory = async (req, res) => {
+  try {
+    const { dealerId } = req.params;
+
+    const logs = await DealerActivityLog.find({ dealerId }).sort({ timestamp: -1 }).lean();
+
+    const adminIds = [...new Set(logs.filter((log) => log.adminId).map((log) => String(log.adminId)))];
+    const admins = adminIds.length ? await Admin.find({ _id: { $in: adminIds } }).select("name").lean() : [];
+    const adminNameById = new Map(admins.map((admin) => [String(admin._id), admin.name]));
+
+    const data = logs.map((log) => ({
+      _id: log._id,
+      dealerId: log.dealerId,
+      adminId: log.adminId,
+      adminName: log.adminId ? adminNameById.get(String(log.adminId)) || null : null,
+      action: log.action,
+      reason: log.reason,
+      timestamp: log.timestamp,
+    }));
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("getDealerActivityHistory error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 module.exports = {
   getActiveDealers,
+  getDealerActivityHistory,
   dealerList,
   deleteDealer,
   singledealer,

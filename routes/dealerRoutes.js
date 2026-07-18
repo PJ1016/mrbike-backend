@@ -38,6 +38,7 @@ var {
   setDealerOnline,
   getActiveDealers,
   registerDealerToken,
+  getDealerActivityHistory,
 } = require("../controller/dealer")
 const { getDealerServices, saveDealerServices, getDealersByService } = require("../controller/service")
 const { processDealer } = require("../controller/dealerController")
@@ -524,6 +525,7 @@ router.get("/dealerWallet/:id", requireAdmin, GetwalletInfo)
 router.get("/dealerWallet", requireAdmin, getWallet)
 router.get("/dealersWithDocFalse", requireAdmin, getAllDealersWithDocFalse)
 router.get("/dealersWithVerifyFalse", requireAdmin, getAllDealersWithVerifyFalse)
+router.get("/activity-history/:dealerId", requireAdmin, getDealerActivityHistory)
 
 router.delete("/deleteDealer", requireAdmin, deleteDealer)
 router.post("/update_status", editDealerStatus)
