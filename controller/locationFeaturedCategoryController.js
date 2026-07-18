@@ -135,6 +135,24 @@ async function create(req, res) {
     const lat = Number(latitude);
     const lng = Number(longitude);
 
+    if (serviceId) {
+      const duplicate = await LocationFeaturedCategory.findOne({
+        serviceId: new mongoose.Types.ObjectId(serviceId),
+        location: {
+          $nearSphere: {
+            $geometry: { type: "Point", coordinates: [lng, lat] },
+            $maxDistance: Number(radius) * 1000, // radius is stored in km
+          },
+        },
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          status: 409,
+          message: "This service already exists within the selected location radius.",
+        });
+      }
+    }
+
     const doc = await LocationFeaturedCategory.create({
       categoryName: categoryName.trim(),
       categoryImage: req.file.location,
@@ -209,6 +227,35 @@ async function update(req, res) {
       return res
         .status(400)
         .json({ status: 400, message: "Invalid serviceId" });
+    }
+
+    const resolvedServiceId =
+      serviceId !== undefined
+        ? serviceId === null || serviceId === ""
+          ? null
+          : new mongoose.Types.ObjectId(serviceId)
+        : existing.serviceId;
+    const resolvedLat = latitude !== undefined ? Number(latitude) : existing.latitude;
+    const resolvedLng = longitude !== undefined ? Number(longitude) : existing.longitude;
+    const resolvedRadius = radius !== undefined ? Number(radius) : existing.radius;
+
+    if (resolvedServiceId) {
+      const duplicate = await LocationFeaturedCategory.findOne({
+        _id: { $ne: id },
+        serviceId: resolvedServiceId,
+        location: {
+          $nearSphere: {
+            $geometry: { type: "Point", coordinates: [resolvedLng, resolvedLat] },
+            $maxDistance: resolvedRadius * 1000, // radius is stored in km
+          },
+        },
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          status: 409,
+          message: "This service already exists within the selected location radius.",
+        });
+      }
     }
 
     const updateData = { updatedBy: req.user_id };
