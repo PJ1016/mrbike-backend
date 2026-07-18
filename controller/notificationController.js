@@ -6,7 +6,6 @@ const getNotificationsByReceiverId = async (req, res) => {
   try {
     const notifications = await Notification.find({
         receiverId,
-        status: "sent",
       }).sort({ createdAt: -1 });
 
     res.status(200).json({
