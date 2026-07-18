@@ -1,7 +1,14 @@
 var express = require("express")
 var path = require("path")
 const Vendor = require("../models/dealerModel")
-const { createS3Upload } = require("../utils/s3Upload")
+const { createS3Upload, deleteS3Object } = require("../utils/s3Upload")
+const {
+  buildDealerUpdate,
+  DOCUMENT_FILE_PATHS,
+  DOCUMENT_KEYS,
+  DOCUMENT_VERIFICATION_KEY_MAP,
+  getAtPath,
+} = require("../helper/dealerFieldMap")
 var {
   dealerList,
   deleteDealer,
@@ -350,6 +357,9 @@ router.put(
     { name: "panCardFront", maxCount: 1 },
     { name: "aadharFront", maxCount: 1 },
     { name: "aadharBack", maxCount: 1 },
+    { name: "shopCertificate", maxCount: 1 },
+    { name: "faceVerificationImage", maxCount: 1 },
+    { name: "passbookImage", maxCount: 1 },
     { name: "shopImages", maxCount: 5 },
   ]),
   async function editDealer(req, res) {
@@ -367,23 +377,10 @@ router.put(
         })
       }
 
-      // Validate inputs
-      const errors = {}
-
-      // Commission validation
-      if (req.body.comission !== undefined) {
-        const commission = Number.parseFloat(req.body.comission)
-        if (isNaN(commission) || commission < 0 || commission > 100) {
-          errors.comission = "Commission must be between 0-100%"
-        }
-      }
-
-      // PAN validation
-      if (req.body.panCardNo !== undefined && req.body.panCardNo !== "") {
-        if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(req.body.panCardNo.trim().toUpperCase())) {
-          errors.panCardNo = "Invalid PAN card number"
-        }
-      }
+      // Normalize legacy aliases, map + validate every supported field
+      // (personal info, shop info, address, bank details, business settings,
+      // business hours, notifications) via the centralized field map.
+      const { updateData, errors } = buildDealerUpdate(req.body)
 
       if (Object.keys(errors).length > 0) {
         return res.status(400).json({
@@ -393,38 +390,11 @@ router.put(
         })
       }
 
-      // Prepare update data
-      const updateData = {}
-      const fields = [
-        "shopName",
-        "email",
-        "phone",
-        "shopPincode",
-        "shopNumber",
-        "locality",
-        "fullAddress",
-        "city",
-        "state",
-        "latitude",
-        "longitude",
-        "ownerName",
-        "alternatePhone",
-        "aadharCardNo",
-        "panCardNo",
-        "gstNumber",
-      ]
-
-      fields.forEach((field) => {
-        if (req.body[field] !== undefined) {
-          updateData[field] = req.body[field] === "" ? null : req.body[field]
-        }
-      })
-
       // Auto-sync fullAddress if address components are updated
       const addressComponentsChanged = ["shopNumber", "locality", "city", "state", "shopPincode"].some(
         (field) => req.body[field] !== undefined
       )
-      
+
       if (addressComponentsChanged) {
         const addr = {
           shopNumber: req.body.shopNumber !== undefined ? req.body.shopNumber : existingDealer.shopNumber,
@@ -433,7 +403,7 @@ router.put(
           state: req.body.state !== undefined ? req.body.state : existingDealer.state,
           shopPincode: req.body.shopPincode !== undefined ? req.body.shopPincode : existingDealer.shopPincode,
         }
-        
+
         updateData.fullAddress = [
           addr.shopNumber,
           addr.locality,
@@ -442,70 +412,33 @@ router.put(
         ].filter(Boolean).join(", ")
       }
 
-      // Handle numeric fields
-      if (req.body.comission !== undefined) {
-        updateData.commission = Number.parseFloat(req.body.comission)
-      }
-      if (req.body.tax !== undefined) {
-        updateData.tax = req.body.tax === "" ? null : Number.parseFloat(req.body.tax)
-      }
-      if (req.body.pickupCharges !== undefined) {
-        updateData.pickupCharges = req.body.pickupCharges === "" ? 0 : Number.parseFloat(req.body.pickupCharges)
-      }
-      if (req.body.minWalletAmount !== undefined) {
-        updateData.minWalletAmount = req.body.minWalletAmount === "" ? 0 : Number.parseFloat(req.body.minWalletAmount)
-      }
+      // Handle document upload / replace (PAN, Aadhaar front/back, shop
+      // certificate, passbook image, face verification). Each document is
+      // written as its own dotted path so untouched documents/bankDetails
+      // siblings are never overwritten. Deletion is not supported yet — no
+      // client contract for it exists — so an existing document is only
+      // ever touched here when a replacement file is actually uploaded.
+      const files = req.files || {}
 
-      // service capability fields
-      if (req.body.providesPickup !== undefined) {
-        updateData.providesPickup = req.body.providesPickup === "true" || req.body.providesPickup === true
-      }
-      if (req.body.providesDrop !== undefined) {
-        updateData.providesDrop = req.body.providesDrop === "true" || req.body.providesDrop === true
-      }
-      if (req.body.dropCharges !== undefined) {
-        updateData.dropCharges = req.body.dropCharges === "" ? 0 : Number.parseFloat(req.body.dropCharges)
-      }
+      for (const docKey of DOCUMENT_KEYS) {
+        const uploadedFile = files[docKey]?.[0]
+        if (!uploadedFile) continue // untouched — never remove an existing document implicitly
 
-      // Handle bank details
-      if (
-        req.body.accountHolderName !== undefined ||
-        req.body.ifscCode !== undefined ||
-        req.body.bankName !== undefined ||
-        req.body.accountNumber !== undefined
-      ) {
-        updateData.bankDetails = {
-          accountHolderName: req.body.accountHolderName || existingDealer.bankDetails.accountHolderName,
-          ifscCode: req.body.ifscCode || existingDealer.bankDetails.ifscCode,
-          bankName: req.body.bankName || existingDealer.bankDetails.bankName,
-          accountNumber: req.body.accountNumber || existingDealer.bankDetails.accountNumber,
+        const docPath = DOCUMENT_FILE_PATHS[docKey]
+        const existingLocation = getAtPath(existingDealer, docPath)
+        if (existingLocation) {
+          await deleteS3Object(existingLocation)
         }
-      }
+        updateData[docPath] = uploadedFile.location
 
-      // Handle document uploads
-      if (req.files) {
-        updateData.documents = { ...existingDealer.documents }
-
-        const documentFields = [
-          { field: "panCardFront", name: "panCardFront" },
-          { field: "aadharFront", name: "aadharFront" },
-          { field: "aadharBack", name: "aadharBack" },
-        ]
-
-        documentFields.forEach(({ field, name }) => {
-          if (req.files[field]) {
-            // Delete old file if exists
-            if (existingDealer.documents[name]) {
-              try {
-                fs.unlinkSync(path.join(uploadDir, existingDealer.documents[name]))
-              } catch (err) {
-                console.error(`Error deleting old ${name}:`, err)
-              }
-            }
-            // Add new file
-            updateData.documents[name] = req.files[field][0].location
-          }
-        })
+        // Re-upload after rejection: send the document back into review
+        // using the existing documentVerification field/enum — the same
+        // one controller/dealerAuth.js's uploadDocuments()/verifyDocument()
+        // already use — instead of a second, parallel status field.
+        const verificationKey = DOCUMENT_VERIFICATION_KEY_MAP[docKey]
+        if (verificationKey) {
+          updateData[`documentVerification.${verificationKey}`] = "pending"
+        }
       }
 
       // Handle shop images

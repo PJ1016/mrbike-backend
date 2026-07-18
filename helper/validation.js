@@ -153,6 +153,71 @@ const findIndexByProperty = (data, key, value) => {
   return -1;
 }
 
+/**
+ * isValidPhone helper method
+ * @param {string} phone
+ * @returns {Boolean} True or False
+ */
+const isValidPhone = (phone) => /^\d{10}$/.test(String(phone).trim());
+
+/**
+ * isValidGender helper method
+ * @param {string} gender
+ * @returns {Boolean} True or False
+ */
+const isValidGender = (gender) => {
+  if (typeof gender !== 'string') return false;
+  return ['male', 'female', 'other'].includes(gender.trim().toLowerCase());
+};
+
+/**
+ * isValidLatitude helper method
+ * @param {number} lat
+ * @returns {Boolean} True or False
+ */
+const isValidLatitude = (lat) => !isNaN(lat) && lat >= -90 && lat <= 90;
+
+/**
+ * isValidLongitude helper method
+ * @param {number} lng
+ * @returns {Boolean} True or False
+ */
+const isValidLongitude = (lng) => !isNaN(lng) && lng >= -180 && lng <= 180;
+
+/**
+ * isValidCommission helper method
+ * @param {number} value
+ * @returns {Boolean} True or False
+ */
+const isValidCommission = (value) => !isNaN(value) && value >= 0 && value <= 100;
+
+/**
+ * isValidTax helper method
+ * @param {number} value
+ * @returns {Boolean} True or False
+ */
+const isValidTax = (value) => !isNaN(value) && value >= 0 && value <= 18;
+
+/**
+ * isValidIFSC helper method
+ * @param {string} ifsc
+ * @returns {Boolean} True or False
+ */
+const isValidIFSC = (ifsc) => /^[A-Z]{4}0[A-Z0-9]{6}$/.test(String(ifsc).trim().toUpperCase());
+
+/**
+ * isValidBankAccountNumber helper method
+ * @param {string} accountNumber
+ * @returns {Boolean} True or False
+ */
+const isValidBankAccountNumber = (accountNumber) => /^\d{9,18}$/.test(String(accountNumber).trim());
+
+/**
+ * isValidPAN helper method
+ * @param {string} pan
+ * @returns {Boolean} True or False
+ */
+const isValidPAN = (pan) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(String(pan).trim().toUpperCase());
 
 module.exports = {
   hashPassword,
@@ -167,4 +232,13 @@ module.exports = {
   getDistanceFromLatLonInKm,
   findIndexByProperty,
   generateUserToken,
+  isValidPhone,
+  isValidGender,
+  isValidLatitude,
+  isValidLongitude,
+  isValidCommission,
+  isValidTax,
+  isValidIFSC,
+  isValidBankAccountNumber,
+  isValidPAN,
 };

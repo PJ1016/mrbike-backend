@@ -1,4 +1,4 @@
-const { S3Client } = require("@aws-sdk/client-s3");
+const { S3Client, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const multer = require("multer");
 const multerS3 = require("multer-s3");
 const path = require("path");
@@ -41,4 +41,22 @@ function createS3Upload(folder) {
   });
 }
 
-module.exports = { createS3Upload };
+/**
+ * Deletes a previously uploaded S3 object given its stored `.location` URL
+ * (or a bare key). Used when a dealer document is replaced or removed so old
+ * files don't leak in the bucket. Errors are logged, never thrown, so a
+ * failed cleanup never blocks the surrounding dealer update.
+ * @param {string} location - the multerS3 `.location` URL or S3 key
+ */
+async function deleteS3Object(location) {
+  if (!location) return;
+  try {
+    const marker = ".amazonaws.com/";
+    const key = location.includes(marker) ? decodeURIComponent(location.split(marker)[1]) : location;
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  } catch (err) {
+    console.error("Error deleting S3 object:", location, err.message);
+  }
+}
+
+module.exports = { createS3Upload, deleteS3Object };
