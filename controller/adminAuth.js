@@ -13,7 +13,6 @@ const servicesSchema = require("../models/service_model")
 const dealersSchema = require("../models/dealerModel")
 
 var bcrypt = require("bcryptjs")
-const jwt_decode = require("jwt-decode")
 const Role = require("../models/Roles_modal")
 const otpAuth = require("../helper/otpAuth")
 const { getRoleCode, generateRandomSuffix } = require("../helper/helper")
@@ -79,17 +78,12 @@ async function suadminsignup(req, res) {
 // POST endpoint to add a new role
 const AdminPermission = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
-    const user_type = data.user_type
-    if (user_id == null || user_type != 1) {
-      if (user_type === 3) {
-        var response = {
-          status: 201,
-          message: "SubAdmin is un-authorised !",
-        }
-        return res.status(201).send(response)
+    if (req.admin_role !== "Admin") {
+      var response = {
+        status: 201,
+        message: "SubAdmin is un-authorised !",
       }
+      return res.status(201).send(response)
     }
     // Extract permissions data from the request body
     const { permissions } = req.body
@@ -123,15 +117,8 @@ const AdminPermission = async (req, res) => {
 const updateAdminPermission = async (req, res) => {
   try {
     // Check authorization
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
-    const user_type = data.user_type
-    if (user_id == null || user_type !== 1) {
-      if (user_type === 3) {
-        return res.status(403).json({ error: "SubAdmin is unauthorized" })
-      } else {
-        return res.status(403).json({ error: "Unauthorized access" })
-      }
+    if (req.admin_role !== "Admin") {
+      return res.status(403).json({ error: "Unauthorized access" })
     }
 
     // Extract permissions data from the request body
@@ -296,10 +283,6 @@ function deleteFile(filePath) {
 
 async function updateProfilePicture(req, res) {
   try {
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
-    const user_type = data.user_type
-
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" })
     }
@@ -307,11 +290,7 @@ async function updateProfilePicture(req, res) {
     const { filename } = req.file
     console.log(filename)
 
-    const adminData = await admin.findById(user_id)
-
-    if (!adminData) {
-      return res.status(404).json({ message: "Admin not found" })
-    }
+    const adminData = req.admin
 
     if (adminData.image) {
       deleteFile(adminData.image)
@@ -329,14 +308,7 @@ async function updateProfilePicture(req, res) {
 
 async function getProfilePicture(req, res) {
   try {
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
-
-    const adminData = await admin.findById(user_id)
-
-    if (!adminData) {
-      return res.status(404).json({ message: "Admin not found" })
-    }
+    const adminData = req.admin
 
     if (!adminData.image) {
       return res.status(404).json({ message: "Admin profile image not found" })
@@ -351,9 +323,12 @@ async function getProfilePicture(req, res) {
 
 const changePassword = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
     const { newPassword, newEmail } = req.body
+
+    if (req.admin_role !== "Admin" && String(req.params.id) !== String(req.admin_id)) {
+      return res.status(403).json({ error: "You can only change your own password" })
+    }
+
     const saltRounds = 10
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds)
 
@@ -380,13 +355,8 @@ const changePassword = async (req, res) => {
 
 async function singleadmin(req, res) {
   try {
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
-    const user_type = data.user_type
-    const type = data.type
-
     const adminResposnse = await admin.findById(req.params.id).select("+password")
-    const AdminRole = await Role.findOne({ subAdmin: user_id })
+    const AdminRole = await Role.findOne({ subAdmin: req.admin_id })
     // console.log(AdminRole.permissions.Admin.read)
     if (adminResposnse) {
       const response = {
@@ -416,15 +386,8 @@ async function singleadmin(req, res) {
 const getSingleRole = async (req, res) => {
   try {
     // Check authorization
-    const data = jwt_decode(req.headers.token)
-    const user_id = data.user_id
-    const user_type = data.user_type
-    if (user_id == null || user_type !== 1) {
-      if (user_type === 3) {
-        return res.status(403).json({ error: "SubAdmin is unauthorized" })
-      } else {
-        return res.status(403).json({ error: "Unauthorized access" })
-      }
+    if (req.admin_role !== "Admin") {
+      return res.status(403).json({ error: "Unauthorized access" })
     }
 
     // Extract subadmin ID from URL params

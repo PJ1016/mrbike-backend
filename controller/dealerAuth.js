@@ -4,6 +4,9 @@ var validation = require("../helper/validation");
 const otpAuth = require("../helper/otpAuth");
 const Vendor = require("../models/dealerModel");
 const Admin = require("../models/admin_model");
+const { getDealerStatus } = require("../helper/dealerStatus");
+const { sendBookingNotification } = require("../helper/pushNotification");
+const { logDealerActivity } = require("../helper/dealerActivityLog");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const { sendemails } = require("../helper/helper");
@@ -301,14 +304,14 @@ async function verifyOTP(req, res) {
 
 async function changePassword(req, res) {
   try {
-    const { phone, new_password, confirm_password } = req.body;
+    const { new_password, confirm_password } = req.body;
 
-    const dealers = await Vendor.findOne({ phone }).select("+password");
+    const dealers = await Vendor.findById(req.dealer._id).select("+password");
 
     if (!dealers) {
       return res.status(201).send({
         status: 201,
-        message: "Mobile no not exist",
+        message: "Dealer not found",
       });
     }
 
@@ -464,6 +467,7 @@ async function getProgress(req, res) {
         isActive: vendor.status.isActive || false,
         isVerified: vendor.status.isVerified || false,
       },
+      dealerStatus: getDealerStatus(vendor),
     });
   } catch (error) {
     // Enhanced error handling
@@ -532,7 +536,7 @@ async function updateProgress(req, res) {
       "formProgress.currentStep": getNextStepAfter(section),
     };
 
-    await Vendor.findByIdAndUpdate(req.user._id, update);
+    await Vendor.findByIdAndUpdate(req.dealer._id, update);
 
     res.status(200).json({
       success: true,
@@ -1087,6 +1091,31 @@ async function uploadDocuments(req, res) {
         .json({ success: false, message: "Vendor not found" });
     }
 
+    // A document already verified can only be re-uploaded once admin
+    // explicitly requests it again (documentVerification flips to "requested").
+    const currentDV = currentVendor.documentVerification || {};
+    const fileToVerificationKey = {
+      aadharFront: "aadharFront",
+      aadharBack: "aadharBack",
+      panCard: "pan",
+      shopCertificate: "shop",
+      faceVerificationImage: "face",
+    };
+    const uploadedVerificationKeys = Object.entries(fileToVerificationKey)
+      .filter(([fileField]) => files[fileField])
+      .map(([, verificationKey]) => verificationKey);
+
+    const lockedDocs = uploadedVerificationKeys.filter(
+      (verificationKey) => currentDV[verificationKey] === "verified",
+    );
+
+    if (lockedDocs.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `These documents are already verified and can only be re-uploaded if requested by admin: ${lockedDocs.join(", ")}`,
+      });
+    }
+
     const updates = {
       updatedAt: new Date(),
     };
@@ -1124,6 +1153,15 @@ async function uploadDocuments(req, res) {
     Object.keys(newDV).forEach((key) => {
       updates[`documentVerification.${key}`] = newDV[key];
     });
+
+    // A re-upload resolves any outstanding admin request for that document —
+    // clear it so only still-active requests remain.
+    if (uploadedVerificationKeys.length > 0) {
+      updates.$unset = {};
+      uploadedVerificationKeys.forEach((verificationKey) => {
+        updates.$unset[`documentRequests.${verificationKey}`] = "";
+      });
+    }
 
     // Check if any required doc is still "rejected"
     const hasRejected = [
@@ -1436,13 +1474,14 @@ async function submitForApproval(req, res) {
 
 async function checkApprovalStatus(req, res) {
   try {
-    const vendor = await Vendor.findById(req.user._id).select(
-      "registrationStatus adminNotes submittedAt approvedAt",
+    const vendor = await Vendor.findById(req.dealer._id).select(
+      "registrationStatus adminNotes submittedAt approvedAt dealerStatus isBlocked isActive status isDoc",
     );
 
     res.status(200).json({
       success: true,
       status: vendor.registrationStatus,
+      dealerStatus: getDealerStatus(vendor),
       adminNotes: vendor.adminNotes,
       submittedAt: vendor.submittedAt,
       approvedAt: vendor.approvedAt,
@@ -1544,10 +1583,12 @@ async function getDealerDetails(req, res) {
 async function verifyDocument(req, res) {
   try {
     const { id } = req.params;
-    const { docType, status } = req.body;
+    const { docType, status, reason } = req.body;
 
     const validDocTypes = ["aadharFront", "aadharBack", "pan", "shop", "face", "passbook"];
-    if (!validDocTypes.includes(docType)) {
+    // Admin can request/verify/reject one or more documents in a single call.
+    const docTypes = Array.isArray(docType) ? docType : [docType];
+    if (docTypes.length === 0 || docTypes.some((dt) => !validDocTypes.includes(dt))) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid document type" });
@@ -1558,33 +1599,44 @@ async function verifyDocument(req, res) {
     if (status === true) verificationStatus = "verified";
     if (status === false) verificationStatus = "rejected";
 
-    const validStatuses = ["pending", "verified", "rejected", "none"];
+    const validStatuses = ["pending", "verified", "rejected", "none", "requested"];
     if (!validStatuses.includes(verificationStatus)) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid verification status" });
     }
 
-    // Map frontend docType to the documentVerification field
-    const fieldMap = {
-      aadharFront: "documentVerification.aadharFront",
-      aadharBack: "documentVerification.aadharBack",
-      pan: "documentVerification.pan",
-      shop: "documentVerification.shop",
-      face: "documentVerification.face",
-      passbook: "documentVerification.passbook",
-    };
+    if (verificationStatus === "requested" && !reason) {
+      return res.status(400).json({
+        success: false,
+        message: "A reason is required when requesting a document",
+      });
+    }
 
-    const updates = {
-      [fieldMap[docType]]: verificationStatus,
-    };
+    const updates = {};
+    docTypes.forEach((dt) => {
+      updates[`documentVerification.${dt}`] = verificationStatus;
+      if (verificationStatus === "requested") {
+        updates[`documentRequests.${dt}`] = {
+          reason,
+          requestedBy: req.admin_id,
+          requestedAt: new Date(),
+        };
+      }
+    });
 
     // Refresh current vendor state to check all documents
     const currentVendor = await Vendor.findById(id).select(
       "documentVerification formProgress",
     );
+    if (!currentVendor) {
+      return res.status(404).json({ success: false, message: "Vendor not found" });
+    }
     const dv = currentVendor.documentVerification || {};
-    const newDV = { ...(dv.toObject?.() || dv), [docType]: verificationStatus };
+    const newDV = { ...(dv.toObject?.() || dv) };
+    docTypes.forEach((dt) => {
+      newDV[dt] = verificationStatus;
+    });
 
     // If any document is rejected, mark the documents section as incomplete
     const anyRejected = [
@@ -1613,7 +1665,7 @@ async function verifyDocument(req, res) {
 
     const vendor = await Vendor.findByIdAndUpdate(id, updates, {
       new: true,
-    }).select("documentVerification formProgress");
+    }).select("documentVerification documentRequests formProgress device_token ftoken");
 
     if (!vendor) {
       return res
@@ -1621,10 +1673,59 @@ async function verifyDocument(req, res) {
         .json({ success: false, message: "Vendor not found" });
     }
 
+    const docToken = vendor.device_token || vendor.ftoken;
+    if (docToken) {
+      const docLabel = docTypes.join(", ");
+      const docEventMap = {
+        requested: {
+          title: "Document Requested",
+          body: `Admin requested re-upload of: ${docLabel}.${reason ? ` Reason: ${reason}` : ""}`,
+          type: "document_requested",
+        },
+        verified: {
+          title: "Document Approved",
+          body: `Your document(s) were approved: ${docLabel}.`,
+          type: "document_approved",
+        },
+        rejected: {
+          title: "Document Rejected",
+          body: `Your document(s) were rejected: ${docLabel}.`,
+          type: "document_rejected",
+        },
+      };
+      const docEvent = docEventMap[verificationStatus];
+      if (docEvent) {
+        sendBookingNotification({
+          token: docToken,
+          title: docEvent.title,
+          body: docEvent.body,
+          data: { type: docEvent.type, docTypes: docLabel },
+          receiverId: id,
+          receiverType: "dealer",
+        });
+      }
+    }
+
+    const docActionMap = {
+      requested: "Document Requested",
+      verified: "Document Approved",
+      rejected: "Document Rejected",
+    };
+    const docAction = docActionMap[verificationStatus];
+    if (docAction) {
+      logDealerActivity({
+        dealerId: id,
+        adminId: req.admin_id,
+        action: docAction,
+        reason: reason || null,
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: `Document status updated to ${verificationStatus} successfully`,
       documentVerification: vendor.documentVerification,
+      documentRequests: vendor.documentRequests,
       formProgress: vendor.formProgress,
     });
   } catch (error) {
@@ -1666,6 +1767,24 @@ async function approveDealer(req, res) {
     const vendor = await Vendor.findByIdAndUpdate(req.params.id, updateData, { new: true });
     console.log("Dealer after update", vendor);
 
+    const approvedToken = vendor.device_token || vendor.ftoken;
+    if (approvedToken) {
+      sendBookingNotification({
+        token: approvedToken,
+        title: "Dealer Approved",
+        body: "Your dealer registration has been approved.",
+        data: { type: "dealer_approved" },
+        receiverId: vendor._id,
+        receiverType: "dealer",
+      });
+    }
+    logDealerActivity({
+      dealerId: vendor._id,
+      adminId: req.admin_id,
+      action: "Dealer Approved",
+      reason: null,
+    });
+
     res.status(200).json({
       success: true,
       message: "Vendor approved successfully",
@@ -1679,6 +1798,7 @@ async function approveDealer(req, res) {
         isBlocked: vendor.isBlocked,
         blockedReason: vendor.blockedReason,
         registrationStatus: vendor.registrationStatus,
+        dealerStatus: getDealerStatus(vendor),
       },
     });
   } catch (error) {
@@ -1755,6 +1875,24 @@ async function rejectDealer(req, res) {
 
     await sendRejectionEmail(vendor, notes);
 
+    const rejectedToken = vendor.device_token || vendor.ftoken;
+    if (rejectedToken) {
+      sendBookingNotification({
+        token: rejectedToken,
+        title: "Dealer Rejected",
+        body: notes || "Your dealer registration has been rejected.",
+        data: { type: "dealer_rejected" },
+        receiverId: vendor._id,
+        receiverType: "dealer",
+      });
+    }
+    logDealerActivity({
+      dealerId: vendor._id,
+      adminId: req.admin_id,
+      action: "Dealer Rejected",
+      reason: notes,
+    });
+
     res.status(200).json({
       success: true,
       message: "Vendor rejected successfully",
@@ -1769,6 +1907,7 @@ async function rejectDealer(req, res) {
         blockedReason: vendor.blockedReason,
         registrationStatus: vendor.registrationStatus,
         adminNotes: vendor.adminNotes,
+        dealerStatus: getDealerStatus(vendor),
       },
     });
   } catch (error) {

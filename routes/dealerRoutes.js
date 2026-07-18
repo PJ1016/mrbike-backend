@@ -2,6 +2,9 @@ var express = require("express")
 var path = require("path")
 const Vendor = require("../models/dealerModel")
 const { createS3Upload, deleteS3Object } = require("../utils/s3Upload")
+const { requireAdmin } = require("../middlewares/requireAdmin")
+const { requireActiveDealer, requireOwnDealer } = require("../middlewares/dealerAuth")
+const { getDealerStatus } = require("../helper/dealerStatus")
 const {
   buildDealerUpdate,
   DOCUMENT_FILE_PATHS,
@@ -57,6 +60,7 @@ const upload = createS3Upload("dealer-documents")
 
 router.post(
   "/addDealer",
+  requireAdmin,
   upload.fields([
     { name: "panCardFront", maxCount: 1 },
     { name: "aadharFront", maxCount: 1 },
@@ -272,7 +276,7 @@ router.post(
 )
 
 // By Prashant
-router.patch("/:id/status", async (req, res) => {
+router.patch("/:id/status", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const { isActive, isBlocked, blockedReason } = req.body
@@ -327,6 +331,7 @@ router.patch("/:id/status", async (req, res) => {
         isBlocked: dealer.isBlocked,
         blockedReason: dealer.blockedReason,
         registrationStatus: dealer.registrationStatus,
+        dealerStatus: getDealerStatus(dealer),
       },
     })
   } catch (error) {
@@ -339,7 +344,7 @@ router.patch("/:id/status", async (req, res) => {
   }
 })
 
-router.get("/view/:id", async (req, res) => {
+router.get("/view/:id", requireAdmin, async (req, res) => {
   try {
     const dealer = await Vendor.findById(req.params.id)
     if (!dealer) {
@@ -353,6 +358,7 @@ router.get("/view/:id", async (req, res) => {
 
 router.put(
   "/editDealer",
+  requireAdmin,
   upload.fields([
     { name: "panCardFront", maxCount: 1 },
     { name: "aadharFront", maxCount: 1 },
@@ -510,23 +516,23 @@ router.put(
   },
 )
 
-router.get("/dealerList", dealerList)
+router.get("/dealerList", requireAdmin, dealerList)
 router.get("/dealerWithInRange", dealerWithInRange)
 router.get("/dealerWithInRange2", dealerWithInRange2)
-router.get("/dealer/:id", singledealer)
-router.get("/dealerWallet/:id", GetwalletInfo)
-router.get("/dealerWallet", getWallet)
-router.get("/dealersWithDocFalse", getAllDealersWithDocFalse)
-router.get("/dealersWithVerifyFalse", getAllDealersWithVerifyFalse)
+router.get("/dealer/:id", requireAdmin, singledealer)
+router.get("/dealerWallet/:id", requireAdmin, GetwalletInfo)
+router.get("/dealerWallet", requireAdmin, getWallet)
+router.get("/dealersWithDocFalse", requireAdmin, getAllDealersWithDocFalse)
+router.get("/dealersWithVerifyFalse", requireAdmin, getAllDealersWithVerifyFalse)
 
-router.delete("/deleteDealer", deleteDealer)
+router.delete("/deleteDealer", requireAdmin, deleteDealer)
 router.post("/update_status", editDealerStatus)
 
 router.post("/processTransaction/:id", WalletAdd)
 
 //  Payout of cashfree ---- NOT IN Use
-router.post("/AddAmout/:id", addAmount)
-router.post("/prepare-transfer", tranfer)
+router.post("/AddAmout/:id", requireAdmin, addAmount)
+router.post("/prepare-transfer", requireAdmin, tranfer)
 router.get("/getShopDetails/:id", getShopDetails)
 
 router.post("/add-shop-details", upload.fields([{ name: "shopImages", maxCount: 5 }]), addDealerShopDetails)
@@ -544,19 +550,19 @@ router.post(
 
 // ── Finance admin routes (must precede param-based routes) ───────────────────
 // GET /bikedoctor/dealer/payouts?status=ALL|PENDING|IN_PROGRESS|APPROVED|REJECTED
-router.get("/payouts", getPayouts)
+router.get("/payouts", requireAdmin, getPayouts)
 // GET /bikedoctor/dealer/wallets/summary
-router.get("/wallets/summary", getDealerWalletsSummary)
+router.get("/wallets/summary", requireAdmin, getDealerWalletsSummary)
 
 // ── Existing wallet routes (preserved for backward compatibility) ─────────────
-router.get("/pending", getPendingWallets)
-router.put("/updatepending/:wallet_id", updateWalletStatus)
+router.get("/pending", requireAdmin, getPendingWallets)
+router.put("/updatepending/:wallet_id", requireAdmin, updateWalletStatus)
 router.post("/withdrawal", createWithdrawalRequest)
 router.post("/deposit", createDeposit)
 router.put("/updateDocStatus", updateDealerDocStatus)
 router.put("/updateVerification", updateDealerVerfication)
 
-router.post("/vendor/:dealerId/online", setDealerOnline)
+router.post("/vendor/:dealerId/online", requireActiveDealer, requireOwnDealer("dealerId"), setDealerOnline)
 
 router.get("/vendor/active", getActiveDealers)
 

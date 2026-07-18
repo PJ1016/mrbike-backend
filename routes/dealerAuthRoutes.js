@@ -1,6 +1,8 @@
 
 var router = require('express').Router();
 const { createS3Upload } = require("../utils/s3Upload");
+const { verifyDealerToken, requireOwnDealer } = require("../middlewares/dealerAuth");
+const { requireAdmin } = require("../middlewares/requireAdmin");
 
 var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
 
@@ -12,15 +14,17 @@ router.post('/signin', usersignin);
 router.post('/sendotp', sendOtp);
 router.post('/verifyotp', verifyOTP);
 router.post('/logout', logout);
-router.post('/changepassword', changePassword);
+router.post('/changepassword', verifyDealerToken, changePassword);
 
+// getProgress verifies its own Bearer token internally — left as-is.
 router.get('/progress', getProgress);
-router.put('/progress/:section', updateProgress);
-// Form Submission Endpoints
-router.post('/basic-info/:id', updateBasicInfo);
-router.post('/location-info/:id', updateLocationInfo);
-router.post('/shop-details/:id', upload.any(), updateShopDetails);
+router.put('/progress/:section', verifyDealerToken, updateProgress);
+// Form Submission Endpoints — dealer can only edit their own registration record
+router.post('/basic-info/:id', verifyDealerToken, requireOwnDealer('id'), updateBasicInfo);
+router.post('/location-info/:id', verifyDealerToken, requireOwnDealer('id'), updateLocationInfo);
+router.post('/shop-details/:id', verifyDealerToken, requireOwnDealer('id'), upload.any(), updateShopDetails);
 router.post('/upload-documents/:id',
+  verifyDealerToken, requireOwnDealer('id'),
   upload.fields([
     { name: 'aadharFront', maxCount: 1 },
     { name: 'aadharBack', maxCount: 1 },
@@ -30,18 +34,18 @@ router.post('/upload-documents/:id',
   ]),
   uploadDocuments
 );
-router.post('/live-verification/:id', upload.single('shopLivePhoto'), uploadLiveVerification);
-router.post('/bank-details/:id', upload.single('passbookImage'), updateBankDetails);
+router.post('/live-verification/:id', verifyDealerToken, requireOwnDealer('id'), upload.single('shopLivePhoto'), uploadLiveVerification);
+router.post('/bank-details/:id', verifyDealerToken, requireOwnDealer('id'), upload.single('passbookImage'), updateBankDetails);
 
 // Registration Submission & Status
-router.post('/submit-registration/:id', submitForApproval);
-router.get('/registration-status', checkApprovalStatus);
+router.post('/submit-registration/:id', verifyDealerToken, requireOwnDealer('id'), submitForApproval);
+router.get('/registration-status', verifyDealerToken, checkApprovalStatus);
 
 // Admin Routes (Only accessible by admin)
-router.get('/pending-registrations', getPendingRegistrations);
-router.get('/pending-registrations/:id', getDealerDetails);
-router.put('/approve/:id', approveDealer);
-router.put('/reject/:id', rejectDealer);
-router.put('/verify-document/:id', verifyDocument);
+router.get('/pending-registrations', requireAdmin, getPendingRegistrations);
+router.get('/pending-registrations/:id', requireAdmin, getDealerDetails);
+router.put('/approve/:id', requireAdmin, approveDealer);
+router.put('/reject/:id', requireAdmin, rejectDealer);
+router.put('/verify-document/:id', requireAdmin, verifyDocument);
 
 module.exports = router;

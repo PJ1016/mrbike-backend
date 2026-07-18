@@ -2,8 +2,9 @@ require("dotenv").config();
 const Dealer = require("../models/dealerModel");
 const Service = require("../models/service_model");
 const Vendor = require("../models/dealerModel");
-const jwt_decode = require("jwt-decode");
+const jwt = require("jsonwebtoken");
 var validation = require("../helper/validation");
+const { getDealerStatus } = require("../helper/dealerStatus");
 const Rating = require("../models/rating_model");
 const Wallet = require("../models/Wallet_modal")
 const Role = require('../models/Roles_modal')
@@ -12,6 +13,8 @@ const Bike = require('../models/bikeCompanyModel')
 const UserBike = require("../models/userBikeModel")
 const servicess = require("../models/service_model")
 const AdminService = require("../models/adminService")
+const { sendBookingNotification } = require("../helper/pushNotification");
+const { logDealerActivity } = require("../helper/dealerActivityLog");
 const fs = require("fs");
 const mongoose = require('mongoose');
 const { log } = require("console");
@@ -211,7 +214,7 @@ const dealerWithInRange2 = async (req, res) => {
 
 async function editDealerStatus(req, res) {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const user_id = data.user_id;
     const user_type = data.user_type;
 
@@ -312,6 +315,62 @@ async function editDealerStatus(req, res) {
       );
       console.log("Dealer after update", updatedDealer);
 
+      const dealerToken = updatedDealer.device_token || updatedDealer.ftoken;
+      if (blockedValue === true && !dealerBefore.isBlocked) {
+        if (dealerToken) {
+          sendBookingNotification({
+            token: dealerToken,
+            title: "Account Blocked",
+            body: "Your dealer account has been blocked by admin.",
+            data: { type: "dealer_blocked" },
+            receiverId: dealer_id,
+            receiverType: "dealer",
+          });
+        }
+        logDealerActivity({
+          dealerId: dealer_id,
+          adminId: user_id,
+          action: "Dealer Blocked",
+          reason: blockedReason,
+        });
+      }
+      if (isActive === true && !dealerBefore.isActive) {
+        if (dealerToken) {
+          sendBookingNotification({
+            token: dealerToken,
+            title: "Account Activated",
+            body: "Your dealer account has been activated.",
+            data: { type: "dealer_activated" },
+            receiverId: dealer_id,
+            receiverType: "dealer",
+          });
+        }
+        logDealerActivity({
+          dealerId: dealer_id,
+          adminId: user_id,
+          action: "Dealer Activated",
+          reason: null,
+        });
+      }
+      if (isActive === false && dealerBefore.isActive) {
+        if (dealerToken) {
+          sendBookingNotification({
+            token: dealerToken,
+            title: "Account Deactivated",
+            body: "Your dealer account has been deactivated.",
+            data: { type: "dealer_inactivated" },
+            receiverId: dealer_id,
+            receiverType: "dealer",
+          });
+        }
+        logDealerActivity({
+          dealerId: dealer_id,
+          adminId: user_id,
+          action: "Dealer Inactivated",
+          reason: null,
+        });
+      }
+
       return res.status(200).json({
         success: true,
         message: "Status updated successfully",
@@ -325,6 +384,7 @@ async function editDealerStatus(req, res) {
           isBlocked: updatedDealer.isBlocked,
           blockedReason: updatedDealer.blockedReason,
           registrationStatus: updatedDealer.registrationStatus,
+          dealerStatus: getDealerStatus(updatedDealer),
         },
       });
     } catch (updateErr) {
@@ -529,7 +589,7 @@ async function calculateDealerAmount(dealer, orderAmount) {
 
 const WalletAdd = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const { user_id, user_type } = data; // Extract user info from token
     const { Amount, Type, Note } = req.body;
     const dealer_id = req.params.id;
@@ -789,7 +849,7 @@ async function getShopDetails(req, res) {
 
 const addDealerShopDetails = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const user_id = data.user_id;
     const user_type = data.user_type;
 
@@ -870,7 +930,7 @@ const addDealerShopDetails = async (req, res) => {
 
 const addDealerDocuments = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const user_id = data.user_id;
     const user_type = data.user_type;
 
@@ -1026,7 +1086,7 @@ const updateWalletStatus = async (req, res) => {
 
 const getAllDealersWithDocFalse = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const user_type = data.user_type;
     if (user_type === 1) {
       const allDealers = await Dealer.find({ isDoc: false });
@@ -1086,7 +1146,7 @@ const getAllDealersWithVerifyFalse = async (req, res) => {
 
 const updateDealerDocStatus = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const user_type = data.user_type;
     const { id } = req.body;
     if (user_type === 1) {
@@ -1121,7 +1181,7 @@ const updateDealerDocStatus = async (req, res) => {
 
 const updateDealerVerfication = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const user_type = data.user_type;
     const { id } = req.body;
     if (user_type === 1) {
@@ -1363,7 +1423,7 @@ const createWithdrawalRequest = async (req, res) => {
 
     let data;
     try {
-      data = jwt_decode(req.headers.token);
+      data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     } catch (err) {
       return res.status(401).json({ status: false, message: "Invalid token" });
     }
@@ -1442,7 +1502,7 @@ const createWithdrawalRequest = async (req, res) => {
 // Admin credits a dealer's wallet (clears dues, manual top-up, etc.)
 const createDeposit = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const { user_id, user_type } = data;
 
     if (user_type === 2) {
@@ -1496,7 +1556,7 @@ const createDeposit = async (req, res) => {
 
 async function registerDealerToken(req, res) {
   try {
-    const data = jwt_decode(req.headers.token);
+    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const dealer_id = data.user_id;
 
     if (!dealer_id) {

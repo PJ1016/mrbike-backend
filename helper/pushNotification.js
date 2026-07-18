@@ -203,7 +203,27 @@ async function Notification(deviceToken, messageBody, dealer_id) {
 // Structured booking notification — title, body, data, receiverType all explicit.
 // FCM data payload requires all values to be strings.
 async function sendBookingNotification({ token, title, body, data, receiverId, receiverType, bookingId }) {
-  if (!token) return;
+  const notificationEntry = new NotificationModel({
+    title,
+    body,
+    data,
+    receiverId,
+    receiverType,
+    bookingId,
+    status: "pending",
+  });
+
+  try {
+    await notificationEntry.save();
+  } catch (err) {
+    console.error(`[NOTIFICATION-SAVE-FAILED] ${title} → ${receiverType}:${receiverId} | ${err.message}`);
+    return;
+  }
+
+  if (!token) {
+    console.log(`[FCM-SKIPPED] ${title} → ${receiverType}:${receiverId} | no device token`);
+    return;
+  }
 
   const fcmData = Object.fromEntries(
     Object.entries(data).map(([k, v]) => [k, String(v)])
@@ -219,18 +239,7 @@ async function sendBookingNotification({ token, title, body, data, receiverId, r
     },
   };
 
-  const notificationEntry = new NotificationModel({
-    title,
-    body,
-    data,
-    receiverId,
-    receiverType,
-    bookingId,
-    status: "pending",
-  });
-
   try {
-    await notificationEntry.save();
     const response = await admin.messaging().send(message);
     console.log(`[FCM-SENT] ${title} → ${receiverType}:${receiverId} | ${response}`);
     notificationEntry.status = "sent";
@@ -238,10 +247,8 @@ async function sendBookingNotification({ token, title, body, data, receiverId, r
     await notificationEntry.save();
   } catch (err) {
     console.error(`[FCM-FAILED] ${title} → ${receiverType}:${receiverId} | ${err.message}`);
-    if (notificationEntry._id) {
-      notificationEntry.status = "failed";
-      await notificationEntry.save().catch(() => {});
-    }
+    notificationEntry.status = "failed";
+    await notificationEntry.save().catch(() => {});
   }
 }
 

@@ -2,7 +2,7 @@ const express = require('express');
 const { suadminLogin, AdminPermission, updateAdminPermission, suadminsignup, getAllAdmin, deleteAdmin, subadminsignup, updateProfilePicture, getProfilePicture, changePassword, singleadmin, getSingleRole, sendOtp, verifyOtp, dashboardCounts, updateStatus } = require('../controller/adminAuth');
 const router = express.Router();
 const multer = require('multer');
-const { verifyToken } = require('../helper/verifyAuth');
+const { requireAdmin } = require('../middlewares/requireAdmin');
 const admin = require('../models/admin_model');
 var bcrypt = require('bcryptjs');
 
@@ -18,7 +18,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 /* POST users listing. */
-router.post('/register-admin', async (req, res) => {
+router.post('/register-admin', requireAdmin, async (req, res) => {
     try {
         const { name, email, password, mobile, role, image } = req.body;
 
@@ -68,7 +68,7 @@ router.post('/register-admin', async (req, res) => {
 });
 
 router.post('/suadminLogin', suadminLogin);
-router.put("/admin/:id", async (req, res) => {
+router.put("/admin/:id", requireAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, email, role, mobile, password } = req.body;
@@ -118,21 +118,21 @@ router.put("/admin/:id", async (req, res) => {
         return res.status(500).json({ message: "Server error." });
     }
 });
-router.post('/subadminsignup', subadminsignup);
+router.post('/subadminsignup', requireAdmin, subadminsignup);
 router.post("/send-otp", sendOtp);
 router.post("/verify-otp", verifyOtp);
-router.get('/getalladmin', getAllAdmin);
-router.post('/update-status/:id', updateStatus);
-router.delete('/deleteadmin/:admin_id', deleteAdmin);
-router.get('/dashboard-counts', dashboardCounts);
+router.get('/getalladmin', requireAdmin, getAllAdmin);
+router.post('/update-status/:id', requireAdmin, updateStatus);
+router.delete('/deleteadmin/:admin_id', requireAdmin, deleteAdmin);
+router.get('/dashboard-counts', requireAdmin, dashboardCounts);
 
 
-router.post('/Changepassword/:id', verifyToken, changePassword);
-router.post('/profile', verifyToken, upload.single('images'), updateProfilePicture);
-router.get('/profile', verifyToken, getProfilePicture);
-router.get('/singleAdmin/:id', verifyToken, singleadmin);
-router.post('/AdminPermission/:id', verifyToken, AdminPermission);
-router.post('/updatePermission/:id', verifyToken, updateAdminPermission);
-router.get('/SinglePermission/:id', verifyToken, getSingleRole);
+router.post('/Changepassword/:id', requireAdmin, changePassword);
+router.post('/profile', requireAdmin, upload.single('images'), updateProfilePicture);
+router.get('/profile', requireAdmin, getProfilePicture);
+router.get('/singleAdmin/:id', requireAdmin, singleadmin);
+router.post('/AdminPermission/:id', requireAdmin, AdminPermission);
+router.post('/updatePermission/:id', requireAdmin, updateAdminPermission);
+router.get('/SinglePermission/:id', requireAdmin, getSingleRole);
 
 module.exports = router;
