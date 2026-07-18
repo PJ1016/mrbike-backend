@@ -13,7 +13,7 @@ const reportSchema = new mongoose.Schema({
     },
     dealer_id:{
         type:mongoose.Schema.Types.ObjectId,
-        ref:"dealer",
+        ref:"Vendor",
         required:true
     },
     booking_id:{

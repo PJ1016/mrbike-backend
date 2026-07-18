@@ -7,7 +7,6 @@ const bike = require("../models/bikeModel");
 const Tracking = require("../models/Tracking");
 const jwt_decode = require("jwt-decode");
 const customers = require("../models/customer_model");
-const Dealer = require("../models/Dealer");
 const Role = require('../models/Roles_modal')
 const Admin = require('../models/admin_model')
 const { Notification, sendBookingNotification } = require("../helper/pushNotification");
@@ -136,7 +135,7 @@ async function addbooking(req, res) {
       return;
     }
 
-    const dealers = await Dealer.find({ id: req.params.id }).exec();
+    const dealers = await Vendor.find({ id: req.params.id }).exec();
 
     const timeout = 3 * 60 * 1000;
     // const timeout = 20 * 1000;
@@ -791,7 +790,7 @@ async function updateBookings(req, res) {
       await handleBookingCompletion(bookings);
     }
 
-    let dealers = await Dealer.findOne({ _id: dealer_id }); // changes
+    let dealers = await Vendor.findOne({ _id: dealer_id }); // changes
 
     if (!dealers) {
       res.status(201).json({ status: 201, error: "No Dealer Found" });
@@ -812,10 +811,10 @@ async function updateBookings(req, res) {
     const datas =
     {
       status: status,
-      dealer_name: dealers.name,
+      dealer_name: dealers.shopName,
       dealr_id: dealers.id,
       dealer_id: dealer_id,
-      dealer_address: dealers.address,
+      dealer_address: dealers.fullAddress,
       dealer_phone: dealers.phone,
       additonal_options: additonal_options,
       estimated_cost: estimated_cost,
@@ -1743,7 +1742,7 @@ const sendBookingOTP = async (req, res) => {
       return res.status(200).json({ success: false, message: "Booking not found" });
     }
     console.log("Booking Data", bookingData)
-    const dealer = await Dealer.findById(bookingData.dealer_id);
+    const dealer = await Vendor.findById(bookingData.dealer_id);
     if (!dealer || !dealer.phone) {
       return res.status(200).json({ success: false, message: "Dealer phone number not found" });
     }

@@ -17,7 +17,7 @@ const contactSchema = new mongoose.Schema({
     },
     dealerId: {
         type: String,
-        ref: 'Dealer' 
+        ref: 'Vendor'
     }
 }, { timestamps: true });
 

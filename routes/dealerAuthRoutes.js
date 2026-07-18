@@ -1,6 +1,5 @@
 
 var router = require('express').Router();
-const { verifyUser } = require("../helper/verifyAuth");
 const { createS3Upload } = require("../utils/s3Upload");
 
 var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")

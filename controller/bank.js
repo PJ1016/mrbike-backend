@@ -1,7 +1,7 @@
 var Bank = require("../models/Bank");
 const jwt_decode = require("jwt-decode");
 const fetch = require("node-fetch");
-const Dealer = require("../models/Dealer");
+const Vendor = require("../models/dealerModel");
 
 
 async function addBank(req, res) {
@@ -18,7 +18,7 @@ async function addBank(req, res) {
       return res.status(401).send(response);
     }
 
-    const dealer = await Dealer.findById(user_id);
+    const dealer = await Vendor.findById(user_id);
 
     console.log(dealer);
     const { accountno, bankname, ifsc, location, accholdername } = req.body;
@@ -40,7 +40,7 @@ async function addBank(req, res) {
         location: location,
         accholdername:accholdername,
         dealer_id:user_id,
-        dealer_name:dealer.name,
+        dealer_name:dealer.shopName,
         dealer_city:dealer.city
       };
       const bankresponce = await Bank.create(datas);

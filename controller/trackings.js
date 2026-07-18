@@ -2,7 +2,7 @@ var Tracking = require("../models/Tracking");
 var booking  = require("../models/Booking");
 var mongoose = require('mongoose'); // ES5 or below
 const jwt_decode = require("jwt-decode");
-const Dealer  = require("../models/Dealer")
+const Vendor  = require("../models/dealerModel")
 
 
 async function gettracking(req, res) {
@@ -84,7 +84,7 @@ async function updatetracking(req, res){
             return;
     }
 
-    const vendors = await Dealer.findOne({user_id:dealer_id});
+    const vendors = await Vendor.findOne({user_id:dealer_id});
     if(!vendors){
         res.status(401).json({status: 401, error: "No Service Provider Found" })
         return;

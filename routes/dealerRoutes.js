@@ -3,7 +3,6 @@ var path = require("path")
 const Vendor = require("../models/dealerModel")
 const { createS3Upload } = require("../utils/s3Upload")
 var {
-  editDealer,
   dealerList,
   deleteDealer,
   singledealer,

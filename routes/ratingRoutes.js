@@ -1,7 +1,6 @@
 var router = require('express').Router();
 var multer = require('multer');
 var fs = require('fs-extra');
-const {verifyUser} = require("../helper/verifyAuth");
 
 const { addreview, getallreview } = require('../controller/ratingController');
 

@@ -10,7 +10,6 @@ var Tracking = require("../models/Tracking");
 const { default: axios } = require("axios");
 var Payment = require("../models/Payment");
 const customers = require("../models/customer_model");
-// const Dealer = require("../models/Dealer");
 const Dealer = require("../models/dealerModel");
 const Card = require("../models/cardModel");
 const Wallet = require("../models/Wallet_modal")
@@ -22,7 +21,6 @@ const CryptoJS = require('crypto-js');
 const QRCode = require('qrcode');
 const API_KEY_ID = process.env.API_KEY_ID_RAZO;
 const API_KEY_SECRET = process.env.API_KEY_SECRET_RAZO;
-const Vendor = require("../models/Dealer");
 const Customer = require("../models/customer_model");
 const Bill = require("../models/billSchema");
 

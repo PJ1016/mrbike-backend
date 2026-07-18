@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const pickndropSchema = new mongoose.Schema({
     dealer_id:{
         type:mongoose.Schema.Types.ObjectId,
-        ref:"dealer"
+        ref:"Vendor"
     },
     user_id:{
         type:mongoose.Schema.Types.ObjectId,

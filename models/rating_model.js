@@ -7,7 +7,7 @@ const ratingSchema = new mongoose.Schema ({
     },
     dealer_id: {
       type: String,
-      ref: "dealer",
+      ref: "Vendor",
     },
     user_id: {
       type: String,

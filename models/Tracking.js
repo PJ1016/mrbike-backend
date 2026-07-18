@@ -21,7 +21,7 @@ const trackingSchema = new mongoose.Schema({
     }],
     dealer_id:{
         type:mongoose.Schema.Types.ObjectId,
-        ref:"dealer"
+        ref:"Vendor"
     },
     dealrs_id:{
         type:String,
