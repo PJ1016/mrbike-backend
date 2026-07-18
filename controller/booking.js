@@ -6,6 +6,7 @@ const service = require("../models/service_model");
 const bike = require("../models/bikeModel");
 const Tracking = require("../models/Tracking");
 const jwt_decode = require("jwt-decode");
+const { isEmpty } = require("../helper/validation");
 const customers = require("../models/customer_model");
 const Role = require('../models/Roles_modal')
 const Admin = require('../models/admin_model')
@@ -59,6 +60,18 @@ async function addbooking(req, res) {
     }
 
     const customer = await customers.findById(user_id);
+    if (!customer) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    const missingProfileFields = getMissingProfileFields(customer);
+    if (missingProfileFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errorCode: "PROFILE_INCOMPLETE",
+        message: "Please complete your profile before booking a service.",
+        missingFields: missingProfileFields,
+      });
+    }
 
     // Log the incoming request body
     console.log("=== CREATE BOOKING REQUEST ===");
@@ -1070,6 +1083,14 @@ function genOtp() {
   return Math.floor(1000 + Math.random() * 9000);
 }
 
+// Mandatory profile fields required before a booking can be created.
+function getMissingProfileFields(user) {
+  const missing = [];
+  if (!user.first_name || isEmpty(user.first_name)) missing.push("full name");
+  if (!user.phone || isEmpty(String(user.phone))) missing.push("mobile number");
+  return missing;
+}
+
 async function createBooking(req, res) {
   try {
     console.log('Booking Started');
@@ -1081,6 +1102,22 @@ async function createBooking(req, res) {
     // ── 2. Entry logging ─────────────────────────────────────────────────────
     console.log('[createBooking] REQUEST BODY:', JSON.stringify(req.body, null, 2));
     console.log('[createBooking] Authenticated user_id:', user_id);
+
+    // ── 2b. Profile completeness check ───────────────────────────────────────
+    const bookingUser = await customers.findById(user_id).select("first_name phone");
+    if (!bookingUser) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    const missingProfileFields = getMissingProfileFields(bookingUser);
+    if (missingProfileFields.length > 0) {
+      console.log('[createBooking] Blocked — incomplete profile, missing:', missingProfileFields);
+      return res.status(400).json({
+        success: false,
+        errorCode: "PROFILE_INCOMPLETE",
+        message: "Please complete your profile before booking a service.",
+        missingFields: missingProfileFields,
+      });
+    }
 
     const { dealer_id, services, pickupAndDropId, userBike_id, pickupDate, scheduleDate, timeSlot, pickupAddress } = req.body;
 

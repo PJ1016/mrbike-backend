@@ -3,7 +3,6 @@ require("dotenv").config();
 const mongoose = require("mongoose");
 var moment = require("moment");
 const customers = require("../models/customer_model");
-const Vendor = require("../models/dealerModel");
 const { is } = require("express/lib/request");
 const jwt_decode = require("jwt-decode");
 const otpAuth = require("../helper/otpAuth");
@@ -283,6 +282,40 @@ const deleteMyBike = async (req, res) => {
 //   }
 // }
 
+// Bikes live in the UserBike collection keyed by user_id, not in
+// customer.userBike (that ref array on the customer document is never
+// written by addUserBike, so it can never be trusted / populated as-is).
+async function fetchBikesForCustomer(customerId) {
+  const userBikes = await UserBike.find({ user_id: customerId }).populate({
+    path: "variant_id",
+    model: "BikeVariant",
+    select: "variant_name engine_cc model_id",
+    populate: {
+      path: "model_id",
+      model: "BikeModel",
+      select: "model_name company_id",
+      populate: { path: "company_id", model: "BikeCompany", select: "name" },
+    },
+  });
+
+  return userBikes.map((bike) => {
+    const variant = bike.variant_id;
+    const model = variant?.model_id;
+    const company = model?.company_id;
+
+    return {
+      _id: bike._id,
+      bike_id: bike.bike_id,
+      company_name: company?.name || bike.name,
+      model_name: model?.model_name || bike.model,
+      variant_name: variant?.variant_name || "",
+      engine_cc: variant?.engine_cc ?? bike.bike_cc,
+      registration_number: bike.plate_number,
+      status: bike.status,
+    };
+  });
+}
+
 async function getcustomer(req, res) {
   try {
     const { user_id } = req.params;
@@ -299,14 +332,16 @@ async function getcustomer(req, res) {
         .json({ success: false, message: "Invalid user_id" });
     }
 
-    const customer = await Vendor.findById(user_id);
-    // const customer = await customers.findById(user_id);
+    const customer = await customers.findById(user_id).lean();
 
     if (!customer) {
       return res
         .status(404)
         .json({ success: false, message: "No Customer Account Found" });
     }
+
+    customer.userBike = await fetchBikesForCustomer(customer._id);
+
     console.log("Customer", customer);
     return res.status(200).json({
       success: true,
@@ -339,14 +374,16 @@ async function getcustomersData(req, res) {
         .json({ success: false, message: "Invalid user_id" });
     }
 
-    // const customer = await Vendor.findById(user_id);
-    const customer = await customers.findById(user_id);
+    const customer = await customers.findById(user_id).lean();
 
     if (!customer) {
       return res
         .status(404)
         .json({ success: false, message: "No Customer Account Found" });
     }
+
+    customer.userBike = await fetchBikesForCustomer(customer._id);
+
     console.log("Customer", customer);
     return res.status(200).json({
       success: true,
