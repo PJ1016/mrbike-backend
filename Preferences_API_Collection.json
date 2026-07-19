@@ -1,0 +1,636 @@
+{
+  "info": {
+    "_postman_id": "preferences-api-collection",
+    "name": "Preferences Module API",
+    "description": "Admin Preferences module: Campaigns, Promo Codes, Rewards & Referral, Legal, App Content.\n\nBase URL: http://localhost:8001\nMain Prefix: /bikedoctor/preferences\n\nAll requests require the `token` header (admin JWT). See PREFERENCES_API.md for full docs.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8001", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "campaignId", "value": "", "type": "string" },
+    { "key": "promoCodeId", "value": "", "type": "string" },
+    { "key": "ruleId", "value": "", "type": "string" },
+    { "key": "bannerId", "value": "", "type": "string" },
+    { "key": "faqId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Campaigns",
+      "item": [
+        {
+          "name": "List Campaigns",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns"]
+            }
+          }
+        },
+        {
+          "name": "Get Campaign By Id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "{{campaignId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Campaign Analytics",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/{{campaignId}}/analytics",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "{{campaignId}}", "analytics"]
+            }
+          }
+        },
+        {
+          "name": "Create Campaign",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "title", "value": "Monsoon Service Offer", "type": "text" },
+                { "key": "description", "value": "20% off on all bike services this monsoon", "type": "text" },
+                { "key": "targetAudience", "value": "all", "type": "text" },
+                { "key": "pushNotification", "value": "true", "type": "text" },
+                { "key": "inAppNotification", "value": "true", "type": "text" },
+                { "key": "scheduleAt", "value": "2026-08-01T09:00", "type": "text" },
+                { "key": "status", "value": "draft", "type": "text" },
+                { "key": "image", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns"]
+            }
+          }
+        },
+        {
+          "name": "Update Campaign",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "title", "value": "Monsoon Service Offer (Updated)", "type": "text" },
+                { "key": "status", "value": "scheduled", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "{{campaignId}}"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Campaign Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"active\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/{{campaignId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "{{campaignId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Delete Campaigns",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{campaignId}}\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/bulk-delete",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "bulk-delete"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Update Campaign Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{campaignId}}\"],\n  \"status\": \"paused\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/bulk-status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "bulk-status"]
+            }
+          }
+        },
+        {
+          "name": "Delete Campaign",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "campaigns", "{{campaignId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Promo Codes",
+      "item": [
+        {
+          "name": "List Promo Codes",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes"]
+            }
+          }
+        },
+        {
+          "name": "Generate Promo Code",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/generate-code",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "generate-code"]
+            }
+          }
+        },
+        {
+          "name": "Get Promo Code By Id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/{{promoCodeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "{{promoCodeId}}"]
+            }
+          }
+        },
+        {
+          "name": "Create Promo Code",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"WELCOME50\",\n  \"discountType\": \"percentage\",\n  \"discountValue\": 50,\n  \"maxDiscount\": 200,\n  \"minOrder\": 500,\n  \"usageLimit\": 1000,\n  \"perUserLimit\": 1,\n  \"validFrom\": \"2026-07-01\",\n  \"validTo\": \"2026-12-31\",\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes"]
+            }
+          }
+        },
+        {
+          "name": "Update Promo Code",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"discountValue\": 60,\n  \"usageLimit\": 1500\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/{{promoCodeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "{{promoCodeId}}"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Promo Code Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": false\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/{{promoCodeId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "{{promoCodeId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Delete Promo Codes",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{promoCodeId}}\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/bulk-delete",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "bulk-delete"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Update Promo Code Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{promoCodeId}}\"],\n  \"status\": true\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/bulk-status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "bulk-status"]
+            }
+          }
+        },
+        {
+          "name": "Delete Promo Code",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/promo-codes/{{promoCodeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "promo-codes", "{{promoCodeId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rewards & Referral",
+      "item": [
+        {
+          "name": "List Reward Rules (referral-bonus)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/referral-bonus",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "referral-bonus"]
+            }
+          }
+        },
+        {
+          "name": "Create Referral Bonus Rule",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ruleName\": \"Standard Referral\",\n  \"referrerBonusPoints\": 100,\n  \"refereeBonusPoints\": 50,\n  \"minBookingValue\": 300,\n  \"maxReferralsPerUser\": 10,\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/referral-bonus",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "referral-bonus"]
+            }
+          }
+        },
+        {
+          "name": "Create Signup Bonus Rule",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ruleName\": \"New User Signup Bonus\",\n  \"bonusPoints\": 25,\n  \"bonusValidityDays\": 30,\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/signup-bonus",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "signup-bonus"]
+            }
+          }
+        },
+        {
+          "name": "Update Reward Rule",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"referrerBonusPoints\": 150\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/referral-bonus/{{ruleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "referral-bonus", "{{ruleId}}"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Reward Rule Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": false\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/referral-bonus/{{ruleId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "referral-bonus", "{{ruleId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Delete Reward Rules",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{ruleId}}\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/referral-bonus/bulk-delete",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "referral-bonus", "bulk-delete"]
+            }
+          }
+        },
+        {
+          "name": "Delete Reward Rule",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/reward-rules/referral-bonus/{{ruleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "reward-rules", "referral-bonus", "{{ruleId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Legal",
+      "item": [
+        {
+          "name": "List Legal Documents",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/legal",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "legal"]
+            }
+          }
+        },
+        {
+          "name": "Get Legal Document By Type",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/legal/user-privacy-policy",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "legal", "user-privacy-policy"]
+            }
+          }
+        },
+        {
+          "name": "Update Legal Document",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"<h1>User Privacy Policy</h1><p>Updated content...</p>\",\n  \"isPublished\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/legal/user-privacy-policy",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "legal", "user-privacy-policy"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Legal Document Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": false\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/legal/user-privacy-policy/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "legal", "user-privacy-policy", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "App Content",
+      "item": [
+        {
+          "name": "List Home Banners",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-banners/home",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-banners", "home"]
+            }
+          }
+        },
+        {
+          "name": "Create Banner",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "title", "value": "Summer Sale", "type": "text" },
+                { "key": "linkUrl", "value": "https://mrbikedoctor.com/offers", "type": "text" },
+                { "key": "displayOrder", "value": "1", "type": "text" },
+                { "key": "scheduleStart", "value": "2026-08-01", "type": "text" },
+                { "key": "scheduleEnd", "value": "2026-08-31", "type": "text" },
+                { "key": "isActive", "value": "true", "type": "text" },
+                { "key": "image", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-banners/home",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-banners", "home"]
+            }
+          }
+        },
+        {
+          "name": "Update Banner",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "displayOrder", "value": "2", "type": "text" }]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-banners/home/{{bannerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-banners", "home", "{{bannerId}}"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Banner Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": false\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-banners/home/{{bannerId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-banners", "home", "{{bannerId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Delete Banners",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{bannerId}}\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-banners/home/bulk-delete",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-banners", "home", "bulk-delete"]
+            }
+          }
+        },
+        {
+          "name": "Delete Banner",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-banners/home/{{bannerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-banners", "home", "{{bannerId}}"]
+            }
+          }
+        },
+        {
+          "name": "List FAQs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/faq",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "faq"]
+            }
+          }
+        },
+        {
+          "name": "Create FAQ",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How do I book a service?\",\n  \"answer\": \"<p>Open the app and tap Book Now...</p>\",\n  \"category\": \"Booking\",\n  \"displayOrder\": 1,\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/faq",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "faq"]
+            }
+          }
+        },
+        {
+          "name": "Update FAQ",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"displayOrder\": 2\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/faq/{{faqId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "faq", "{{faqId}}"]
+            }
+          }
+        },
+        {
+          "name": "Toggle FAQ Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": false\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/faq/{{faqId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "faq", "{{faqId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Delete FAQs",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [\"{{faqId}}\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/faq/bulk-delete",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "faq", "bulk-delete"]
+            }
+          }
+        },
+        {
+          "name": "Delete FAQ",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/faq/{{faqId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "faq", "{{faqId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get App Settings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "token", "value": "{{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-settings",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-settings"]
+            }
+          }
+        },
+        {
+          "name": "Update App Settings",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "token", "value": "{{token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supportEmail\": \"support@mrbikedoctor.com\",\n  \"supportPhone\": \"+911234567890\",\n  \"whatsappNumber\": \"+911234567890\",\n  \"supportHours\": \"9 AM - 9 PM, Mon-Sat\",\n  \"facebookUrl\": \"https://facebook.com/mrbikedoctor\",\n  \"instagramUrl\": \"https://instagram.com/mrbikedoctor\",\n  \"twitterUrl\": \"\",\n  \"youtubeUrl\": \"\",\n  \"linkedinUrl\": \"\",\n  \"websiteUrl\": \"https://mrbikedoctor.com\",\n  \"playStoreUrl\": \"https://play.google.com/store/apps/details?id=com.mrbikedoctor\",\n  \"appStoreUrl\": \"https://apps.apple.com/app/mrbikedoctor\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikedoctor/preferences/app-settings",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikedoctor", "preferences", "app-settings"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
