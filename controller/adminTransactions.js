@@ -15,6 +15,7 @@
 const mongoose = require("mongoose");
 const Wallet = require("../models/Wallet_modal");
 const Payment = require("../models/Payment");
+const Booking = require("../models/Booking");
 
 const TRANSACTION_TYPES = [
   "settlement_online",
@@ -54,11 +55,27 @@ function customerName(customer) {
 
 // Commission only applies to settlement transactions — withdrawals/deposits/
 // manual adjustments/reconciliations don't carry a per-transaction commission.
-function computeCommission(transactionType, booking, dealer) {
-  if (!["settlement_online", "settlement_cash"].includes(transactionType)) return 0;
-  const orderAmount = booking?.totalBill || 0;
-  const commissionRate = dealer?.commission || 0;
-  return parseFloat(((orderAmount * commissionRate) / 100).toFixed(2));
+//
+// IMPORTANT: this is derived from the amounts actually recorded on the ledger
+// entry at settlement time (helper/walletSettlement.js), NOT from the dealer's
+// *current* commission rate — a dealer's commission % can be edited later
+// (see routes/dealerRoutes.js PUT /editDealer), which would silently rewrite
+// the commission shown against old transactions if we recomputed it from
+// `dealer.commission` today. Since settleBookingWallet() computes:
+//   ONLINE: wallet.Amount = orderAmount - commissionAmount  (net credit to dealer)
+//   CASH:   wallet.Amount = commissionAmount                (debited from dealer)
+// the original commission can be recovered exactly from booking.totalBill and
+// the ledger's own Amount field, with no dependency on the dealer's live rate.
+function computeCommission(transactionType, walletAmount, orderAmount) {
+  const amount = walletAmount || 0;
+  const total = orderAmount || 0;
+  if (transactionType === "settlement_online") {
+    return parseFloat((total - amount).toFixed(2));
+  }
+  if (transactionType === "settlement_cash") {
+    return parseFloat(amount.toFixed(2));
+  }
+  return 0;
 }
 
 // ─── 1. Transaction List ──────────────────────────────────────────────────────
@@ -127,6 +144,17 @@ const getTransactionsList = async (req, res) => {
     }
     if (booking_id && mongoose.Types.ObjectId.isValid(booking_id)) {
       baseMatch.booking_id = new mongoose.Types.ObjectId(booking_id);
+    } else if (booking_id) {
+      // Not a valid ObjectId — treat as a human booking code (e.g. MRB071901)
+      // and resolve it via Booking's own unique `bookingId` index up front,
+      // so the Wallet aggregation can filter on the indexed `booking_id`
+      // field directly instead of matching "booking.bookingId" after an
+      // unconditional $lookup (which can't use any index).
+      const matchedBooking = await Booking.findOne({ bookingId: booking_id }).select("_id").lean();
+      // No booking matches this code — force an empty result set (a booking_id
+      // no document can ever have) rather than matching null/absent booking_id
+      // on withdrawal/deposit entries, or silently ignoring the filter.
+      baseMatch.booking_id = matchedBooking ? matchedBooking._id : new mongoose.Types.ObjectId("000000000000000000000000");
     }
     if (from || to) {
       baseMatch.createdAt = {};
@@ -141,10 +169,6 @@ const getTransactionsList = async (req, res) => {
     // ── Post-lookup match: fields that only exist after joining booking/dealer/customer ──
     const postMatch = {};
     if (payment_method) postMatch.paymentMethod = payment_method;
-    if (booking_id && !mongoose.Types.ObjectId.isValid(booking_id)) {
-      // Not a valid ObjectId — treat as a human booking code (e.g. MRB071901)
-      postMatch["booking.bookingId"] = booking_id;
-    }
     if (search) {
       postMatch.$or = [
         { orderId: { $regex: search, $options: "i" } },
@@ -235,7 +259,7 @@ const getTransactionsList = async (req, res) => {
         ? { _id: w.customer._id, name: customerName(w.customer), phone: w.customer.phone }
         : null,
       amount: w.Amount,
-      commission: computeCommission(w.transaction_type, w.booking, w.dealer),
+      commission: computeCommission(w.transaction_type, w.Amount, w.booking?.totalBill),
       transactionType: w.transaction_type,
       status: w.order_status,
       paymentMethod: w.paymentMethod || null,
@@ -282,12 +306,16 @@ const getTransactionDetails = async (req, res) => {
     const booking = wallet.booking_id;
     const customer = booking?.user_id;
 
-    // Most recent gateway payment record for this booking, if any.
+    // Most recent gateway payment record for this transaction, if any.
+    // Booking-linked settlements resolve it via Payment.booking_id; non-booking
+    // ledger entries (e.g. WALLET_TOPUP deposits, see controller/payment.js
+    // creditDealerWalletOnTopup) have no booking_id at all but share the same
+    // orderId with their Payment record, so fall back to that.
     const payment = booking
       ? await Payment.findOne({ booking_id: booking._id }).sort({ createdAt: -1 }).lean()
-      : null;
+      : await Payment.findOne({ orderId: wallet.orderId }).sort({ createdAt: -1 }).lean();
 
-    const commission = computeCommission(wallet.transaction_type, booking, dealer);
+    const commission = computeCommission(wallet.transaction_type, wallet.Amount, booking?.totalBill);
     const orderAmount = booking?.totalBill || 0;
     const taxes = booking?.tax || 0;
 

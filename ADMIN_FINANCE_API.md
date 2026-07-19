@@ -329,6 +329,37 @@ Errors: `400` if `:id` is not a valid ObjectId; `404` if no transaction matches.
 
 ---
 
+## Recommended indexes (not yet applied)
+
+The queries in this module hit `Wallet` and `Booking` far more heavily than any
+existing feature did, and neither collection currently has indexes that match
+this module's query shapes:
+
+- **`Wallet` has no indexes at all** beyond the implicit `_id` and the
+  `mongoose-sequence` counter on `id`. Every payout/transaction list query, and
+  the per-dealer wallet lookups in `getDealerWallets`/`getDealerWalletDetails`,
+  filter/sort on `dealer_id`, `transaction_type`, `order_status`, and `createdAt`
+  — all currently unindexed, meaning full collection scans. Recommended:
+  `{ dealer_id: 1, createdAt: -1 }`, `{ transaction_type: 1, order_status: 1, createdAt: -1 }`,
+  `{ booking_id: 1 }`.
+- **`Booking` only has a unique index on `bookingId`.** `dealer_id`, `walletSettled`,
+  `user_id`, `status`, and `createdAt` are all unindexed, and `getDealerWallets`
+  runs a `dealer_id` + `walletSettled` lookup per dealer row on every page.
+  Recommended: `{ dealer_id: 1, walletSettled: 1 }`, `{ createdAt: -1 }`, `{ status: 1 }`, `{ user_id: 1 }`.
+- **`Vendor`'s only compound index (`phone, email, registrationStatus, creatorType`)
+  doesn't help the wallet list's search-by-name or status filter.** `shopName` and
+  `ownerName` have no index, and the search is a `$regex` `$or` (which can't use a
+  leading-wildcard index anyway) — a text index would help; `dealerStatus` also
+  has no index despite being the wallet-status filter field.
+- `Payment` is already well-indexed (`cf_order_id`, `orderId`, `booking_id`,
+  `dealer_id`, `user_id`, `order_status`, `payment_type`, `create_date`) — no
+  changes needed there.
+
+These weren't added in this pass since creating indexes is a DB-affecting
+operation better done deliberately (e.g. via `scripts/createIndexes.js`) with
+awareness of current collection size, rather than as a silent side effect of an
+API change.
+
 ## Routes summary
 
 | Method | Path | Controller |
@@ -347,10 +378,37 @@ All routes are registered in `routes/financeRoutes.js`, mounted at `/finance` in
 - **Wallet balance** lives on `Vendor.wallet` (live number); the `Wallet` collection
   (`models/Wallet_modal.js`) is an append-only ledger of credits/debits/withdrawals,
   which is what this module treats as "Transactions".
-- **Commission** is not stored per booking — it's derived as
-  `booking.totalBill × dealer.commission / 100` at read time, using the dealer's
-  *current* commission rate (consistent with the pre-existing `getFinanceSummary`
-  / `getDealerWalletsSummary` behavior).
+- **Commission in Transactions** (`amountBreakdown.platformCommission` /
+  list `commission`) is reconstructed from the ledger entry actually written at
+  settlement time (`booking.totalBill` and the Wallet entry's own `Amount`), **not**
+  from the dealer's current commission rate — so it stays historically accurate
+  even after an admin edits a dealer's commission % later. See the comment above
+  `computeCommission()` in `controller/adminTransactions.js` for the derivation.
+  `dealerDetails.commissionRate` in Transaction Details is a separate field: the
+  dealer's *current* rate, shown for reference only.
+- Dealer Wallets' **Total Earnings** (list/detail) and the dashboard's
+  **Total Earnings** card still use the dealer's *current* commission rate
+  (`booking.totalBill × dealer.commission / 100`), inherited from the pre-existing
+  `getFinanceSummary` / `getDealerWalletsSummary` logic — these are aggregate,
+  forward-looking figures rather than a per-transaction historical record, so the
+  same "past rate changes" caveat applies to them and was intentionally left as-is
+  rather than rewritten in this pass.
 - **Wallet Status** (dealer wallet list/detail) reuses the canonical dealer status
   from `helper/dealerStatus.js` — there is no separate wallet-specific status field
   in the schema today.
+- **Refunds, bonuses, and penalties are not implemented as distinct transaction
+  types.** `Wallet.transaction_type` only supports `settlement_online`,
+  `settlement_cash`, `withdrawal`, `deposit`, `manual`, `reconciliation`,
+  `rollback` — there is no `refund`/`bonus`/`penalty` value, and no controller in
+  the codebase ever writes one. An admin can approximate a bonus or penalty via
+  the existing generic manual-adjustment endpoint (`POST /dealer/processTransaction/:id`
+  → `transaction_type: "manual"`, `Type: "Credit"` or `"Debit"`, free-text `Note`),
+  but it will show up as `manual` in the Transactions type filter, not as a
+  separately filterable "Bonus"/"Penalty" category. `Payment.refund_amount` /
+  `refund_status` exist in the schema and are surfaced in
+  `refundInformation`/`paymentGatewayResponse` when populated, but the only code
+  that ever sets them (`initiateRefund` in `controller/payment.js`) is commented
+  out and unreachable — so in practice `refundInformation` will be `null` for
+  every transaction today. Building real refund support (a dealer wallet debit +
+  a `refund` transaction_type) is out of scope for this module and would need its
+  own workflow.

@@ -183,69 +183,6 @@ const getPayouts = async (req, res) => {
 const getFinanceSummary = async (req, res) => {
   console.log('[financeSummary] called');
   try {
-    // ── 1. Booking value / tax / commission (walletSettled only) ──
-    console.log('[financeSummary] running Booking.aggregate (bookingStats)');
-    const bookingStats = await Booking.aggregate([
-      { $match: { walletSettled: true } },
-      {
-        $lookup: {
-          from: "vendors",
-          localField: "dealer_id",
-          foreignField: "_id",
-          as: "dealer",
-        },
-      },
-      { $unwind: { path: "$dealer", preserveNullAndEmpty: false } },
-      {
-        $group: {
-          _id: null,
-          totalBookingValue: { $sum: "$totalBill" },
-          totalTaxCollected: { $sum: "$tax" },
-          totalCommissionEarned: {
-            $sum: {
-              $multiply: [
-                "$totalBill",
-                { $divide: [{ $ifNull: ["$dealer.commission", 0] }, 100] },
-              ],
-            },
-          },
-        },
-      },
-    ]);
-    console.log('[financeSummary] bookingStats result:', JSON.stringify(bookingStats));
-
-    // ── 2. Live sum of all dealer wallet balances ──
-    console.log('[financeSummary] running Vendor.aggregate (dealerWalletStats)');
-    const dealerWalletStats = await Vendor.aggregate([
-      { $group: { _id: null, totalWalletBalance: { $sum: "$wallet" } } },
-    ]);
-    console.log('[financeSummary] dealerWalletStats result:', JSON.stringify(dealerWalletStats));
-
-    // ── 3. Active dealers count ──
-    console.log('[financeSummary] running Vendor.countDocuments (activeDealers)');
-    const activeDealers = await Vendor.countDocuments({ isActive: true });
-    console.log('[financeSummary] activeDealers:', activeDealers);
-
-    // ── 4. All-time booking count ──
-    console.log('[financeSummary] running Booking.countDocuments (totalBookings)');
-    const totalBookings = await Booking.countDocuments();
-    console.log('[financeSummary] totalBookings:', totalBookings);
-
-    // ── 5. Withdrawal breakdown by status ──
-    console.log('[financeSummary] running Wallet.aggregate (withdrawalStats)');
-    const withdrawalStats = await Wallet.aggregate([
-      { $match: { transaction_type: "withdrawal" } },
-      {
-        $group: {
-          _id: "$order_status",
-          count: { $sum: 1 },
-          totalAmount: { $sum: "$Amount" },
-        },
-      },
-    ]);
-    console.log('[financeSummary] withdrawalStats result:', JSON.stringify(withdrawalStats));
-
-    // ── 6. Today's / this month's transactions (all Wallet ledger entries) ──
     const now = new Date();
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
@@ -253,19 +190,74 @@ const getFinanceSummary = async (req, res) => {
     endOfToday.setHours(23, 59, 59, 999);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
 
-    console.log('[financeSummary] running Wallet.aggregate (todayStats)');
-    const todayStatsAgg = await Wallet.aggregate([
-      { $match: { createdAt: { $gte: startOfToday, $lte: endOfToday } } },
-      { $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
+    // All 6 cards are computed from 3 collections, one $facet aggregate per
+    // collection (Booking / Vendor / Wallet) run concurrently — 3 round trips
+    // total instead of the 7 sequential ones this endpoint used to make.
+    console.log('[financeSummary] running 3 parallel facet aggregations (booking/vendor/wallet)');
+    const [bookingFacets, vendorFacets, walletFacets] = await Promise.all([
+      Booking.aggregate([
+        {
+          $facet: {
+            bookingStats: [
+              { $match: { walletSettled: true } },
+              { $lookup: { from: "vendors", localField: "dealer_id", foreignField: "_id", as: "dealer" } },
+              { $unwind: { path: "$dealer", preserveNullAndEmpty: false } },
+              {
+                $group: {
+                  _id: null,
+                  totalBookingValue: { $sum: "$totalBill" },
+                  totalTaxCollected: { $sum: "$tax" },
+                  totalCommissionEarned: {
+                    $sum: {
+                      $multiply: [
+                        "$totalBill",
+                        { $divide: [{ $ifNull: ["$dealer.commission", 0] }, 100] },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+            totalBookings: [{ $count: "count" }],
+          },
+        },
+      ]),
+      Vendor.aggregate([
+        {
+          $facet: {
+            walletSum: [{ $group: { _id: null, totalWalletBalance: { $sum: "$wallet" } } }],
+            activeDealers: [{ $match: { isActive: true } }, { $count: "count" }],
+          },
+        },
+      ]),
+      Wallet.aggregate([
+        {
+          $facet: {
+            withdrawalStats: [
+              { $match: { transaction_type: "withdrawal" } },
+              { $group: { _id: "$order_status", count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
+            ],
+            todayStats: [
+              { $match: { createdAt: { $gte: startOfToday, $lte: endOfToday } } },
+              { $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
+            ],
+            monthStats: [
+              { $match: { createdAt: { $gte: startOfMonth, $lte: endOfToday } } },
+              { $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
+            ],
+          },
+        },
+      ]),
     ]);
-    console.log('[financeSummary] todayStats result:', JSON.stringify(todayStatsAgg));
+    console.log('[financeSummary] facet aggregations complete');
 
-    console.log('[financeSummary] running Wallet.aggregate (monthStats)');
-    const monthStatsAgg = await Wallet.aggregate([
-      { $match: { createdAt: { $gte: startOfMonth, $lte: endOfToday } } },
-      { $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
-    ]);
-    console.log('[financeSummary] monthStats result:', JSON.stringify(monthStatsAgg));
+    const bookingStats = bookingFacets[0].bookingStats;
+    const totalBookings = bookingFacets[0].totalBookings[0]?.count || 0;
+    const totalWalletBalance = vendorFacets[0].walletSum[0]?.totalWalletBalance ?? 0;
+    const activeDealers = vendorFacets[0].activeDealers[0]?.count || 0;
+    const withdrawalStats = walletFacets[0].withdrawalStats;
+    const todayStatsAgg = walletFacets[0].todayStats;
+    const monthStatsAgg = walletFacets[0].monthStats;
 
     const todayTransactions = {
       count: todayStatsAgg[0]?.count || 0,
@@ -281,8 +273,6 @@ const getFinanceSummary = async (req, res) => {
       totalTaxCollected: 0,
       totalCommissionEarned: 0,
     };
-
-    const totalWalletBalance = dealerWalletStats[0]?.totalWalletBalance ?? 0;
 
     // Map withdrawal stats into named buckets
     const wBuckets = {
