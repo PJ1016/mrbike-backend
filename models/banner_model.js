@@ -26,7 +26,38 @@ const bannerSchema = new mongoose.Schema({
     type: String,
     enum: ["upcoming", "active", "expired"],
     default: "upcoming", // fallback until computed
-  }
+  },
+  baseServiceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "BaseService",
+    default: null,
+  },
+  locationType: {
+    type: String,
+    enum: ["all", "specific"],
+    default: "all",
+  },
+  placeId: {
+    type: String,
+    default: "",
+  },
+  placeName: {
+    type: String,
+    default: "",
+  },
+  latitude: {
+    type: Number,
+  },
+  longitude: {
+    type: Number,
+  },
+  radius: {
+    type: Number,
+  },
+  displayOrder: {
+    type: Number,
+    default: 0,
+  },
 }, {
   timestamps: true,
 });

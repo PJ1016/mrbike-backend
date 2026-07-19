@@ -206,8 +206,32 @@
 
 
 const Banner = require("../models/banner_model");
+const BaseService = require("../models/baseService");
 const jwt_decode = require("jwt-decode");
 const mongoose = require("mongoose");
+
+// Shared validation for baseServiceId + location fields (used by create & edit)
+async function validateBannerMappingFields({ baseServiceId, locationType, latitude, longitude, radius }) {
+  if (baseServiceId !== undefined && baseServiceId !== null && baseServiceId !== "") {
+    if (!mongoose.Types.ObjectId.isValid(baseServiceId)) {
+      return { error: "Invalid baseServiceId" };
+    }
+    const serviceExists = await BaseService.findById(baseServiceId);
+    if (!serviceExists) {
+      return { error: "Service not found for given baseServiceId" };
+    }
+  }
+
+  if (locationType === "specific") {
+    if (latitude === undefined || latitude === null || latitude === "" ||
+        longitude === undefined || longitude === null || longitude === "" ||
+        radius === undefined || radius === null || radius === "") {
+      return { error: "latitude, longitude and radius are required when locationType is 'specific'" };
+    }
+  }
+
+  return null;
+}
 
 
 // Add Banner
@@ -331,7 +355,10 @@ async function editbanner(req, res) {
       return res.status(user_type === 3 ? 201 : 401).send({ status: user_type === 3 ? 201 : 401, message });
     }
 
-    const { banner_id, name, banner_image, from_date, expiry_date } = req.body;
+    const {
+      banner_id, name, banner_image, from_date, expiry_date, status: statusOverride,
+      baseServiceId, locationType, placeId, placeName, latitude, longitude, radius, displayOrder,
+    } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(banner_id)) {
       return res.status(400).send({ status: 400, message: "Invalid banner_id" });
@@ -352,7 +379,24 @@ async function editbanner(req, res) {
       return res.status(404).send({ status: 404, message: "banner not available" });
     }
 
-    // Recalculate status
+    // Effective locationType/lat/lng/radius = incoming value, falling back to existing banner
+    const effectiveLocationType = locationType !== undefined ? locationType : bannerRes.locationType;
+    const effectiveLatitude = latitude !== undefined ? latitude : bannerRes.latitude;
+    const effectiveLongitude = longitude !== undefined ? longitude : bannerRes.longitude;
+    const effectiveRadius = radius !== undefined ? radius : bannerRes.radius;
+
+    const validationError = await validateBannerMappingFields({
+      baseServiceId,
+      locationType: effectiveLocationType,
+      latitude: effectiveLatitude,
+      longitude: effectiveLongitude,
+      radius: effectiveRadius,
+    });
+    if (validationError) {
+      return res.status(400).send({ status: 400, message: validationError.error });
+    }
+
+    // Recalculate status (unless explicitly overridden in the request)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     let status = "upcoming";
@@ -360,6 +404,9 @@ async function editbanner(req, res) {
       status = "active";
     } else if (today > expiryDate) {
       status = "expired";
+    }
+    if (statusOverride) {
+      status = statusOverride;
     }
 
    const updateData = {
@@ -370,6 +417,14 @@ async function editbanner(req, res) {
   from_date: fromDate,
   expiry_date: expiryDate,
   status,
+  baseServiceId: baseServiceId !== undefined ? (baseServiceId || null) : undefined,
+  locationType,
+  placeId,
+  placeName,
+  latitude,
+  longitude,
+  radius,
+  displayOrder,
 };
 
 
@@ -389,7 +444,10 @@ async function editbanner(req, res) {
 // By Prashant 
 async function addbanner(req, res) {
   try {
-    const { name, from_date, expiry_date } = req.body;
+    const {
+      name, from_date, expiry_date,
+      baseServiceId, locationType, placeId, placeName, latitude, longitude, radius, displayOrder,
+    } = req.body;
 
     if (!from_date || !expiry_date) {
       return res.status(400).send({ status: 400, message: "From date and expiry date are required" });
@@ -403,6 +461,17 @@ async function addbanner(req, res) {
 
     if (!req.file) {
       return res.status(400).send({ status: 400, message: "Please upload banner image" });
+    }
+
+    const validationError = await validateBannerMappingFields({
+      baseServiceId,
+      locationType: locationType || "all",
+      latitude,
+      longitude,
+      radius,
+    });
+    if (validationError) {
+      return res.status(400).send({ status: 400, message: validationError.error });
     }
 
     // Determine status
@@ -421,6 +490,14 @@ async function addbanner(req, res) {
       from_date: fromDate,
       expiry_date: expiryDate,
       status,
+      baseServiceId: baseServiceId || null,
+      locationType: locationType || "all",
+      placeId,
+      placeName,
+      latitude,
+      longitude,
+      radius,
+      displayOrder,
     };
 
     const bannerResponse = await Banner.create(bannerData);
@@ -437,7 +514,9 @@ async function addbanner(req, res) {
 
 async function bannerlist(req, res) {
   try {
-    const banners = await Banner.find().sort({ _id: -1 });
+    const banners = await Banner.find()
+      .populate("baseServiceId", "name image")
+      .sort({ displayOrder: 1, _id: -1 });
 
     return res.status(200).send({
       status: 200,
