@@ -285,6 +285,7 @@ const apiRouter = require("./routes/index");
 const db = require("./models/index");
 const errorMiddleware = require("./middlewares/error");
 const bookingExpiryJob = require("./helper/bookingExpiryJob");
+const campaignSchedulerJob = require("./helper/campaignSchedulerJob");
 
 const app = express();
 const server = http.createServer(app);
@@ -389,6 +390,7 @@ db.mongoose
   .then((data) => {
     console.log("Mongodb connected with:", data.connection.host);
     bookingExpiryJob.start(io);
+    campaignSchedulerJob.start();
   })
   .catch((err) => console.log("MongoDB error:", err));
 

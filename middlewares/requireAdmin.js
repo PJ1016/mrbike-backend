@@ -14,6 +14,18 @@ function extractToken(req) {
 // into the token payload. Supports both admin token shapes issued by this
 // codebase: {user_id, type, user_type} from generateUserToken, and {id, role}
 // from adminAuth.verifyOtp.
+//
+// generateUserToken() is shared by every login flow (admin, customer,
+// dealer) and produces the same {user_id, type, user_type} shape for all of
+// them - a customer token is {user_id, type: "logged", user_type: 4}, which
+// is indistinguishable from an admin token ({user_id, type: "logged",
+// user_type: 1|2}) by shape alone. Without checking user_type, a non-admin
+// "logged" token reaches Admin.findById() and (almost always) fails with
+// the misleading "Admin account not found" - read as "your admin account
+// was deleted" when it actually means "this was never an admin token".
+// Reject those up front with an accurate message instead.
+const ADMIN_USER_TYPES = [1, 2];
+
 async function requireAdmin(req, res, next) {
   const token = extractToken(req);
   if (!token) {
@@ -30,6 +42,10 @@ async function requireAdmin(req, res, next) {
   const adminId = decoded.user_id || decoded.id;
   if (!adminId) {
     return res.status(401).json({ success: false, message: "Authentication failed" });
+  }
+
+  if (decoded.user_id && !ADMIN_USER_TYPES.includes(decoded.user_type)) {
+    return res.status(403).json({ success: false, message: "This token does not belong to an admin account" });
   }
 
   try {

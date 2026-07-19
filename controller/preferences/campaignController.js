@@ -17,6 +17,7 @@ const mongoose = require("mongoose");
 const Campaign = require("../../models/Campaign");
 const { TARGET_AUDIENCES, CAMPAIGN_STATUSES } = Campaign;
 const { deleteS3Object } = require("../../utils/s3Upload");
+const { dispatchCampaign } = require("../../helper/campaignDispatch");
 
 const toBool = (v) => v === true || v === "true";
 
@@ -220,6 +221,31 @@ const toggleCampaignStatus = async (req, res) => {
   }
 };
 
+const sendCampaignNow = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid campaign id" });
+    }
+    const campaign = await Campaign.findOne({ _id: id, isDeleted: false });
+    if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    const sentCount = await dispatchCampaign(campaign);
+    campaign.status = "completed";
+    campaign.analytics.sent += sentCount;
+    await campaign.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Campaign sent to ${sentCount} recipient(s)`,
+      data: campaign,
+    });
+  } catch (error) {
+    console.error("sendCampaignNow error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
 const bulkDeleteCampaigns = async (req, res) => {
   try {
     const { ids } = req.body;
@@ -261,6 +287,7 @@ module.exports = {
   updateCampaign,
   deleteCampaign,
   toggleCampaignStatus,
+  sendCampaignNow,
   bulkDeleteCampaigns,
   bulkUpdateCampaignStatus,
 };

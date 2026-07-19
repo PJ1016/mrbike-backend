@@ -10,6 +10,7 @@ const {
   updateCampaign,
   deleteCampaign,
   toggleCampaignStatus,
+  sendCampaignNow,
   bulkDeleteCampaigns,
   bulkUpdateCampaignStatus,
 } = require("../../controller/preferences/campaignController");
@@ -22,6 +23,7 @@ router.post("/bulk-status", requireAdmin, bulkUpdateCampaignStatus);
 router.post("/", requireAdmin, upload.single("image"), createCampaign);
 router.get("/:id/analytics", requireAdmin, getCampaignAnalytics);
 router.patch("/:id/status", requireAdmin, toggleCampaignStatus);
+router.post("/:id/send-now", requireAdmin, sendCampaignNow);
 router.get("/:id", requireAdmin, getCampaignById);
 router.put("/:id", requireAdmin, upload.single("image"), updateCampaign);
 router.delete("/:id", requireAdmin, deleteCampaign);
