@@ -14,6 +14,7 @@ const dealerActivityLogSchema = new mongoose.Schema({
       "Document Requested",
       "Document Approved",
       "Document Rejected",
+      "Re-verification Submitted",
     ],
     required: true,
   },

@@ -5,8 +5,10 @@ const otpAuth = require("../helper/otpAuth");
 const Vendor = require("../models/dealerModel");
 const Admin = require("../models/admin_model");
 const { getDealerStatus } = require("../helper/dealerStatus");
+const { buildVerificationStatus } = require("../helper/dealerDocumentStatus");
 const { sendBookingNotification } = require("../helper/pushNotification");
 const { logDealerActivity } = require("../helper/dealerActivityLog");
+const NotificationModel = require("../models/Notification");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const { sendemails } = require("../helper/helper");
@@ -262,7 +264,16 @@ async function verifyOTP(req, res) {
     }
 
     const token = validation.generateUserToken(dealer._id, "dealer", "2h");
-    const isNewUser = !dealer.isProfile || !dealer.isDoc || !dealer.isVerify;
+    // The onboarding wizard only ever runs once. `submittedAt` is set exactly
+    // once, by submitForApproval(), when the dealer finishes it — so it (not
+    // the legacy isProfile/isDoc/isVerify booleans, which are never updated
+    // by the modern approve/reject/verifyDocument flow) is the only reliable
+    // signal for "has this dealer completed onboarding at least once."
+    // A rejected document post-approval must NEVER re-trigger onboarding —
+    // that's what the verification-status API + Document Verification
+    // Required screen are for.
+    const isNewUser = !dealer.submittedAt;
+    const verification = buildVerificationStatus(dealer);
 
     return res.status(200).json({
       success: true,
@@ -276,6 +287,10 @@ async function verifyOTP(req, res) {
           isDoc: dealer.isDoc,
           isProfile: dealer.isProfile,
         },
+        dealerStatus: getDealerStatus(dealer),
+        registrationStatus: dealer.registrationStatus,
+        verificationStatus: verification.overallStatus,
+        documents: verification.documents,
       },
     });
   } catch (error) {
@@ -1279,6 +1294,20 @@ async function updateBankDetails(req, res) {
       });
     }
 
+    // A passbook already verified can only be re-uploaded once admin
+    // explicitly requests it again — same rule uploadDocuments() applies to
+    // the other documents.
+    const currentVendor = await Vendor.findById(id).select("documentVerification");
+    if (!currentVendor) {
+      return res.status(404).json({ success: false, message: "Vendor not found" });
+    }
+    if ((currentVendor.documentVerification || {}).passbook === "verified") {
+      return res.status(400).json({
+        success: false,
+        message: "Passbook is already verified and can only be re-uploaded if requested by admin",
+      });
+    }
+
     const bankDetailsUpdate = {
       accountHolderName,
       accountNumber,
@@ -1294,13 +1323,15 @@ async function updateBankDetails(req, res) {
         bankDetails: bankDetailsUpdate,
         "formProgress.completedSteps.bankDetails": true,
         "completionTimestamps.bankDetails": new Date(),
+        "documentVerification.passbook": "pending",
         updatedAt: new Date(),
+        $unset: { "documentRequests.passbook": "" },
       },
       {
         new: true,
         runValidators: true,
       },
-    ).select("bankDetails formProgress completionTimestamps");
+    ).select("bankDetails formProgress completionTimestamps documentVerification");
 
     if (!updatedVendor) {
       return res.status(404).json({
@@ -1319,6 +1350,7 @@ async function updateBankDetails(req, res) {
           completed: updatedVendor.formProgress.completedSteps.bankDetails,
           lastUpdated: updatedVendor.completionTimestamps.bankDetails,
         },
+        documentVerification: updatedVendor.documentVerification,
       },
     });
   } catch (error) {
@@ -1495,6 +1527,120 @@ async function checkApprovalStatus(req, res) {
   }
 }
 
+// Document Re-Verification flow (post-onboarding document corrections).
+// This never routes a dealer back into the onboarding wizard — it only
+// reports/updates per-document status on top of the existing
+// documentVerification/documentRequests fields.
+
+async function getVerificationStatus(req, res) {
+  try {
+    const vendor = await Vendor.findById(req.dealer._id).select(
+      "registrationStatus dealerStatus isBlocked isActive status isDoc documentVerification documentRequests documents bankDetails.passbookImage adminNotes submittedAt approvedAt",
+    );
+
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+
+    const verification = buildVerificationStatus(vendor);
+
+    res.status(200).json({
+      success: true,
+      dealerStatus: getDealerStatus(vendor),
+      registrationStatus: vendor.registrationStatus,
+      adminNotes: vendor.adminNotes,
+      overallVerificationStatus: verification.overallStatus,
+      documents: verification.documents,
+      approvedDocuments: verification.approvedDocuments,
+      pendingDocuments: verification.pendingDocuments,
+      rejectedDocuments: verification.rejectedDocuments,
+    });
+  } catch (error) {
+    console.error("getVerificationStatus error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching verification status",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+}
+
+async function submitReVerification(req, res) {
+  try {
+    const { id } = req.params;
+    const vendor = await Vendor.findById(id).select(
+      "documentVerification formProgress shopName ownerName device_token ftoken",
+    );
+
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+
+    const verification = buildVerificationStatus(vendor);
+
+    if (verification.rejectedDocuments.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please upload the requested document(s) before submitting for review",
+        rejectedDocuments: verification.rejectedDocuments,
+      });
+    }
+
+    if (verification.pendingDocuments.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No re-uploaded documents are awaiting review",
+      });
+    }
+
+    await Vendor.findByIdAndUpdate(id, {
+      "formProgress.completedSteps.documents": true,
+      updatedAt: new Date(),
+    });
+
+    logDealerActivity({
+      dealerId: vendor._id,
+      adminId: null,
+      action: "Re-verification Submitted",
+      reason: `Documents resubmitted for review: ${verification.pendingDocuments.join(", ")}`,
+    });
+
+    // Notify admins — reuses the existing Notification model's 'admin'
+    // receiver type (already defined for this, just never used until now).
+    try {
+      const admins = await Admin.find({ status: "active" }).select("_id");
+      await Promise.all(
+        admins.map((admin) =>
+          new NotificationModel({
+            title: "Dealer Document Re-Verification",
+            body: `${vendor.shopName || vendor.ownerName || "A dealer"} resubmitted document(s) for review: ${verification.pendingDocuments.join(", ")}.`,
+            data: { type: "dealer_reverification_submitted", dealerId: String(vendor._id) },
+            receiverId: admin._id,
+            receiverType: "admin",
+            status: "pending",
+          }).save(),
+        ),
+      );
+    } catch (notifyErr) {
+      console.error("submitReVerification admin notify error:", notifyErr);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Documents submitted for review",
+      overallVerificationStatus: "waiting_for_review",
+      pendingDocuments: verification.pendingDocuments,
+    });
+  } catch (error) {
+    console.error("submitReVerification error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error submitting documents for review",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+}
+
 // Admin Endpoints
 // async function getPendingRegistrations(req, res) {
 //   try {
@@ -1606,24 +1752,36 @@ async function verifyDocument(req, res) {
         .json({ success: false, message: "Invalid verification status" });
     }
 
-    if (verificationStatus === "requested" && !reason) {
+    if ((verificationStatus === "requested" || verificationStatus === "rejected") && !reason) {
       return res.status(400).json({
         success: false,
-        message: "A reason is required when requesting a document",
+        message: "A reason is required when rejecting or requesting a document",
       });
     }
 
     const updates = {};
+    const clearedRequestKeys = [];
     docTypes.forEach((dt) => {
       updates[`documentVerification.${dt}`] = verificationStatus;
-      if (verificationStatus === "requested") {
+      if (verificationStatus === "requested" || verificationStatus === "rejected") {
+        // Same shape covers both cases: an outstanding admin note the dealer
+        // must act on (re-upload), surfaced via getVerificationStatus.
         updates[`documentRequests.${dt}`] = {
           reason,
           requestedBy: req.admin_id,
           requestedAt: new Date(),
         };
+      } else if (verificationStatus === "verified") {
+        // Resolved — any earlier rejection/request note no longer applies.
+        clearedRequestKeys.push(dt);
       }
     });
+    if (clearedRequestKeys.length > 0) {
+      updates.$unset = {};
+      clearedRequestKeys.forEach((dt) => {
+        updates.$unset[`documentRequests.${dt}`] = "";
+      });
+    }
 
     // Refresh current vendor state to check all documents
     const currentVendor = await Vendor.findById(id).select(
@@ -1986,6 +2144,8 @@ module.exports = {
   updateBankDetails,
   submitForApproval,
   checkApprovalStatus,
+  getVerificationStatus,
+  submitReVerification,
   getPendingRegistrations,
   getDealerDetails,
   approveDealer,

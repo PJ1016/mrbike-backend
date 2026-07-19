@@ -4,7 +4,7 @@ const { createS3Upload } = require("../utils/s3Upload");
 const { verifyDealerToken, requireOwnDealer } = require("../middlewares/dealerAuth");
 const { requireAdmin } = require("../middlewares/requireAdmin");
 
-var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
+var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getVerificationStatus, submitReVerification, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
 
 const upload = createS3Upload("vendors");
 
@@ -40,6 +40,14 @@ router.post('/bank-details/:id', verifyDealerToken, requireOwnDealer('id'), uplo
 // Registration Submission & Status
 router.post('/submit-registration/:id', verifyDealerToken, requireOwnDealer('id'), submitForApproval);
 router.get('/registration-status', verifyDealerToken, checkApprovalStatus);
+
+// Document Re-Verification (post-onboarding document corrections). Re-upload
+// of a single rejected/requested document reuses the existing
+// /upload-documents/:id and /bank-details/:id endpoints above — both already
+// update only the document(s) actually uploaded, so no separate endpoint is
+// needed for that step.
+router.get('/verification-status', verifyDealerToken, getVerificationStatus);
+router.post('/submit-reverification/:id', verifyDealerToken, requireOwnDealer('id'), submitReVerification);
 
 // Admin Routes (Only accessible by admin)
 router.get('/pending-registrations', requireAdmin, getPendingRegistrations);
