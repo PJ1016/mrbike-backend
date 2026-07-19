@@ -10,6 +10,7 @@
 const LegalDocument = require("../../models/LegalDocument");
 const AppSettings = require("../../models/AppSettings");
 const AppBanner = require("../../models/AppBanner");
+const Faq = require("../../models/Faq");
 const { LEGAL_DOC_TYPES } = LegalDocument;
 const { BANNER_TYPES } = AppBanner;
 
@@ -83,9 +84,22 @@ const getPublicAppBanners = async (req, res) => {
   }
 };
 
+const getPublicFaqs = async (req, res) => {
+  try {
+    const data = await Faq.find({ isDeleted: false, isActive: true })
+      .sort({ displayOrder: 1, createdAt: -1 })
+      .lean();
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("getPublicFaqs error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
 module.exports = {
   getPublicLegalDocuments,
   getPublicLegalDocumentByType,
   getPublicAppSettings,
   getPublicAppBanners,
+  getPublicFaqs,
 };
