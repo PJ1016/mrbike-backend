@@ -4,13 +4,16 @@
  * Endpoints:
  *   GET /bikedoctor/dealer/payouts         → getPayouts
  *   GET /bikedoctor/finance/summary        → getFinanceSummary
- *   GET /bikedoctor/dealer/wallets/summary → getDealerWalletsSummary
+ *   GET /bikedoctor/dealer/wallets/summary → getDealerWalletsSummary  (legacy, kept for backward compatibility)
+ *   GET /bikedoctor/finance/wallets        → getDealerWallets
+ *   GET /bikedoctor/finance/wallets/:id    → getDealerWalletDetails
  */
 
 const mongoose = require("mongoose");
 const Wallet = require("../models/Wallet_modal");
 const Vendor = require("../models/dealerModel");
 const Booking = require("../models/Booking");
+const { getDealerStatus, DEALER_STATUSES } = require("../helper/dealerStatus");
 
 // Wallet order_status values that represent a completed/approved payout
 const APPROVED_STATUSES = ["COMPLETED", "APPROVED"];
@@ -242,6 +245,37 @@ const getFinanceSummary = async (req, res) => {
     ]);
     console.log('[financeSummary] withdrawalStats result:', JSON.stringify(withdrawalStats));
 
+    // ── 6. Today's / this month's transactions (all Wallet ledger entries) ──
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(now);
+    endOfToday.setHours(23, 59, 59, 999);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+    console.log('[financeSummary] running Wallet.aggregate (todayStats)');
+    const todayStatsAgg = await Wallet.aggregate([
+      { $match: { createdAt: { $gte: startOfToday, $lte: endOfToday } } },
+      { $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
+    ]);
+    console.log('[financeSummary] todayStats result:', JSON.stringify(todayStatsAgg));
+
+    console.log('[financeSummary] running Wallet.aggregate (monthStats)');
+    const monthStatsAgg = await Wallet.aggregate([
+      { $match: { createdAt: { $gte: startOfMonth, $lte: endOfToday } } },
+      { $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$Amount" } } },
+    ]);
+    console.log('[financeSummary] monthStats result:', JSON.stringify(monthStatsAgg));
+
+    const todayTransactions = {
+      count: todayStatsAgg[0]?.count || 0,
+      totalAmount: parseFloat((todayStatsAgg[0]?.totalAmount || 0).toFixed(2)),
+    };
+    const thisMonthTransactions = {
+      count: monthStatsAgg[0]?.count || 0,
+      totalAmount: parseFloat((monthStatsAgg[0]?.totalAmount || 0).toFixed(2)),
+    };
+
     const bStats = bookingStats[0] || {
       totalBookingValue: 0,
       totalTaxCollected: 0,
@@ -304,6 +338,8 @@ const getFinanceSummary = async (req, res) => {
         },
         activeDealers,
         totalBookings,
+        todayTransactions,
+        thisMonthTransactions,
       },
     });
   } catch (error) {
@@ -467,4 +503,355 @@ const getDealerWalletsSummary = async (req, res) => {
   }
 };
 
-module.exports = { getPayouts, getFinanceSummary, getDealerWalletsSummary };
+function formatDealerId(numericId) {
+  if (!numericId && numericId !== 0) return null;
+  return `MRBD${numericId.toString().padStart(4, "0")}`;
+}
+
+// Sums a Wallet byType/status facet bucket ([{ _id: { type, status }, totalAmount }])
+// down to a single number for the given transaction_type + allowed order_status list.
+function sumWalletBucket(byType, type, statuses) {
+  if (!Array.isArray(byType)) return 0;
+  return byType
+    .filter((row) => row._id?.type === type && statuses.includes(row._id?.status))
+    .reduce((sum, row) => sum + (row.totalAmount || 0), 0);
+}
+
+const SORT_FIELD_MAP = {
+  dealerName: "ownerName",
+  shopName: "shopName",
+  walletBalance: "wallet",
+  totalEarnings: "totalEarnings",
+  totalWithdrawn: "totalWithdrawn",
+  pendingWithdrawalAmount: "pendingWithdrawalAmount",
+  lastTransactionDate: "lastTransactionDate",
+  createdAt: "createdAt",
+};
+
+// ─── 4. Dealer Wallets — List ─────────────────────────────────────────────────
+//
+// GET /bikedoctor/finance/wallets
+//
+// Query params:
+//   page      = 1
+//   limit     = 20 (max 100)
+//   search    = partial match on dealer name / shop name / phone
+//   status    = one of DEALER_STATUSES (Pending | Pending Documents | Approved |
+//               Active | Inactive | Blocked | Rejected) — filters on the dealer's
+//               canonical status (there is no separate "wallet status" field;
+//               wallet status is the dealer's own operational status).
+//   sortBy    = dealerName | shopName | walletBalance | totalEarnings |
+//               totalWithdrawn | pendingWithdrawalAmount | lastTransactionDate |
+//               createdAt (default: createdAt)
+//   sortOrder = asc | desc (default: desc)
+//
+const getDealerWallets = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search, status, sortBy = "createdAt", sortOrder = "desc" } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    if (status && !DEALER_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Allowed values: ${DEALER_STATUSES.join(", ")}`,
+      });
+    }
+
+    const matchStage = {};
+    if (search) {
+      matchStage.$or = [
+        { ownerName: { $regex: search, $options: "i" } },
+        { shopName: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+      ];
+    }
+    if (status) {
+      matchStage.dealerStatus = status;
+    }
+
+    const sortField = SORT_FIELD_MAP[sortBy] || "createdAt";
+    const sortDir = sortOrder === "asc" ? 1 : -1;
+
+    const [result] = await Vendor.aggregate([
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: "bookings",
+          let: { dealerId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$dealer_id", "$$dealerId"] }, walletSettled: true } },
+            {
+              $group: {
+                _id: null,
+                totalBookingAmount: { $sum: "$totalBill" },
+                totalTaxPaid: { $sum: "$tax" },
+                bookingCount: { $sum: 1 },
+              },
+            },
+          ],
+          as: "bookingStats",
+        },
+      },
+      {
+        $lookup: {
+          from: "wallets",
+          let: { dealerId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$dealer_id", "$$dealerId"] }, transaction_type: { $ne: "rollback" } } },
+            {
+              $facet: {
+                byType: [
+                  { $group: { _id: { type: "$transaction_type", status: "$order_status" }, totalAmount: { $sum: "$Amount" } } },
+                ],
+                last: [{ $sort: { createdAt: -1 } }, { $limit: 1 }, { $project: { _id: 0, createdAt: 1 } }],
+              },
+            },
+          ],
+          as: "walletAgg",
+        },
+      },
+      {
+        $addFields: {
+          bookingStat: { $arrayElemAt: ["$bookingStats", 0] },
+          walletFacet: { $arrayElemAt: ["$walletAgg", 0] },
+        },
+      },
+      {
+        $addFields: {
+          totalBookingAmount: { $ifNull: ["$bookingStat.totalBookingAmount", 0] },
+          totalTaxPaid: { $ifNull: ["$bookingStat.totalTaxPaid", 0] },
+          bookingCount: { $ifNull: ["$bookingStat.bookingCount", 0] },
+          lastTransactionDate: { $arrayElemAt: ["$walletFacet.last.createdAt", 0] },
+          totalWithdrawn: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: { $ifNull: ["$walletFacet.byType", []] },
+                    cond: { $and: [{ $eq: ["$$this._id.type", "withdrawal"] }, { $in: ["$$this._id.status", APPROVED_STATUSES] }] },
+                  },
+                },
+                as: "row",
+                in: "$$row.totalAmount",
+              },
+            },
+          },
+          pendingWithdrawalAmount: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: { $ifNull: ["$walletFacet.byType", []] },
+                    cond: { $and: [{ $eq: ["$$this._id.type", "withdrawal"] }, { $in: ["$$this._id.status", ["PENDING", "IN_PROGRESS"]] }] },
+                  },
+                },
+                as: "row",
+                in: "$$row.totalAmount",
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          totalEarnings: {
+            $subtract: [
+              { $subtract: ["$totalBookingAmount", "$totalTaxPaid"] },
+              { $multiply: ["$totalBookingAmount", { $divide: [{ $ifNull: ["$commission", 0] }, 100] }] },
+            ],
+          },
+        },
+      },
+      { $sort: { [sortField]: sortDir } },
+      {
+        $facet: {
+          data: [
+            { $skip: skip },
+            { $limit: limitNum },
+            {
+              $project: {
+                id: 1,
+                ownerName: 1,
+                shopName: 1,
+                phone: 1,
+                wallet: 1,
+                totalEarnings: 1,
+                totalWithdrawn: 1,
+                pendingWithdrawalAmount: 1,
+                lastTransactionDate: 1,
+                createdAt: 1,
+                isBlocked: 1,
+                isActive: 1,
+                isDoc: 1,
+                registrationStatus: 1,
+                status: 1,
+                dealerStatus: 1,
+              },
+            },
+          ],
+          totalCount: [{ $count: "count" }],
+        },
+      },
+    ]);
+
+    const total = result.totalCount[0]?.count || 0;
+
+    const rows = result.data.map((d) => ({
+      _id: d._id,
+      dealerId: formatDealerId(d.id),
+      dealerName: d.ownerName || d.shopName || "—",
+      shopName: d.shopName || null,
+      phone: d.phone,
+      walletBalance: parseFloat((d.wallet || 0).toFixed(2)),
+      totalEarnings: parseFloat((d.totalEarnings || 0).toFixed(2)),
+      totalWithdrawn: parseFloat((d.totalWithdrawn || 0).toFixed(2)),
+      pendingWithdrawalAmount: parseFloat((d.pendingWithdrawalAmount || 0).toFixed(2)),
+      lastTransactionDate: d.lastTransactionDate || null,
+      walletStatus: getDealerStatus(d),
+      createdDate: d.createdAt,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: rows,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+      },
+    });
+  } catch (error) {
+    console.error("getDealerWallets error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+// ─── 5. Dealer Wallet — Details ───────────────────────────────────────────────
+//
+// GET /bikedoctor/finance/wallets/:id   (:id = Vendor _id)
+//
+// Query params:
+//   recentLimit      = 10 (recent transactions, max 50)
+//   withdrawalPage   = 1
+//   withdrawalLimit  = 10 (max 100)
+//
+const getDealerWalletDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid dealer id" });
+    }
+
+    const dealer = await Vendor.findById(id).lean();
+    if (!dealer) {
+      return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+
+    const recentLimit = Math.min(50, Math.max(1, parseInt(req.query.recentLimit) || 10));
+    const withdrawalPage = Math.max(1, parseInt(req.query.withdrawalPage) || 1);
+    const withdrawalLimit = Math.min(100, Math.max(1, parseInt(req.query.withdrawalLimit) || 10));
+    const withdrawalSkip = (withdrawalPage - 1) * withdrawalLimit;
+
+    const dealerObjectId = new mongoose.Types.ObjectId(id);
+
+    const [bookingStats, walletBuckets, recentTransactions, withdrawalData, withdrawalTotal] = await Promise.all([
+      Booking.aggregate([
+        { $match: { dealer_id: dealerObjectId, walletSettled: true } },
+        {
+          $group: {
+            _id: null,
+            totalBookingAmount: { $sum: "$totalBill" },
+            totalTaxPaid: { $sum: "$tax" },
+            bookingCount: { $sum: 1 },
+          },
+        },
+      ]),
+      Wallet.aggregate([
+        { $match: { dealer_id: dealerObjectId, transaction_type: { $ne: "rollback" } } },
+        { $group: { _id: { type: "$transaction_type", status: "$order_status" }, totalAmount: { $sum: "$Amount" } } },
+      ]),
+      Wallet.find({ dealer_id: dealerObjectId })
+        .sort({ createdAt: -1 })
+        .limit(recentLimit)
+        .populate("booking_id", "bookingId totalBill tax")
+        .lean(),
+      Wallet.find({ dealer_id: dealerObjectId, transaction_type: "withdrawal" })
+        .sort({ createdAt: -1 })
+        .skip(withdrawalSkip)
+        .limit(withdrawalLimit)
+        .populate("booking_id", "bookingId")
+        .lean(),
+      Wallet.countDocuments({ dealer_id: dealerObjectId, transaction_type: "withdrawal" }),
+    ]);
+
+    const bStats = bookingStats[0] || { totalBookingAmount: 0, totalTaxPaid: 0, bookingCount: 0 };
+    const totalBookingAmount = bStats.totalBookingAmount || 0;
+    const totalTaxPaid = bStats.totalTaxPaid || 0;
+    const commissionRate = dealer.commission || 0;
+    const totalCommissionPaid = parseFloat(((totalBookingAmount * commissionRate) / 100).toFixed(2));
+    const lifetimeEarnings = parseFloat((totalBookingAmount - totalTaxPaid - totalCommissionPaid).toFixed(2));
+
+    const totalWithdrawals = sumWalletBucket(walletBuckets, "withdrawal", APPROVED_STATUSES);
+    const pendingBalance = sumWalletBucket(walletBuckets, "withdrawal", ["PENDING", "IN_PROGRESS"]);
+
+    const mapTxn = (w) => ({
+      _id: w._id,
+      transactionId: `TXN${(w.id || 0).toString().padStart(6, "0")}`,
+      amount: w.Amount,
+      type: w.Type,
+      transactionType: w.transaction_type,
+      status: w.order_status,
+      note: w.Note,
+      booking: w.booking_id ? { _id: w.booking_id._id, bookingId: w.booking_id.bookingId } : null,
+      createdAt: w.createdAt,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        dealer: {
+          _id: dealer._id,
+          dealerId: formatDealerId(dealer.id),
+          dealerName: dealer.ownerName || dealer.shopName || "—",
+          shopName: dealer.shopName || null,
+          phone: dealer.phone,
+          email: dealer.email || dealer.shopEmail || null,
+          commissionRate,
+          walletStatus: getDealerStatus(dealer),
+          createdDate: dealer.createdAt,
+        },
+        walletSummary: {
+          availableBalance: parseFloat((dealer.wallet || 0).toFixed(2)),
+          pendingBalance: parseFloat(pendingBalance.toFixed(2)),
+          lifetimeEarnings,
+          totalWithdrawals: parseFloat(totalWithdrawals.toFixed(2)),
+        },
+        recentTransactions: recentTransactions.map(mapTxn),
+        withdrawalHistory: {
+          data: withdrawalData.map(mapTxn),
+          pagination: {
+            page: withdrawalPage,
+            limit: withdrawalLimit,
+            total: withdrawalTotal,
+            pages: Math.ceil(withdrawalTotal / withdrawalLimit),
+          },
+        },
+      },
+    });
+  } catch (error) {
+    console.error("getDealerWalletDetails error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+module.exports = {
+  getPayouts,
+  getFinanceSummary,
+  getDealerWalletsSummary,
+  getDealerWallets,
+  getDealerWalletDetails,
+};
