@@ -252,6 +252,28 @@ TicketSchema.methods.markSeen = function ({ viewer_id, message_id = null }) {
   return this
 }
 
+// Per-admin unread tracking (shared support inbox, but read-state is per admin
+// user — each admin has their own key in unreadFor, e.g. after a dealer/user
+// message every active admin's counter goes up until that specific admin
+// opens the ticket).
+TicketSchema.methods.incrementUnreadForAdmins = function (adminIds = []) {
+  adminIds.forEach((id) => {
+    const key = String(id)
+    const cur = this.unreadFor.get(key) || 0
+    this.unreadFor.set(key, cur + 1)
+  })
+  return this
+}
+
+TicketSchema.methods.resetUnreadForAdmin = function (adminId) {
+  const key = String(adminId)
+  this.unreadFor.set(key, 0)
+  this.messages.forEach((m) => {
+    if (!m.seenBy.some((x) => String(x) === key)) m.seenBy.push(adminId)
+  })
+  return this
+}
+
 // Convenience status changes
 TicketSchema.methods.setStatus = function (next) {
   if (!Object.values(TICKET_STATUS).includes(next)) {

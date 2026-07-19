@@ -1,11 +1,20 @@
 const mongoose = require("mongoose")
 const Ticket = require("../models/ticket_model")
+const Admin = require("../models/admin_model")
 
 const parseTicketNo = (s) => {
   const str = String(s || "").trim()
   // Match TCK-XXXXX (legacy), MRBDXXXXXXXXXX (vendor), or MRBDCXXXXXXXXXX (user)
   const m = /^(?:TCK-|MRBD|MRBDC)(\d+)$/.exec(str)
   return m ? Number.parseInt(m[1], 10) : null
+}
+
+// All active admins get notified (shared support queue) when a dealer/user
+// sends a message; each admin's own unread counter is reset only once they
+// personally open the ticket.
+const getActiveAdminIds = async () => {
+  const admins = await Admin.find({ status: "active" }).select("_id").lean()
+  return admins.map((a) => a._id)
 }
 
 const createTicket = async (req, res) => {
@@ -52,6 +61,21 @@ const createTicket = async (req, res) => {
         },
       ],
     })
+
+    // New ticket always starts with a dealer/user message, so every active
+    // admin should see it as unread until they personally open it.
+    const adminIds = await getActiveAdminIds()
+    if (adminIds.length) {
+      created.incrementUnreadForAdmins(adminIds)
+      await created.save()
+
+      const io = req.app.get("io")
+      if (io) {
+        adminIds.forEach((id) =>
+          io.to(`admin:${id}`).emit("support:unread:changed", { ticketId: String(created._id) }),
+        )
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -103,6 +127,16 @@ const replyToTicket = async (req, res) => {
     ticket.lastMessageAt = new Date()
     ticket.lastMessageText = message
 
+    // Admin's own reply implies they've seen the thread; a dealer/user reply
+    // bumps every active admin's unread counter for this ticket.
+    let notifyAdminIds = []
+    if (sender_type === "admin") {
+      ticket.resetUnreadForAdmin(sender_id)
+    } else {
+      notifyAdminIds = await getActiveAdminIds()
+      ticket.incrementUnreadForAdmins(notifyAdminIds)
+    }
+
     await ticket.save()
 
     // repop / lean if you want to send a clean object
@@ -110,11 +144,21 @@ const replyToTicket = async (req, res) => {
 
     // 🔊 emit to everyone viewing this ticket
     const io = req.app.get("io")
-    io.to(String(ticket_id)).emit("ticket:message:new", {
-      ticketId: String(ticket_id),
-      ticket: updated, // or just send the new message to minimize payload
-      // message: updated.messages[updated.messages.length - 1],
-    })
+    if (io) {
+      io.to(String(ticket_id)).emit("ticket:message:new", {
+        ticketId: String(ticket_id),
+        ticket: updated, // or just send the new message to minimize payload
+        // message: updated.messages[updated.messages.length - 1],
+      })
+
+      if (sender_type === "admin") {
+        io.to(`admin:${sender_id}`).emit("support:unread:changed", { ticketId: String(ticket_id) })
+      } else {
+        notifyAdminIds.forEach((id) =>
+          io.to(`admin:${id}`).emit("support:unread:changed", { ticketId: String(ticket_id) }),
+        )
+      }
+    }
 
     return res.status(200).json({ success: true, message: "Reply added", data: updated })
   } catch (err) {
@@ -206,17 +250,24 @@ const getAllUserAndDealerTickets = async (req, res) => {
         created_at: 1,
         ticketNo: 1,
         ticketId: 1, // virtual if enabled
-        // comment the next line back in if you need unread map on list
-        // unreadFor: 1,
+        unreadFor: 1, // reduced to a per-viewer boolean below, never sent raw
       })
     }
 
     const [tickets, total] = await Promise.all([query.exec(), Ticket.countDocuments(filter)])
 
+    // Collapse the raw unreadFor map down to a single boolean scoped to the
+    // requesting admin — the client only needs to know "unread for me".
+    const adminId = req.admin_id ? String(req.admin_id) : null
+    const rows = tickets.map(({ unreadFor, ...t }) => ({
+      ...t,
+      unread: Boolean(adminId && unreadFor && unreadFor[adminId] > 0),
+    }))
+
     return res.status(200).json({
       success: true,
       message: "User and dealer tickets retrieved successfully",
-      data: tickets,
+      data: rows,
       meta: {
         page,
         limit,
@@ -467,6 +518,47 @@ const updateTicketStatus = async (req, res) => {
   }
 }
 
+// Total number of tickets carrying an unread dealer/user message for the
+// requesting admin — backs the sidebar "Support (n)" badge.
+const getSupportUnreadCount = async (req, res) => {
+  try {
+    const adminId = String(req.admin_id)
+    const unreadCount = await Ticket.countDocuments({ [`unreadFor.${adminId}`]: { $gt: 0 } })
+    return res.status(200).json({ success: true, unreadCount })
+  } catch (error) {
+    console.error("Get Support Unread Count Error:", error)
+    return res.status(500).json({ success: false, message: "Internal server error" })
+  }
+}
+
+// Marks a ticket read for the requesting admin only (per-admin unread state);
+// other admins who haven't opened it still see it as unread.
+const markTicketRead = async (req, res) => {
+  try {
+    const { ticket_id } = req.params
+    if (!mongoose.Types.ObjectId.isValid(ticket_id)) {
+      return res.status(400).json({ success: false, message: "Invalid ticket_id" })
+    }
+
+    const ticket = await Ticket.findById(ticket_id)
+    if (!ticket) return res.status(404).json({ success: false, message: "Ticket not found" })
+
+    ticket.resetUnreadForAdmin(req.admin_id)
+    await ticket.save()
+
+    const adminId = String(req.admin_id)
+    const unreadCount = await Ticket.countDocuments({ [`unreadFor.${adminId}`]: { $gt: 0 } })
+
+    const io = req.app.get("io")
+    if (io) io.to(`admin:${adminId}`).emit("support:unread:changed", { ticketId: String(ticket_id) })
+
+    return res.status(200).json({ success: true, unreadCount })
+  } catch (error) {
+    console.error("Mark Ticket Read Error:", error)
+    return res.status(500).json({ success: false, message: "Internal server error" })
+  }
+}
+
 module.exports = {
   createTicket,
   replyToTicket,
@@ -474,4 +566,6 @@ module.exports = {
   getAllUserAndDealerTickets,
   updateTicketStatus,
   getTicketById,
+  getSupportUnreadCount,
+  markTicketRead,
 }

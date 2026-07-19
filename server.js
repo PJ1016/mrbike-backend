@@ -333,6 +333,11 @@ io.on("connection", (socket) => {
   socket.on("booking:joinUser", ({ bookingId }) => {
     if (bookingId) socket.join(`booking:${bookingId}`);
   });
+
+  // Admin joins their personal room to receive support unread-count updates
+  socket.on("admin:join", ({ adminId }) => {
+    if (adminId) socket.join(`admin:${adminId}`);
+  });
 });
 
 /* ==============================
