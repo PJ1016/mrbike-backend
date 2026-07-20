@@ -2,6 +2,7 @@ const Reward = require('../models/reward');
 const jwt_decode = require('jwt-decode');
 const Booking = require('../models/Booking')
 const Customer = require('../models/customer_model')
+const { applyRewardDiscount, PricingError } = require('../services/pricingEngine')
 
 const createReward = async (req, res) => {
     try {
@@ -103,14 +104,30 @@ async function applyRewardPoints(req, res) {
         return res.status(200).json({ message: "Not enough points!" });
     }
 
-    booking.totalBill -= points_to_use;
+    // Reward redemption is a discount, never a rewrite of the immutable
+    // pricing snapshot: subtotal/serviceAmount/commission/dealerEarnings never
+    // move. Only discountAmount increases; amountDue (a virtual on Booking) =
+    // customerTotal - discountAmount reflects the reduction automatically.
+    // See services/pricingEngine.js#applyRewardDiscount().
+    try {
+        applyRewardDiscount(booking, points_to_use);
+    } catch (err) {
+        if (err instanceof PricingError) {
+            return res.status(400).json({ message: err.message, code: err.code });
+        }
+        throw err;
+    }
     await booking.save();
 
     // Deduct points from user
     user.reward_points -= points_to_use;
     await user.save();
 
-    return res.status(200).json({ message: "Points applied!", updated_bill: booking.totalBill });
+    return res.status(200).json({
+        message: "Points applied!",
+        discountAmount: booking.discountAmount,
+        amountDue: booking.amountDue,
+    });
 }
 
 

@@ -175,12 +175,16 @@ const getPayouts = async (req, res) => {
 //
 // Runs 5 aggregations in parallel and returns a single summary object.
 //
-// Commission is derived from settled bookings using the dealer's commission rate
-// stored at the time of the booking (Booking.totalBill × Vendor.commission / 100).
-// Booking.totalBill is the Subtotal (service + pickup + drop charges).
+// Commission/tax/earnings are read directly from each booking's immutable
+// pricing snapshot (Booking.subtotal/taxAmount/commissionAmount/dealerEarnings
+// — see services/pricingEngine.js), NEVER re-derived from the dealer's
+// *current* commission/tax rate. This guarantees historical reports never
+// change just because a dealer edited their rates after the fact.
 //
-// totalDealerEarnings = (totalBookingValue + totalTaxCollected) − totalCommissionEarned
-//                       i.e. Customer Total − Commission
+// NOTE: bookings settled before this snapshot existed (no pricingVersion)
+// report 0 for these fields here — they never had a frozen commissionAmount/
+// dealerEarnings to read. Booking.totalBill/tax (legacy mirrors) remain
+// populated for them but are intentionally not used in this report anymore.
 //
 const getFinanceSummary = async (req, res) => {
   console.log('[financeSummary] called');
@@ -202,21 +206,13 @@ const getFinanceSummary = async (req, res) => {
           $facet: {
             bookingStats: [
               { $match: { walletSettled: true } },
-              { $lookup: { from: "vendors", localField: "dealer_id", foreignField: "_id", as: "dealer" } },
-              { $unwind: { path: "$dealer", preserveNullAndEmpty: false } },
               {
                 $group: {
                   _id: null,
-                  totalBookingValue: { $sum: "$totalBill" },
-                  totalTaxCollected: { $sum: "$tax" },
-                  totalCommissionEarned: {
-                    $sum: {
-                      $multiply: [
-                        "$totalBill",
-                        { $divide: [{ $ifNull: ["$dealer.commission", 0] }, 100] },
-                      ],
-                    },
-                  },
+                  totalBookingValue: { $sum: "$subtotal" },
+                  totalTaxCollected: { $sum: "$taxAmount" },
+                  totalCommissionEarned: { $sum: "$commissionAmount" },
+                  totalDealerEarnings: { $sum: "$dealerEarnings" },
                 },
               },
             ],
@@ -274,6 +270,7 @@ const getFinanceSummary = async (req, res) => {
       totalBookingValue: 0,
       totalTaxCollected: 0,
       totalCommissionEarned: 0,
+      totalDealerEarnings: 0,
     };
 
     // Map withdrawal stats into named buckets
@@ -299,9 +296,8 @@ const getFinanceSummary = async (req, res) => {
     const totalBookingValue = parseFloat((bStats.totalBookingValue || 0).toFixed(2));
     const totalTaxCollected = parseFloat((bStats.totalTaxCollected || 0).toFixed(2));
     const totalCommissionEarned = parseFloat((bStats.totalCommissionEarned || 0).toFixed(2));
-    const totalDealerEarnings = parseFloat(
-      (totalBookingValue + totalTaxCollected - totalCommissionEarned).toFixed(2)
-    );
+    // Read directly from the stored snapshot — never re-derived by subtraction.
+    const totalDealerEarnings = parseFloat((bStats.totalDealerEarnings || 0).toFixed(2));
 
     console.log('[financeSummary] aggregation complete —', {
       totalBookingValue,
@@ -353,9 +349,9 @@ const getFinanceSummary = async (req, res) => {
 // Per dealer row:
 //   dealerName          shopName or ownerName
 //   walletBalance       live Vendor.wallet
-//   totalBookingAmount  sum of totalBill for walletSettled bookings
-//   totalCommissionPaid totalBookingAmount × commissionRate / 100
-//   totalTaxPaid        sum of Booking.tax for walletSettled bookings
+//   totalBookingAmount  sum of Booking.subtotal for walletSettled bookings
+//   totalCommissionPaid sum of each booking's own frozen Booking.commissionAmount
+//   totalTaxPaid        sum of Booking.taxAmount for walletSettled bookings
 //   totalWithdrawals    sum of withdrawal amounts (non-REJECTED, non-FAILED)
 //   bookingCount        number of settled bookings
 //
@@ -383,7 +379,8 @@ const getDealerWalletsSummary = async (req, res) => {
         { $skip: skip },
         { $limit: limitNum },
 
-        // Settled booking stats per dealer
+        // Settled booking stats per dealer — read straight from each
+        // booking's immutable pricing snapshot, never Vendor.commission.
         {
           $lookup: {
             from: "bookings",
@@ -398,8 +395,9 @@ const getDealerWalletsSummary = async (req, res) => {
               {
                 $group: {
                   _id: null,
-                  totalBookingAmount: { $sum: "$totalBill" },
-                  totalTaxPaid: { $sum: "$tax" },
+                  totalBookingAmount: { $sum: "$subtotal" },
+                  totalTaxPaid: { $sum: "$taxAmount" },
+                  totalCommissionPaid: { $sum: "$commissionAmount" },
                   bookingCount: { $sum: 1 },
                 },
               },
@@ -440,7 +438,6 @@ const getDealerWalletsSummary = async (req, res) => {
             phone: 1,
             email: 1,
             walletBalance: "$wallet",
-            commissionRate: "$commission",
             bookingStats: { $arrayElemAt: ["$bookingStats", 0] },
             walletStats: 1,
           },
@@ -456,10 +453,9 @@ const getDealerWalletsSummary = async (req, res) => {
       const totalTaxPaid = bs.totalTaxPaid || 0;
       const bookingCount = bs.bookingCount || 0;
 
-      // Commission derived from settled booking totals × dealer rate
-      const totalCommissionPaid = parseFloat(
-        ((totalBookingAmount * (d.commissionRate || 0)) / 100).toFixed(2)
-      );
+      // Read directly from each booking's stored commissionAmount snapshot —
+      // never re-derived from the dealer's current commission rate.
+      const totalCommissionPaid = parseFloat((bs.totalCommissionPaid || 0).toFixed(2));
 
       // Withdrawal total from wallet ledger
       const wdStat = (d.walletStats || []).find((ws) => ws._id === "withdrawal");
@@ -570,6 +566,9 @@ const getDealerWallets = async (req, res) => {
     const [result] = await Vendor.aggregate([
       { $match: matchStage },
       {
+        // Read straight from each booking's immutable pricing snapshot —
+        // never Vendor.commission — so this report never changes just
+        // because a dealer edited their rate after the fact.
         $lookup: {
           from: "bookings",
           let: { dealerId: "$_id" },
@@ -578,8 +577,9 @@ const getDealerWallets = async (req, res) => {
             {
               $group: {
                 _id: null,
-                totalBookingAmount: { $sum: "$totalBill" },
-                totalTaxPaid: { $sum: "$tax" },
+                totalBookingAmount: { $sum: "$subtotal" },
+                totalTaxPaid: { $sum: "$taxAmount" },
+                totalDealerEarnings: { $sum: "$dealerEarnings" },
                 bookingCount: { $sum: 1 },
               },
             },
@@ -615,6 +615,7 @@ const getDealerWallets = async (req, res) => {
         $addFields: {
           totalBookingAmount: { $ifNull: ["$bookingStat.totalBookingAmount", 0] },
           totalTaxPaid: { $ifNull: ["$bookingStat.totalTaxPaid", 0] },
+          totalDealerEarnings: { $ifNull: ["$bookingStat.totalDealerEarnings", 0] },
           bookingCount: { $ifNull: ["$bookingStat.bookingCount", 0] },
           lastTransactionDate: { $arrayElemAt: ["$walletFacet.last.createdAt", 0] },
           totalWithdrawn: {
@@ -648,14 +649,10 @@ const getDealerWallets = async (req, res) => {
         },
       },
       {
-        // totalEarnings = Customer Total − Commission = (Subtotal + Tax) − (Subtotal × commission%)
+        // totalEarnings is the sum of each booking's own stored dealerEarnings
+        // snapshot — never recomputed from the dealer's current commission rate.
         $addFields: {
-          totalEarnings: {
-            $subtract: [
-              { $add: ["$totalBookingAmount", "$totalTaxPaid"] },
-              { $multiply: ["$totalBookingAmount", { $divide: [{ $ifNull: ["$commission", 0] }, 100] }] },
-            ],
-          },
+          totalEarnings: "$totalDealerEarnings",
         },
       },
       { $sort: { [sortField]: sortDir } },
@@ -757,8 +754,10 @@ const getDealerWalletDetails = async (req, res) => {
         {
           $group: {
             _id: null,
-            totalBookingAmount: { $sum: "$totalBill" },
-            totalTaxPaid: { $sum: "$tax" },
+            totalBookingAmount: { $sum: "$subtotal" },
+            totalTaxPaid: { $sum: "$taxAmount" },
+            totalCommissionPaid: { $sum: "$commissionAmount" },
+            totalDealerEarnings: { $sum: "$dealerEarnings" },
             bookingCount: { $sum: 1 },
           },
         },
@@ -781,13 +780,21 @@ const getDealerWalletDetails = async (req, res) => {
       Wallet.countDocuments({ dealer_id: dealerObjectId, transaction_type: "withdrawal" }),
     ]);
 
-    const bStats = bookingStats[0] || { totalBookingAmount: 0, totalTaxPaid: 0, bookingCount: 0 };
+    const bStats = bookingStats[0] || {
+      totalBookingAmount: 0,
+      totalTaxPaid: 0,
+      totalCommissionPaid: 0,
+      totalDealerEarnings: 0,
+      bookingCount: 0,
+    };
     const totalBookingAmount = bStats.totalBookingAmount || 0;
     const totalTaxPaid = bStats.totalTaxPaid || 0;
+    // dealer.commission is shown to the admin as the dealer's *current* rate
+    // (display only) — the actual paid/earnings totals below come from each
+    // booking's own frozen snapshot, never this current rate.
     const commissionRate = dealer.commission || 0;
-    const totalCommissionPaid = parseFloat(((totalBookingAmount * commissionRate) / 100).toFixed(2));
-    // Customer Total − Commission = (Subtotal + Tax) − Commission
-    const lifetimeEarnings = parseFloat((totalBookingAmount + totalTaxPaid - totalCommissionPaid).toFixed(2));
+    const totalCommissionPaid = parseFloat((bStats.totalCommissionPaid || 0).toFixed(2));
+    const lifetimeEarnings = parseFloat((bStats.totalDealerEarnings || 0).toFixed(2));
 
     const totalWithdrawals = sumWalletBucket(walletBuckets, "withdrawal", APPROVED_STATUSES);
     const pendingBalance = sumWalletBucket(walletBuckets, "withdrawal", ["PENDING", "IN_PROGRESS"]);

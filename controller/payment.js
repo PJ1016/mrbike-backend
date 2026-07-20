@@ -23,6 +23,7 @@ const API_KEY_ID = process.env.API_KEY_ID_RAZO;
 const API_KEY_SECRET = process.env.API_KEY_SECRET_RAZO;
 const Customer = require("../models/customer_model");
 const Bill = require("../models/billSchema");
+const { PRICING_WRITE_BYPASS_FLAG } = require("../services/pricingEngine");
 
 const CASHFREE_BASE_URL =
     process.env.CASHFREE_ENV === "production"
@@ -374,20 +375,58 @@ const generateBill = async (payment) => {
             });
         }
 
-        // Pickup/drop charges always come from the dealer's Admin-configured
-        // settings — never hardcoded — and only apply when this booking
-        // actually includes a pickup/drop (booking.pickupAndDropId set).
-        const dealer = await Dealer.findById(booking.dealer_id)
-            .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
-            .lean();
+        // Pricing is the frozen snapshot taken by pricingEngine at booking
+        // creation (controller/booking.js#createBooking) — NOT recomputed
+        // from the dealer's current settings. A dealer editing their tax/
+        // commission/charges after a booking was created must never change
+        // that booking's bill. Bookings created before this snapshot existed
+        // (no pricingVersion) fall back to the legacy recompute-from-current-
+        // dealer-settings path for backward compatibility.
+        //
+        // Detection is `pricingVersion` presence ONLY — never
+        // `parseFloat(field) || fallback` on the individual fields, since a
+        // legitimately-zero value (e.g. a free service, 0% tax) would then
+        // wrongly fall through to the legacy recompute branch below.
+        const hasPricingSnapshot = Boolean(booking.pricingVersion);
 
-        const hasPickupDrop = Boolean(booking.pickupAndDropId);
-        const pickupCharge = hasPickupDrop && dealer?.providesPickup
-            ? (parseFloat(dealer.pickupCharges) || 0)
-            : 0;
-        const dropCharge = hasPickupDrop && dealer?.providesDrop
-            ? (parseFloat(dealer.dropCharges) || 0)
-            : 0;
+        let pickupCharge, dropCharge, taxRate, taxAmount, totalAmount, commissionRate, commissionAmount, dealerEarnings;
+
+        if (hasPricingSnapshot) {
+            pickupCharge = Number(booking.pickupCharges);
+            dropCharge = Number(booking.dropCharges);
+            subtotal = Number(booking.subtotal);
+            taxRate = Number(booking.taxRate);
+            taxAmount = Number(booking.taxAmount);
+            totalAmount = Number(booking.customerTotal);
+            commissionRate = Number(booking.commissionRate);
+            commissionAmount = Number(booking.commissionAmount);
+            dealerEarnings = Number(booking.dealerEarnings);
+        } else {
+            // Legacy path (pre pricing-engine bookings) — pickup/drop charges
+            // come from the dealer's Admin-configured settings.
+            const dealer = await Dealer.findById(booking.dealer_id)
+                .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+                .lean();
+
+            const hasPickupDrop = Boolean(booking.pickupAndDropId);
+            pickupCharge = hasPickupDrop && dealer?.providesPickup
+                ? (parseFloat(dealer.pickupCharges) || 0)
+                : 0;
+            dropCharge = hasPickupDrop && dealer?.providesDrop
+                ? (parseFloat(dealer.dropCharges) || 0)
+                : 0;
+
+            // Subtotal = Service Charges + Pickup Charges (if selected) + Drop Charges (if selected)
+            subtotal += pickupCharge + dropCharge;
+
+            taxRate = parseFloat(dealer?.tax) || 0;
+            taxAmount = (subtotal * taxRate) / 100;
+            totalAmount = subtotal + taxAmount; // Customer Total = Subtotal + Tax
+
+            commissionRate = parseFloat(dealer?.commission) || 0;
+            commissionAmount = parseFloat(((subtotal * commissionRate) / 100).toFixed(2));
+            dealerEarnings = parseFloat((totalAmount - commissionAmount).toFixed(2));
+        }
 
         if (pickupCharge > 0) {
             services.push({ name: "Pickup Charges", price: pickupCharge, quantity: 1, total: pickupCharge });
@@ -395,19 +434,6 @@ const generateBill = async (payment) => {
         if (dropCharge > 0) {
             services.push({ name: "Drop Charges", price: dropCharge, quantity: 1, total: dropCharge });
         }
-
-        // Subtotal = Service Charges + Pickup Charges (if selected) + Drop Charges (if selected)
-        subtotal += pickupCharge + dropCharge;
-
-        // Tax rate always comes from the dealer's Admin-configured rate — never hardcoded
-        const taxRate = parseFloat(dealer?.tax) || 0;
-        const taxAmount = (subtotal * taxRate) / 100;
-        const totalAmount = subtotal + taxAmount; // Customer Total = Subtotal + Tax
-
-        // Commission = Subtotal × Dealer.commission ; Dealer Earnings = Customer Total − Commission
-        const commissionRate = parseFloat(dealer?.commission) || 0;
-        const commissionAmount = parseFloat(((subtotal * commissionRate) / 100).toFixed(2));
-        const dealerEarnings = parseFloat((totalAmount - commissionAmount).toFixed(2));
 
         // Generate bill number
         const billNumber = `BILL-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
@@ -449,19 +475,32 @@ const generateBill = async (payment) => {
         await bill.save();
         console.log(`✅ Bill generated successfully: ${billNumber} for booking: ${payment.booking_id}`);
 
-        // Update booking with bill generated flag.
-        // totalBill is the commission base for walletSettlement.js and
-        // adminFinance.js, so it must reflect the full Subtotal (service +
-        // pickup + drop charges), not just service charges.
-        await Booking.findByIdAndUpdate(payment.booking_id, {
-            $set: {
-                billGenerated: true,
-                tax: taxAmount,
-                totalBill: subtotal,
-                pickupCharges: pickupCharge,
-                dropCharges: dropCharge
-            }
-        });
+        if (hasPricingSnapshot) {
+            // Pricing fields are already correct and immutable — only the
+            // non-pricing billGenerated flag needs to move. No pricing write,
+            // so no bypass flag needed; the schema guard never even engages.
+            await Booking.findByIdAndUpdate(payment.booking_id, {
+                $set: { billGenerated: true },
+            });
+        } else {
+            // Legacy backfill only: this booking predates the pricing snapshot,
+            // so this is the one-time derivation that establishes tax/totalBill/
+            // pickup/drop for it. Explicitly authorized past the immutability
+            // guard — never do this for a booking that already has a snapshot.
+            await Booking.findByIdAndUpdate(
+                payment.booking_id,
+                {
+                    $set: {
+                        billGenerated: true,
+                        tax: taxAmount,
+                        totalBill: subtotal,
+                        pickupCharges: pickupCharge,
+                        dropCharges: dropCharge,
+                    },
+                },
+                { [PRICING_WRITE_BYPASS_FLAG]: true }
+            );
+        }
 
         return bill;
 
@@ -742,7 +781,6 @@ const createCheckoutUrl = async (req, res) => {
         });
 
         const {
-            orderAmount,
             orderCurrency = "INR",
             user_id,
             dealer_id,
@@ -754,10 +792,27 @@ const createCheckoutUrl = async (req, res) => {
             payment_by = "user",
         } = req.body;
 
-        if (!orderAmount || !user_id || !dealer_id || !booking_id) {
+        // orderAmount is intentionally NOT read from req.body — the server is
+        // the only authority on what a booking costs. See services/pricingEngine.js.
+        if (!user_id || !dealer_id || !booking_id) {
             return res.status(400).json({
                 success: false,
                 message: "Missing required fields",
+            });
+        }
+
+        const bookingForCharge = await Booking.findById(booking_id);
+        if (!bookingForCharge) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // Server always charges Booking.customerTotal - Booking.discountAmount
+        // (the `amountDue` virtual) — never a client-supplied amount.
+        const orderAmount = bookingForCharge.amountDue;
+        if (!(orderAmount > 0)) {
+            return res.status(400).json({
+                success: false,
+                message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
             });
         }
 
@@ -869,7 +924,6 @@ const createCheckoutUrl = async (req, res) => {
 const createCheckoutSession = async (req, res) => {
     try {
         const {
-            amount,
             user_id,
             dealer_id,
             booking_id,
@@ -878,11 +932,13 @@ const createCheckoutSession = async (req, res) => {
             customer_name = "Customer"
         } = req.body;
 
-        // Validate required fields
-        if (!amount || !user_id || !dealer_id || !booking_id || !customer_email) {
+        // Validate required fields — `amount` is intentionally NOT accepted
+        // from req.body. The server is the only authority on what a booking
+        // costs; see services/pricingEngine.js.
+        if (!user_id || !dealer_id || !booking_id || !customer_email) {
             return res.status(400).json({
                 success: false,
-                message: "Missing required fields: amount, user_id, dealer_id, booking_id, customer_email"
+                message: "Missing required fields: user_id, dealer_id, booking_id, customer_email"
             });
         }
 
@@ -892,6 +948,16 @@ const createCheckoutSession = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: "Booking not found"
+            });
+        }
+
+        // Server always charges Booking.customerTotal - Booking.discountAmount
+        // (the `amountDue` virtual) — never a client-supplied amount.
+        const amount = booking.amountDue;
+        if (!(amount > 0)) {
+            return res.status(400).json({
+                success: false,
+                message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
             });
         }
 
@@ -976,7 +1042,6 @@ const createCheckoutSession = async (req, res) => {
 const createPaymentLink = async (req, res) => {
     try {
         const {
-            orderAmount,
             orderCurrency = "INR",
             user_id,
             dealer_id,
@@ -986,19 +1051,36 @@ const createPaymentLink = async (req, res) => {
             customer_name,
         } = req.body;
 
-        if (!orderAmount || !user_id || !dealer_id || !booking_id) {
+        // orderAmount is intentionally NOT read from req.body — the server is
+        // the only authority on what a booking costs. See services/pricingEngine.js.
+        if (!user_id || !dealer_id || !booking_id) {
             return res.status(400).json({
                 success: false,
-                message: "Missing required fields (orderAmount, user_id, dealer_id, booking_id)",
+                message: "Missing required fields (user_id, dealer_id, booking_id)",
             });
         }
 
-        // 🧠 Update booking immediately — mark payment initiated
+        const bookingForCharge = await Booking.findById(booking_id);
+        if (!bookingForCharge) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // Server always charges Booking.customerTotal - Booking.discountAmount
+        // (the `amountDue` virtual) — never a client-supplied amount.
+        const chargeAmount = bookingForCharge.amountDue;
+        if (!(chargeAmount > 0)) {
+            return res.status(400).json({
+                success: false,
+                message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
+            });
+        }
+
+        // 🧠 Update booking immediately — mark payment initiated. Pricing
+        // fields are never touched here; they were fixed at booking creation.
         await Booking.findByIdAndUpdate(booking_id, {
             $set: {
                 billStatus: "pending",
                 status: "payment",
-                totalBill: orderAmount,
             },
         });
 
@@ -1009,7 +1091,7 @@ const createPaymentLink = async (req, res) => {
                 customer_name: customer_name || "Customer",
                 customer_phone: customer_phone || "9999999999",
             },
-            link_amount: parseFloat(orderAmount),
+            link_amount: chargeAmount,
             link_currency: orderCurrency,
             link_partial_payments: false,
             link_auto_reminders: true,
@@ -1049,7 +1131,7 @@ const createPaymentLink = async (req, res) => {
             cf_order_id: Date.now(),
             dealer_id,
             user_id,
-            orderAmount,
+            orderAmount: chargeAmount,
             order_currency: orderCurrency,
             payment_type: "ONLINE",
             order_status: paymentData ? "PENDING" : "FAILED", // depends on Cashfree response

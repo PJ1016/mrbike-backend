@@ -582,8 +582,10 @@ const GetwalletInfo = async (req, res) => {
 
 
 async function calculateDealerAmount(dealer, orderAmount) {
-  // Calculate percentage amount for dealer
-  const percentageAmount = (dealer.commission / 100) * orderAmount;
+  // Commission math delegated to the pricing engine — single source of
+  // truth for all monetary calculations (services/pricingEngine.js).
+  const { round2 } = require("../services/pricingEngine");
+  const percentageAmount = round2((Number(dealer.commission) / 100) * orderAmount);
   dealer.wallet += orderAmount - percentageAmount;
   await dealer.save();
 }

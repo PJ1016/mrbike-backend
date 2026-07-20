@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const booking = require("../models/Booking");
-const additionaloptions = require("../models/additionalOptionsModel");
 const AdditionalService = require("../models/additionalServiceSchema");
 const service = require("../models/service_model");
 const bike = require("../models/bikeModel");
@@ -18,6 +17,14 @@ const UserBike = require("../models/userBikeModel");
 const AdminService = require("../models/adminService");
 const Customer = require("../models/customer_model");
 const Vendor = require("../models/dealerModel");
+const {
+  computePriceBreakdown,
+  resolveServiceAmount,
+  applyBreakdownToBooking,
+  applyRewardDiscount,
+  TRANSPORT_OPTIONS,
+  PricingError,
+} = require("../services/pricingEngine");
 
 async function checkPermission(user_id, requiredPermission) {
   try {
@@ -42,357 +49,23 @@ async function checkPermission(user_id, requiredPermission) {
   }
 }
 
+// DEPRECATED — legacy booking-creation path. Computed its own price from
+// req.body.estimated_cost / a naive per-service price sum with no dealer
+// validation, no tax/commission math, and no pricing snapshot — exactly the
+// client-driven pricing this backend hardening pass exists to eliminate.
+// Also already broken: the document it builds omits the schema-required
+// user_id/dealer_id/userBike_id fields, so booking.create() would throw a
+// validation error before ever persisting. Audited: no client (User App,
+// Dealer App, Admin UI) calls /addbooking/:id. Disabled rather than fixed —
+// live booking creation is createBooking() below, which routes through
+// services/pricingEngine.js.
 async function addbooking(req, res) {
-
-
-  try {
-
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
-    const user_type = data.user_type;
-    const type = data.type;
-    if (user_id == null || user_type != 1 && user_type != 4) {
-      var response = {
-        status: 401,
-        message: "admin is un-authorised !",
-      };
-      return res.status(401).send(response);
-    }
-
-    const customer = await customers.findById(user_id);
-    if (!customer) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-    const missingProfileFields = getMissingProfileFields(customer);
-    if (missingProfileFields.length > 0) {
-      return res.status(400).json({
-        success: false,
-        errorCode: "PROFILE_INCOMPLETE",
-        message: "Please complete your profile before booking a service.",
-        missingFields: missingProfileFields,
-      });
-    }
-
-    // Log the incoming request body
-    console.log("=== CREATE BOOKING REQUEST ===");
-    console.log("Request body:", JSON.stringify(req.body, null, 2));
-    console.log("User ID:", user_id);
-    console.log("Services array:", req.body.services);
-    console.log("Additional services:", req.body.additionalServices);
-    console.log("Estimated cost:", req.body.estimated_cost);
-    console.log("================================");
-
-    // let services = await service.findById(req.params.id)
-    // let services = await service.findById(req.params.id)
-    const servicelist = req.body.services || req.body.Servicelist;
-    const dealerIdToCheck = servicelist[0]?.dealerId;
-
-
-    if (!servicelist.every(service => service.dealerId === dealerIdToCheck)) {
-      return res.status(400).json({ message: 'All dealerId should be from the same dealer.' });
-    }
-
-    // Fetch service details to calculate pricing
-    let totalServicePrice = 0;
-    let serviceDetails = [];
-    
-    if (servicelist && servicelist.length > 0) {
-      try {
-        // Fetch all services to get their pricing
-        const AdminService = require("../models/adminService");
-        const fetchedServices = await AdminService.find({ _id: { $in: servicelist } }).lean();
-        
-        console.log("Fetched services:", fetchedServices);
-        
-        totalServicePrice = fetchedServices.reduce((sum, svc) => {
-          console.log(`Service ${svc._id}: price = ${svc.price}`);
-          return sum + (svc.price || 0);
-        }, 0);
-        
-        serviceDetails = fetchedServices;
-        console.log("Total service price calculated:", totalServicePrice);
-      } catch (err) {
-        console.log("Error fetching service details:", err.message);
-      }
-    }
-
-    // Use calculated price or fallback to estimated_cost
-    const finalTotalBill = totalServicePrice > 0 ? totalServicePrice : (req.body.estimated_cost || 0);
-    console.log("Final total bill:", finalTotalBill);
-
-
-    // const serviceIds = servicelist.map(service => service._id);
-    // console.log(serviceIds);
-
-    // // Check if any of the services do not exist
-    // const nonExistingServices = await service.find({ _id: { $nin: serviceIds } });
-
-    // if (nonExistingServices.length > 0) {
-    //   console.log(`Services not found for IDs:`);
-    //   const nonExistingServiceIds = nonExistingServices.map(service => service._id.toString());
-    //   res.status(400).json({ error: `Services not found for IDs: ${nonExistingServiceIds.join(', ')}` });
-    //   return;
-    // }
-
-
-    // if (!services) {
-    //   res.status(201).json({ error: "No Service exists" })
-    //   return;
-    // }
-
-    const { bullet_points, additonal_options, bike_id, area, city, address, description, estimated_cost, Servicelist, additonal_data_moveable } = req.body;
-
-    let bikes = await bike.findById(bike_id)
-    if (!bikes) {
-      res.status(201).json({ error: "No Bike Found" })
-      return;
-    }
-
-    const dealers = await Vendor.find({ id: req.params.id }).exec();
-
-    const timeout = 3 * 60 * 1000;
-    // const timeout = 20 * 1000;
-
-    // console.log(dealers);
-
-    if (additonal_options) {
-      let extra_charges = 0;
-      let count = 0;
-      let size = additonal_options.length
-
-      if (size > 0) {
-        await additonal_options.forEach(data => {
-          additionaloptions.find({ name: data }, async (err, datas) => {
-            extra_charges += datas[0].cost
-            count++
-            //console.log(extra_charges);
-            if (count == size) {
-              const data = {
-                // service_id: services._id,
-                services: servicelist,
-                bullet_points: bullet_points,
-                additonal_options: additonal_options,
-                model: bikes.model,
-                brand: bikes.name,
-                bike_charge: bikes.extra_charges,
-                area: area.toLowerCase(),
-                city: city.toLowerCase(),
-                address: address,
-                description: description,
-                totalBill: finalTotalBill,
-                created_by: user_id,
-                assigned_to: dealers[0].name,
-                assigned_toid: dealers[0].id,
-                extra_charges: dealers[0].extra_charges,
-                dealer_shop_name: dealers[0].shop,
-                additonal_data_moveable: additonal_data_moveable,
-              };
-
-              const bookingresponce = await booking.create(data);
-
-
-
-              if (bookingresponce) {
-
-                // Add booking for tracking
-                const datas = {
-                  // service_id: services._id,
-                  services: Servicelist,
-                  booking_id: bookingresponce._id,
-                  user_id: user_id,
-                  users_id: customer?.id
-                }
-                const traking = await Tracking.create(datas)
-                setTimeout(async () => {
-                  const updatedBooking = await booking.findById(bookingresponce._id);
-
-                  if (updatedBooking && updatedBooking.status === 'pending') {
-                    await booking.findByIdAndUpdate(bookingresponce._id, { status: 'rejected' });
-                    await Tracking.updateOne({ _id: traking._id }, { $set: { status: 'rejected' } });
-                    Notification(customer.device_token, `Sorry ${customer.name},our Provider is buzzy now, Booking is canceled for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`, customer.id)
-                    console.log(`Booking ${bookingresponce._id} automatically rejected after 3 minutes.`);
-                  }
-                  // console.log({message : "booking 1111111111",traking,customer,});
-                  // Notification(dealers[0].device_token, `Hi ${dealers.name}, New Booking is Arrived for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`)
-                }, timeout);
-
-                // send Push notification to  nearer dealer 
-                if (dealers) {
-                  Notification(dealers[0].device_token, `Hi ${data.name}, New Booking is Arrived for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`, dealers[0].id)
-                }
-
-                var response = {
-                  status: 200,
-                  message: "User Booking successfull",
-                  data: bookingresponce,
-                  image_base_url: process.env.BASE_URL,
-                };
-                return res.status(200).send(response);
-              } else {
-                var response = {
-                  status: 201,
-                  message: "Unable to add Booking",
-                };
-                return res.status(201).send(response);
-              }
-            }
-          })
-        })
-      } else {
-        const data = {
-          // service_id: services._id,
-          services: servicelist,
-          bullet_points: bullet_points,
-          additonal_options: additonal_options,
-          model: bikes.model,
-          brand: bikes.name,
-          bike_charge: bikes.extra_charges,
-          area: area.toLowerCase(),
-          city: city.toLowerCase(),
-          address: address,
-          description: description,
-          totalBill: finalTotalBill,
-          created_by: user_id,
-          assigned_to: dealers[0].name,
-          assigned_toid: dealers[0].id,
-          extra_charges: dealers[0].extra_charges,
-          dealer_shop_name: dealers[0].shop,
-          additonal_data_moveable,
-        };
-        const bookingresponce = await booking.create(data);
-
-        if (bookingresponce) {
-
-          // Add booking for tracking
-          const datas = {
-            // service_id: services._id,
-            services: Servicelist,
-            booking_id: bookingresponce._id,
-            user_id: user_id,
-            users_id: customer?.id
-          }
-          const traking = await Tracking.create(datas)
-          setTimeout(async () => {
-            const updatedBooking = await booking.findById(bookingresponce._id);
-
-            if (updatedBooking && updatedBooking.status === 'pending') {
-              await booking.findByIdAndUpdate(bookingresponce._id, { status: 'rejected' });
-              await Tracking.updateOne({ _id: traking._id }, { $set: { status: 'rejected' } });
-              Notification(customer.device_token, `Sorry ${customer.name},our Provider is buzzy now, Booking is canceled for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`, customer.id)
-              console.log(`Booking ${bookingresponce._id} automatically rejected after 3 minutes.`);
-            }
-            // console.log({message : "booking 2222222",traking,customer,});
-          }, timeout);
-
-
-          console.log("dealers11", dealers);
-
-          // send Push notification to  nearer dealer 
-          if (dealers) {
-            Notification(dealers[0].device_token, `Hi ${dealers.name}, New Booking is Arrived for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`, dealers[0].id)
-            // dealers.map((data, index) => {
-            // })
-          }
-
-
-          var response = {
-            status: 200,
-            message: "User Booking successfull",
-            data: bookingresponce,
-            image_base_url: process.env.BASE_URL,
-          };
-          return res.status(200).send(response);
-        } else {
-          var response = {
-            status: 201,
-            message: "Unable to add Booking",
-          };
-          return res.status(201).send(response);
-        }
-      }
-    }
-    else {
-      const data = {
-        // service_id: services._id,
-        services: servicelist,
-        bullet_points: bullet_points,
-        //additonal_options:additonal_options,
-        model: bikes.model,
-        brand: bikes.name,
-        bike_charge: bikes.extra_charges,
-        area: area.toLowerCase(),
-        city: city.toLowerCase(),
-        address: address,
-        description: description,
-        totalBill: finalTotalBill,
-        created_by: user_id,
-        assigned_to: dealers[0].name,
-        assigned_toid: dealers[0].id,
-        extra_charges: dealers[0].extra_charges,
-        dealer_shop_name: dealers[0].shop,
-        additonal_data_moveable,
-      };
-      const bookingresponce = await booking.create(data);
-
-
-      if (bookingresponce) {
-
-        // Add booking for tracking
-        const datas = {
-          // service_id: services._id,
-          services: Servicelist,
-          booking_id: bookingresponce._id,
-          user_id: user_id,
-          users_id: customer?.id
-        }
-        const traking = await Tracking.create(datas)
-        setTimeout(async () => {
-          const updatedBooking = await booking.findById(bookingresponce._id);
-
-          if (updatedBooking && updatedBooking.status === 'pending') {
-            await booking.findByIdAndUpdate(bookingresponce._id, { status: 'rejected' });
-            await Tracking.updateOne({ _id: traking._id }, { $set: { status: 'rejected' } });
-            Notification(customer.device_token, `Sorry ${customer.name},our Provider is buzzy now, Booking is canceled for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`, customer.id)
-            console.log(`Booking ${bookingresponce._id} automatically rejected after 3 minutes.`);
-          }
-          // console.log({message : "booking 3333333",traking,customer,});
-        }, timeout);
-
-        console.log("dealers2", dealers);
-        console.log("dealername", dealers[0].name);
-        const testt = "c9HJP6A2RLqjGzHjemYT6Z:APA91bFrGTGQnL0OdQpcv-8lTJWtlVan7E54ofXhGuUB2Hz2wMwMQ5hq18PQeP8AAS1T1ilNQ3HFI72dBTFMbdT9ts8FJHR0CNYORYQ4sY7RW4HBLo6eInezbEwCyFlDv2LBDZ-uR1GS"
-
-
-        // send Push notification to  nearer dealer 
-        if (dealers) {
-          Notification(dealers[0].device_token, `Hi ${dealers[0].name}, New Booking is Arrived for ${bikes?.name} ${bikes?.model} ${bikes?.bike_cc} Bike`, dealers[0].id)
-          // dealers.map((data, index) => {
-          // })
-        }
-
-        var response = {
-          status: 200,
-          message: "User Booking successfull",
-          data: bookingresponce,
-          image_base_url: process.env.BASE_URL,
-        };
-        return res.status(200).send(response);
-      } else {
-        var response = {
-          status: 201,
-          message: "Unable to add Booking",
-        };
-        return res.status(201).send(response);
-      }
-    }
-  } catch (error) {
-    console.log("error", error);
-    response = {
-      status: 201,
-      message: "Operation was not successful",
-    };
-    return res.status(201).send(response);
-  }
+  return res.status(410).json({
+    success: false,
+    message:
+      "Deprecated. /addbooking/:id never computed pricing safely and has been disabled. " +
+      "Use POST /bikedoctor/bookings/createBooking, which prices bookings via services/pricingEngine.js.",
+  });
 }
 
 async function getbooking(req, res) {
@@ -1121,7 +794,20 @@ async function createBooking(req, res) {
       });
     }
 
-    const { dealer_id, services, pickupAndDropId, userBike_id, pickupDate, scheduleDate, timeSlot, pickupAddress } = req.body;
+    const {
+      dealer_id,
+      services,
+      additionalServices,
+      pickupAndDropId,
+      userBike_id,
+      pickupDate,
+      scheduleDate,
+      timeSlot,
+      pickupAddress,
+    } = req.body;
+    // transportOption is optional for backward compatibility with clients
+    // that predate this field (see legacy-inference block below).
+    let { transportOption } = req.body;
 
     // ── 3. Field-level validation logging ────────────────────────────────────
     console.log('[createBooking] Field check — dealer_id:', dealer_id, '| valid ObjectId:', mongoose.Types.ObjectId.isValid(dealer_id));
@@ -1137,58 +823,78 @@ async function createBooking(req, res) {
       return res.status(400).json({ success: false, message: "User bike is required" });
     }
 
-    // Calculate initial bill based on services and bike CC
-    let totalBill = 0;
+    // ── Validate Dealer ───────────────────────────────────────────────────────
+    const dealer = await Vendor.findById(dealer_id)
+      .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+      .lean();
+    if (!dealer) {
+      return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+
+    // ── Validate Services (resolve BaseService IDs -> AdminService docs) ──────
     // User App sends BaseService IDs; resolve to AdminService IDs for correct pricing and refs
     let resolvedServiceIds = services;
-    try {
-      const bikeData = await UserBike.findById(userBike_id);
-      console.log("=== Calculating totalBill ===");
-      console.log("Bike found:", !!bikeData);
-      if (bikeData) {
-        console.log("Bike CC:", bikeData.bike_cc);
-        const bikeCC = parseInt(bikeData.bike_cc || 0);
-
-        // Primary: incoming IDs are BaseService IDs — find AdminService for this dealer
-        let serviceDocs = await AdminService.find({
-          base_service_id: { $in: services },
-          dealer_id: dealer_id,
-          isActive: true,
-        });
-        console.log("Services found via base_service_id:", serviceDocs.length);
-
-        // Fallback: IDs may already be AdminService IDs (e.g. other clients)
-        if (serviceDocs.length === 0) {
-          serviceDocs = await AdminService.find({ _id: { $in: services } });
-          console.log("Services found via direct _id:", serviceDocs.length);
-        }
-
-        if (serviceDocs.length > 0) {
-          resolvedServiceIds = serviceDocs.map(s => s._id);
-        }
-
-        serviceDocs.forEach((svc, idx) => {
-          console.log(`Service ${idx}:`, {
-            base_service_id: svc.base_service_id,
-            bikesCount: svc.bikes?.length || 0,
-            bikes: svc.bikes?.map(b => ({ cc: b.cc, price: b.price }))
-          });
-
-          const matchingBike = svc.bikes?.find(b => b.cc === bikeCC);
-          console.log(`Matching bike for CC ${bikeCC}:`, matchingBike);
-
-          if (matchingBike) {
-            totalBill += matchingBike.price;
-            console.log(`Added ${matchingBike.price} to totalBill. New total: ${totalBill}`);
-          }
-        });
-      }
-      console.log("Final totalBill:", totalBill);
-      console.log("---");
-    } catch (priceError) {
-      console.error("Error calculating initial bill:", priceError);
-      // Fallback to 0 if calculation fails
+    let serviceDocs = [];
+    const bikeData = await UserBike.findById(userBike_id);
+    if (!bikeData) {
+      return res.status(400).json({ success: false, message: "User bike not found" });
     }
+    const bikeCC = parseInt(bikeData.bike_cc || 0);
+
+    // Primary: incoming IDs are BaseService IDs — find AdminService for this dealer
+    serviceDocs = await AdminService.find({
+      base_service_id: { $in: services },
+      dealer_id: dealer_id,
+      isActive: true,
+    });
+
+    // Fallback: IDs may already be AdminService IDs (e.g. other clients)
+    if (serviceDocs.length === 0) {
+      serviceDocs = await AdminService.find({ _id: { $in: services } });
+    }
+
+    if (serviceDocs.length === 0) {
+      return res.status(400).json({ success: false, message: "No valid services found for this dealer" });
+    }
+    resolvedServiceIds = serviceDocs.map(s => s._id);
+
+    let additionalServiceDocs = [];
+    if (Array.isArray(additionalServices) && additionalServices.length > 0) {
+      additionalServiceDocs = await AdditionalService.find({ _id: { $in: additionalServices } });
+    }
+
+    // ── Validate Transport Option ──────────────────────────────────────────────
+    // Legacy clients don't send transportOption yet — infer the best-fit
+    // supported option from pickupAndDropId + dealer capabilities so existing
+    // behavior is preserved without erroring. Clients that DO send
+    // transportOption explicitly get the strict Task-2 validation.
+    if (!transportOption) {
+      if (pickupAndDropId) {
+        if (dealer.providesPickup && dealer.providesDrop) transportOption = TRANSPORT_OPTIONS.PICKUP_AND_DROP;
+        else if (dealer.providesPickup) transportOption = TRANSPORT_OPTIONS.PICKUP_ONLY;
+        else if (dealer.providesDrop) transportOption = TRANSPORT_OPTIONS.DROP_ONLY;
+        else transportOption = TRANSPORT_OPTIONS.SELF_VISIT;
+      } else {
+        transportOption = TRANSPORT_OPTIONS.SELF_VISIT;
+      }
+    }
+
+    // ── Call pricingEngine.computePriceBreakdown() ─────────────────────────────
+    let breakdown;
+    try {
+      const serviceAmount = resolveServiceAmount({
+        services: serviceDocs,
+        additionalServices: additionalServiceDocs,
+        bikeCC,
+      });
+      breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer });
+    } catch (pricingError) {
+      if (pricingError instanceof PricingError) {
+        return res.status(400).json({ success: false, message: pricingError.message, code: pricingError.code });
+      }
+      throw pricingError;
+    }
+    console.log("[createBooking] Pricing breakdown:", breakdown);
 
     const pickupOtp = genOtp();
     const deliveryOtp = genOtp();
@@ -1201,13 +907,14 @@ async function createBooking(req, res) {
       pickupAndDropId: pickupAndDropId || null,
       userBike_id,
       pickupDate: pickupDate || null,
-      totalBill,
+      breakdown,
     }, null, 2));
 
     const newBooking = new booking({
       user_id,
       dealer_id,
       services: resolvedServiceIds,
+      additionalServices: additionalServiceDocs.map(s => s._id),
       pickupAndDropId: pickupAndDropId || null,
       userBike_id,
       pickupDate: pickupDate || null,
@@ -1216,11 +923,14 @@ async function createBooking(req, res) {
       pickupAddress: pickupAddress || null,
       pickupOtp,
       deliveryOtp,
-      totalBill,
       status: "pending",
       dealerResponseStatus: "awaiting",
       timerExpiresAt: new Date(Date.now() + 60 * 1000),
     });
+
+    // Single sanctioned path for writing the pricing snapshot onto a Booking
+    // document — see services/pricingEngine.js#applyBreakdownToBooking().
+    applyBreakdownToBooking(newBooking, breakdown);
 
     await newBooking.save();
 
@@ -1262,6 +972,7 @@ async function createBooking(req, res) {
       success: true,
       message: "Booking created successfully",
       data: newBooking,
+      pricing: breakdown,
       pickupOtp,
       deliveryOtp,
       timerExpiresAt: newBooking.timerExpiresAt,
@@ -1361,6 +1072,27 @@ async function getBookingDetails(req, res) {
   }
 }
 
+// Business/logistics fields this endpoint is allowed to touch. Deliberately
+// excludes every pricing snapshot field (serviceAmount, pickupCharges,
+// dropCharges, subtotal, taxRate, taxAmount, customerTotal, commissionRate,
+// commissionAmount, dealerEarnings, discountAmount, pricingVersion,
+// priceSnapshotAt, totalBill, tax) and `status` (status transitions have
+// their own guarded endpoint — updateBookingStatus — with timer/race-condition
+// rules that must not be bypassed here). Pricing is immutable after creation;
+// the schema-level guard in models/Booking.js rejects any attempt to slip a
+// locked field through regardless, but we never even try here.
+const UPDATE_BOOKING_ALLOWED_FIELDS = [
+  "billGenerated",
+  "lastServiceKm",
+  "pickupDate",
+  "scheduleDate",
+  "timeSlot",
+  "pickupAddress",
+  "additionalNotes",
+  "serviceDate",
+  "pickupStatus",
+];
+
 async function updateBooking(req, res) {
   try {
     const { bookingId, ...updateFields } = req.body;
@@ -1374,10 +1106,20 @@ async function updateBooking(req, res) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
+    const rejectedFields = Object.keys(updateFields).filter(
+      (key) => key !== "services" && !UPDATE_BOOKING_ALLOWED_FIELDS.includes(key)
+    );
+    if (rejectedFields.length > 0) {
+      console.warn(`[updateBooking] Ignoring disallowed field(s) on booking ${bookingId}:`, rejectedFields);
+    }
+
     // --- handle `services` specially (these are AdditionalService IDs) ---
+    // Changing them changes what the customer is being charged, so it can
+    // NEVER just patch a total — it must trigger a full pricingEngine recompute
+    // below (see "service list changed" block).
+    let additionalServicesChanged = false;
     if (Object.prototype.hasOwnProperty.call(updateFields, "services")) {
       const services = updateFields.services;
-      delete updateFields.services; // prevent generic setter from overwriting
 
       if (!Array.isArray(services)) {
         return res.status(400).json({
@@ -1388,10 +1130,10 @@ async function updateBooking(req, res) {
 
       // ❌ IMPORTANT: do NOT mirror into existingBooking.services
       //    That field in your schema is for core `service` model, not additionalServices.
-      // existingBooking.services = services; // <-- remove this line if you had it
 
       if (services.length === 0) {
         existingBooking.additionalServices = [];
+        additionalServicesChanged = true;
       } else {
         // validate ids
         const invalid = services.filter((id) => !mongoose.Types.ObjectId.isValid(id));
@@ -1420,34 +1162,53 @@ async function updateBooking(req, res) {
 
         // ✅ Assign ONLY ObjectIds to match your schema
         existingBooking.additionalServices = services.map((id) => new mongoose.Types.ObjectId(id));
+        additionalServicesChanged = true;
       }
     }
 
-    // --- generic field updates (everything except `services`) ---
-    Object.keys(updateFields).forEach((key) => {
+    // --- apply ONLY whitelisted business fields — never a raw field spread ---
+    UPDATE_BOOKING_ALLOWED_FIELDS.forEach((key) => {
       if (updateFields[key] !== undefined) {
         existingBooking[key] = updateFields[key];
       }
     });
 
-    // Recalculate totalBill using per-CC pricing from main + additional services
-    try {
-      const bikeData = await UserBike.findById(existingBooking.userBike_id).select("bike_cc");
-      const bikeCC = parseInt(bikeData?.bike_cc || 0);
-      const resolvePrice = (doc) => {
-        const match = doc.bikes?.find(b => b.cc === bikeCC);
-        return match ? match.price : 0;
-      };
-      const [mainDocs, addlDocs] = await Promise.all([
+    // --- service list changed: resolve services -> pricingEngine.computePriceBreakdown()
+    // -> update ALL pricing snapshot fields together. Never touch totalBill alone. ---
+    if (additionalServicesChanged) {
+      const [dealer, bikeData, mainDocs, addlDocs] = await Promise.all([
+        Vendor.findById(existingBooking.dealer_id)
+          .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+          .lean(),
+        UserBike.findById(existingBooking.userBike_id).select("bike_cc"),
         AdminService.find({ _id: { $in: existingBooking.services } }).select("bikes"),
         AdditionalService.find({ _id: { $in: existingBooking.additionalServices } }).select("bikes"),
       ]);
-      let recalcTotal = 0;
-      mainDocs.forEach(d => { recalcTotal += resolvePrice(d); });
-      addlDocs.forEach(d => { recalcTotal += resolvePrice(d); });
-      existingBooking.totalBill = recalcTotal;
-    } catch (calcErr) {
-      console.error("[updateBooking] totalBill recalculation failed:", calcErr.message);
+
+      if (!dealer) {
+        return res.status(404).json({ success: false, message: "Dealer not found for this booking" });
+      }
+
+      const bikeCC = parseInt(bikeData?.bike_cc || 0);
+      const serviceAmount = resolveServiceAmount({ services: mainDocs, additionalServices: addlDocs, bikeCC });
+
+      let breakdown;
+      try {
+        breakdown = computePriceBreakdown({
+          serviceAmount,
+          transportOption: existingBooking.transportOption,
+          dealer,
+          // Preserve any reward/coupon discount already applied to this booking.
+          discountAmount: existingBooking.discountAmount,
+        });
+      } catch (pricingError) {
+        if (pricingError instanceof PricingError) {
+          return res.status(400).json({ success: false, message: pricingError.message, code: pricingError.code });
+        }
+        throw pricingError;
+      }
+
+      applyBreakdownToBooking(existingBooking, breakdown);
     }
 
     await existingBooking.save();

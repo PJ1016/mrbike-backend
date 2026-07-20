@@ -1,8 +1,29 @@
 const BookingV2 = require("../models/BookingV2");
 const Vendor = require("../../models/dealerModel");
 
+// ── DEPRECATED ──────────────────────────────────────────────────────────────
+// BookingV2 (/api/v2/bookings) accepted a fully client-supplied `totals`
+// object with zero backend pricing computation — the exact "frontend
+// calculates money" pattern the pricing engine (services/pricingEngine.js)
+// exists to eliminate. Audited: no client (User App, Dealer App, Admin UI)
+// references /api/v2/bookings — it is confirmed unused. createBooking is
+// disabled below rather than migrated, since migrating an unused path would
+// be new-feature work outside this hardening pass. Live booking creation is
+// controller/booking.js#createBooking, which routes through pricingEngine.
 // 1. Create Booking
 exports.createBooking = async (req, res) => {
+  return res.status(410).json({
+    status: false,
+    message:
+      "Deprecated. /api/v2/bookings never computed pricing server-side and has been disabled. " +
+      "Use POST /bikedoctor/bookings/createBooking, which prices bookings via services/pricingEngine.js.",
+  });
+};
+
+// Original implementation retained only for reference during the deprecation
+// window — not reachable (see createBooking override above). Do not re-enable
+// without first wiring it through pricingEngine.computePriceBreakdown().
+async function _legacyCreateBooking(req, res) {
   try {
     console.log("=== V2 Create Booking ===");
     console.log("Full request body:", JSON.stringify(req.body, null, 2));
@@ -179,7 +200,11 @@ exports.verifyOtp = async (req, res) => {
 exports.updateBookingStatus = async (req, res) => {
   try {
     const { bookingId } = req.params;
-    const { status, comment, additionalCharges } = req.body;
+    // `additionalCharges` is intentionally NOT accepted from req.body anymore —
+    // it let a client add an arbitrary amount straight onto totals.grandTotal
+    // with no backend validation. BookingV2 is deprecated (see createBooking
+    // above); no replacement pricing path is being added for it here.
+    const { status, comment } = req.body;
 
     const booking = await BookingV2.findOne({ bookingId });
 
@@ -191,10 +216,6 @@ exports.updateBookingStatus = async (req, res) => {
     }
 
     booking.status = status;
-    if (additionalCharges) {
-      booking.additionalCharges = additionalCharges;
-      booking.totals.grandTotal += additionalCharges;
-    }
 
     // Update timeline
     const timelineEntry = booking.timeline.find((t) => t.status === status);

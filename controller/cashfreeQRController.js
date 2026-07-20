@@ -104,20 +104,15 @@ const getCashfreeHeaders = () => ({
  */
 const generateUPIQRCode = async (req, res) => {
   try {
-    const { booking_id, amount, customer_email, customer_phone, customer_name } = req.body
+    // `amount` is intentionally NOT read from req.body — the server is the
+    // only authority on what a booking costs. See services/pricingEngine.js.
+    const { booking_id, customer_email, customer_phone, customer_name } = req.body
 
     // Validation
-    if (!booking_id || !amount) {
+    if (!booking_id) {
       return res.status(400).json({
         success: false,
-        message: "booking_id and amount are required",
-      })
-    }
-
-    if (amount < 1) {
-      return res.status(400).json({
-        success: false,
-        message: "Amount must be at least 1 INR",
+        message: "booking_id is required",
       })
     }
 
@@ -139,6 +134,16 @@ const generateUPIQRCode = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Select ONLINE payment method via /bookings/:bookingId/select-payment-method before generating a QR",
+      })
+    }
+
+    // Server always charges Booking.customerTotal - Booking.discountAmount
+    // (the `amountDue` virtual) — never a client-supplied amount.
+    const amount = booking.amountDue
+    if (!(amount >= 1)) {
+      return res.status(400).json({
+        success: false,
+        message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
       })
     }
 
@@ -286,11 +291,11 @@ const cashfreePaymentLink =
     await payment.save()
     console.log("Payment record saved:", payment._id)
 
-    // Update booking with payment reference
+    // Update booking with payment reference — pricing fields are never
+    // touched here; they were fixed at booking creation (services/pricingEngine.js).
     await Booking.findByIdAndUpdate(booking_id, {
       $set: {
         billStatus: "pending",
-        totalBill: Number.parseFloat(amount),
       },
     })
 

@@ -68,6 +68,22 @@
 // models/Booking.js
 const mongoose = require("mongoose");
 const AutoIncrement = require("mongoose-sequence")(mongoose);
+const {
+  PRICING_SNAPSHOT_FIELDS,
+  PRICING_WRITE_BYPASS_FLAG,
+  round2,
+} = require("../services/pricingEngine");
+
+// Any update-query operator whose payload might carry a locked field name.
+const UPDATE_OPERATORS_TO_INSPECT = ["$set", "$inc", "$push", "$addToSet", "$pull", "$setOnInsert"];
+
+function updateTouchesLockedField(update) {
+  const flatKeys = { ...update };
+  for (const op of UPDATE_OPERATORS_TO_INSPECT) {
+    if (update && update[op]) Object.assign(flatKeys, update[op]);
+  }
+  return PRICING_SNAPSHOT_FIELDS.find((field) => Object.prototype.hasOwnProperty.call(flatKeys, field));
+}
 
 const bookingSchema = new mongoose.Schema(
   {
@@ -128,13 +144,38 @@ const bookingSchema = new mongoose.Schema(
     pickupOtp: { type: Number, default: null },
     deliveryOtp: { type: Number, default: null },
 
+    // Legacy fields — kept for backward compatibility with code that reads
+    // them directly (wallet settlement, admin finance/reporting). Populated
+    // from the pricing snapshot below (totalBill = subtotal, tax = taxAmount).
     tax: { type: Number, default: 0 },
     totalBill: { type: Number, default: 0 },
 
-    // Snapshotted from Dealer.pickupCharges/dropCharges at bill-generation time —
-    // only non-zero when this booking actually includes pickup/drop (pickupAndDropId set).
+    // Snapshotted from Dealer.pickupCharges/dropCharges at pricing time —
+    // only non-zero when the chosen transportOption actually includes them.
     pickupCharges: { type: Number, default: 0 },
     dropCharges: { type: Number, default: 0 },
+
+    // ── Pricing snapshot (services/pricingEngine.js) ──────────────────────────
+    // Computed once by pricingEngine.computePriceBreakdown() at booking
+    // creation and stored permanently. These values are immutable: later
+    // edits to the dealer's tax/commission/charge rates must NEVER change
+    // an already-created booking's pricing.
+    transportOption: {
+      type: String,
+      enum: ["SELF_VISIT", "PICKUP_ONLY", "DROP_ONLY", "PICKUP_AND_DROP"],
+      default: "SELF_VISIT",
+    },
+    serviceAmount: { type: Number, default: 0 },
+    subtotal: { type: Number, default: 0 },
+    taxRate: { type: Number, default: 0 },
+    taxAmount: { type: Number, default: 0 },
+    customerTotal: { type: Number, default: 0 },
+    commissionRate: { type: Number, default: 0 },
+    commissionAmount: { type: Number, default: 0 },
+    dealerEarnings: { type: Number, default: 0 },
+    discountAmount: { type: Number, default: 0 },
+    pricingVersion: { type: Number, default: null },
+    priceSnapshotAt: { type: Date, default: null },
 
     billStatus: {
       type: String,
@@ -218,7 +259,65 @@ bookingSchema.pre("save", async function (next) {
   }
 });
 
+// ── Immutable pricing snapshot guard ────────────────────────────────────────
+// Once a booking exists, its pricing snapshot fields (see
+// services/pricingEngine.js#PRICING_SNAPSHOT_FIELDS) may only change through
+// pricingEngine.applyBreakdownToBooking()/applyRewardDiscount(), which flip
+// $locals.allowPricingWrite right before save(). Any other attempt to set
+// these fields — via mass assignment, a stray `.field = x`, or a raw
+// findOneAndUpdate — is rejected here, regardless of where in the backend it
+// originates. First creation (isNew) is always allowed: that is the one
+// legitimate moment the snapshot is established.
+bookingSchema.pre("save", function (next) {
+  if (this.isNew) return next();
+  if (this.$locals && this.$locals[PRICING_WRITE_BYPASS_FLAG]) return next();
+
+  const lockedField = PRICING_SNAPSHOT_FIELDS.find((field) => this.isModified(field));
+  if (lockedField) {
+    return next(
+      new Error(
+        `Pricing field "${lockedField}" is immutable after booking creation. ` +
+          `Use pricingEngine.applyBreakdownToBooking()/applyRewardDiscount() instead of setting it directly.`
+      )
+    );
+  }
+  next();
+});
+
+// The bypass flag authorizes exactly ONE upcoming save — clear it immediately
+// after every save so a document instance that is held onto and mutated
+// again later in the same request doesn't silently inherit authorization it
+// was never granted for that second write.
+bookingSchema.post("save", function (doc) {
+  if (doc && doc.$locals) {
+    doc.$locals[PRICING_WRITE_BYPASS_FLAG] = false;
+  }
+});
+
+bookingSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function (next) {
+  const options = this.getOptions() || {};
+  if (options[PRICING_WRITE_BYPASS_FLAG]) return next();
+
+  const lockedField = updateTouchesLockedField(this.getUpdate());
+  if (lockedField) {
+    return next(
+      new Error(
+        `Pricing field "${lockedField}" is immutable after booking creation and cannot be set via ` +
+          `findOneAndUpdate/updateOne/updateMany. Use pricingEngine.applyBreakdownToBooking() on a ` +
+          `loaded document, or pass { ${PRICING_WRITE_BYPASS_FLAG}: true } as an explicit, reviewed exception.`
+      )
+    );
+  }
+  next();
+});
+
 bookingSchema.plugin(AutoIncrement, { id: "booking_seq", inc_field: "id" });
+
+// amountDue is always derived, never stored — customerTotal and discountAmount
+// are the only two numbers that can move it, and both are already guarded.
+bookingSchema.virtual("amountDue").get(function () {
+  return round2((this.customerTotal || 0) - (this.discountAmount || 0));
+});
 
 bookingSchema.virtual("vehicleLifecycleStatus").get(function () {
   // 1. Cancelled / terminal states

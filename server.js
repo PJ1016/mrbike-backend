@@ -374,6 +374,7 @@ app.use("/service", require("./routes/serviceRoutes"));
 app.use("/bikedoctor", require("./routes/policyRoutes"));
 app.use("/testmulter", require("./routes/multerRoute"));
 app.use("/ai", require("./routes/geminiRoutes"));
+app.use("/pricing", require("./routes/pricingRoutes"));
 app.use("/api/v2", require("./v2-api/routes/index"));
 app.use("/api/v2", require("./routes/chatbotRoutes"));
 

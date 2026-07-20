@@ -1,3 +1,8 @@
+// DEPRECATED — this model backs /api/v2/bookings, confirmed unused by every
+// client app. Its `totals` field is client-supplied with no backend pricing
+// computation; creation is disabled at the controller level (see
+// v2-api/controllers/bookingController.js#createBooking). Do not build new
+// features against this model — use models/Booking.js + services/pricingEngine.js.
 const mongoose = require("mongoose");
 
 const bookingV2Schema = new mongoose.Schema(
