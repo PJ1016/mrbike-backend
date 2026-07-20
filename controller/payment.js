@@ -374,11 +374,40 @@ const generateBill = async (payment) => {
             });
         }
 
+        // Pickup/drop charges always come from the dealer's Admin-configured
+        // settings — never hardcoded — and only apply when this booking
+        // actually includes a pickup/drop (booking.pickupAndDropId set).
+        const dealer = await Dealer.findById(booking.dealer_id)
+            .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+            .lean();
+
+        const hasPickupDrop = Boolean(booking.pickupAndDropId);
+        const pickupCharge = hasPickupDrop && dealer?.providesPickup
+            ? (parseFloat(dealer.pickupCharges) || 0)
+            : 0;
+        const dropCharge = hasPickupDrop && dealer?.providesDrop
+            ? (parseFloat(dealer.dropCharges) || 0)
+            : 0;
+
+        if (pickupCharge > 0) {
+            services.push({ name: "Pickup Charges", price: pickupCharge, quantity: 1, total: pickupCharge });
+        }
+        if (dropCharge > 0) {
+            services.push({ name: "Drop Charges", price: dropCharge, quantity: 1, total: dropCharge });
+        }
+
+        // Subtotal = Service Charges + Pickup Charges (if selected) + Drop Charges (if selected)
+        subtotal += pickupCharge + dropCharge;
+
         // Tax rate always comes from the dealer's Admin-configured rate — never hardcoded
-        const dealer = await Dealer.findById(booking.dealer_id).select("tax").lean();
         const taxRate = parseFloat(dealer?.tax) || 0;
         const taxAmount = (subtotal * taxRate) / 100;
-        const totalAmount = subtotal + taxAmount;
+        const totalAmount = subtotal + taxAmount; // Customer Total = Subtotal + Tax
+
+        // Commission = Subtotal × Dealer.commission ; Dealer Earnings = Customer Total − Commission
+        const commissionRate = parseFloat(dealer?.commission) || 0;
+        const commissionAmount = parseFloat(((subtotal * commissionRate) / 100).toFixed(2));
+        const dealerEarnings = parseFloat((totalAmount - commissionAmount).toFixed(2));
 
         // Generate bill number
         const billNumber = `BILL-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
@@ -401,9 +430,14 @@ const generateBill = async (payment) => {
             },
             services: services,
             subtotal: subtotal,
+            pickup_charges: pickupCharge,
+            drop_charges: dropCharge,
             tax_amount: taxAmount,
             tax_rate: taxRate,
             total_amount: totalAmount,
+            commission_rate: commissionRate,
+            commission_amount: commissionAmount,
+            dealer_earnings: dealerEarnings,
             payment_details: {
                 payment_method: payment.payment_method || "online",
                 transaction_id: payment.transaction_id,
@@ -416,12 +450,16 @@ const generateBill = async (payment) => {
         console.log(`✅ Bill generated successfully: ${billNumber} for booking: ${payment.booking_id}`);
 
         // Update booking with bill generated flag.
-        // totalBill must stay the pure pre-tax service subtotal — it's the
-        // commission base for walletSettlement.js and adminFinance.js.
+        // totalBill is the commission base for walletSettlement.js and
+        // adminFinance.js, so it must reflect the full Subtotal (service +
+        // pickup + drop charges), not just service charges.
         await Booking.findByIdAndUpdate(payment.booking_id, {
             $set: {
                 billGenerated: true,
-                tax: taxAmount
+                tax: taxAmount,
+                totalBill: subtotal,
+                pickupCharges: pickupCharge,
+                dropCharges: dropCharge
             }
         });
 
@@ -1152,6 +1190,8 @@ const getUserBillDetails = async (req, res) => {
             customer_details: bill.customer_details,
             services: bill.services,
             subtotal: bill.subtotal,
+            pickup_charges: bill.pickup_charges,
+            drop_charges: bill.drop_charges,
             tax_amount: bill.tax_amount,
             tax_rate: bill.tax_rate,
             total_amount: bill.total_amount,

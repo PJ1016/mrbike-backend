@@ -131,6 +131,11 @@ const bookingSchema = new mongoose.Schema(
     tax: { type: Number, default: 0 },
     totalBill: { type: Number, default: 0 },
 
+    // Snapshotted from Dealer.pickupCharges/dropCharges at bill-generation time —
+    // only non-zero when this booking actually includes pickup/drop (pickupAndDropId set).
+    pickupCharges: { type: Number, default: 0 },
+    dropCharges: { type: Number, default: 0 },
+
     billStatus: {
       type: String,
       enum: ["pending", "paid", "cancelled"],

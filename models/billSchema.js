@@ -42,6 +42,14 @@ const billSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
+    pickup_charges: {
+        type: Number,
+        default: 0
+    },
+    drop_charges: {
+        type: Number,
+        default: 0
+    },
     tax_amount: {
         type: Number,
         default: 0
@@ -53,6 +61,18 @@ const billSchema = new mongoose.Schema({
     total_amount: {
         type: Number,
         required: true
+    },
+    commission_rate: {
+        type: Number,
+        default: 0
+    },
+    commission_amount: {
+        type: Number,
+        default: 0
+    },
+    dealer_earnings: {
+        type: Number,
+        default: 0
     },
     payment_details: {
         payment_method: String,

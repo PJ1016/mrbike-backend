@@ -177,8 +177,10 @@ const getPayouts = async (req, res) => {
 //
 // Commission is derived from settled bookings using the dealer's commission rate
 // stored at the time of the booking (Booking.totalBill × Vendor.commission / 100).
+// Booking.totalBill is the Subtotal (service + pickup + drop charges).
 //
-// totalDealerEarnings = totalBookingValue − totalCommissionEarned − totalTaxCollected
+// totalDealerEarnings = (totalBookingValue + totalTaxCollected) − totalCommissionEarned
+//                       i.e. Customer Total − Commission
 //
 const getFinanceSummary = async (req, res) => {
   console.log('[financeSummary] called');
@@ -298,7 +300,7 @@ const getFinanceSummary = async (req, res) => {
     const totalTaxCollected = parseFloat((bStats.totalTaxCollected || 0).toFixed(2));
     const totalCommissionEarned = parseFloat((bStats.totalCommissionEarned || 0).toFixed(2));
     const totalDealerEarnings = parseFloat(
-      (totalBookingValue - totalCommissionEarned - totalTaxCollected).toFixed(2)
+      (totalBookingValue + totalTaxCollected - totalCommissionEarned).toFixed(2)
     );
 
     console.log('[financeSummary] aggregation complete —', {
@@ -646,10 +648,11 @@ const getDealerWallets = async (req, res) => {
         },
       },
       {
+        // totalEarnings = Customer Total − Commission = (Subtotal + Tax) − (Subtotal × commission%)
         $addFields: {
           totalEarnings: {
             $subtract: [
-              { $subtract: ["$totalBookingAmount", "$totalTaxPaid"] },
+              { $add: ["$totalBookingAmount", "$totalTaxPaid"] },
               { $multiply: ["$totalBookingAmount", { $divide: [{ $ifNull: ["$commission", 0] }, 100] }] },
             ],
           },
@@ -783,7 +786,8 @@ const getDealerWalletDetails = async (req, res) => {
     const totalTaxPaid = bStats.totalTaxPaid || 0;
     const commissionRate = dealer.commission || 0;
     const totalCommissionPaid = parseFloat(((totalBookingAmount * commissionRate) / 100).toFixed(2));
-    const lifetimeEarnings = parseFloat((totalBookingAmount - totalTaxPaid - totalCommissionPaid).toFixed(2));
+    // Customer Total − Commission = (Subtotal + Tax) − Commission
+    const lifetimeEarnings = parseFloat((totalBookingAmount + totalTaxPaid - totalCommissionPaid).toFixed(2));
 
     const totalWithdrawals = sumWalletBucket(walletBuckets, "withdrawal", APPROVED_STATUSES);
     const pendingBalance = sumWalletBucket(walletBuckets, "withdrawal", ["PENDING", "IN_PROGRESS"]);

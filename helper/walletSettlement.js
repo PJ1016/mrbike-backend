@@ -5,8 +5,15 @@ const Booking = require("../models/Booking");
 /**
  * Settle dealer wallet for a completed booking.
  *
- * ONLINE: Platform received payment → credit dealer (order - commission).
- * CASH:   Dealer received cash     → debit dealer  (commission only).
+ * Subtotal (bookingDoc.totalBill) already includes pickup/drop charges,
+ * folded in by controller/payment.js#generateBill at bill time.
+ *   Customer Total = Subtotal + Tax
+ *   Commission     = Subtotal × Dealer.commission
+ *   Dealer Earnings = Customer Total − Commission
+ *
+ * ONLINE: Platform received payment → credit dealer the Dealer Earnings.
+ * CASH:   Dealer received cash (the full Customer Total) → debit dealer
+ *         the Commission owed to the platform, leaving them with Dealer Earnings.
  *
  * Idempotent: booking.walletSettled flag prevents running twice.
  *
@@ -24,9 +31,12 @@ async function settleBookingWallet(bookingId, paymentMethod) {
   const dealer = await Vendor.findById(bookingDoc.dealer_id);
   if (!dealer) throw new Error(`Dealer not found for booking: ${bookingId}`);
 
-  const orderAmount = parseFloat(bookingDoc.totalBill) || 0;
+  const orderAmount = parseFloat(bookingDoc.totalBill) || 0; // Subtotal (service + pickup + drop)
+  const taxAmount = parseFloat(bookingDoc.tax) || 0;
+  const customerTotal = parseFloat((orderAmount + taxAmount).toFixed(2));
   const commissionRate = parseFloat(dealer.commission) || 0;
   const commissionAmount = parseFloat(((commissionRate / 100) * orderAmount).toFixed(2));
+  const dealerEarnings = parseFloat((customerTotal - commissionAmount).toFixed(2));
 
   const preBalance = parseFloat(dealer.wallet) || 0;
 
@@ -36,17 +46,17 @@ async function settleBookingWallet(bookingId, paymentMethod) {
   let note;
 
   if (paymentMethod === "ONLINE") {
-    // Platform received payment — credit dealer the net amount
-    txnAmount = parseFloat((orderAmount - commissionAmount).toFixed(2));
+    // Platform received payment — credit dealer their earnings
+    txnAmount = dealerEarnings;
     newBalance = parseFloat((preBalance + txnAmount).toFixed(2));
     txnType = "Credit";
-    note = `Online settlement | Order ₹${orderAmount} | Commission ${commissionRate}% = ₹${commissionAmount} | Net credit ₹${txnAmount}`;
+    note = `Online settlement | Customer Total ₹${customerTotal} | Commission ${commissionRate}% of ₹${orderAmount} = ₹${commissionAmount} | Net credit ₹${txnAmount}`;
   } else if (paymentMethod === "CASH") {
     // Dealer collected cash — debit the commission owed to platform
     txnAmount = commissionAmount;
     newBalance = parseFloat((preBalance - txnAmount).toFixed(2));
     txnType = "Debit";
-    note = `Cash commission | Order ₹${orderAmount} | Commission ${commissionRate}% = ₹${txnAmount}`;
+    note = `Cash commission | Customer Total ₹${customerTotal} | Commission ${commissionRate}% of ₹${orderAmount} = ₹${txnAmount}`;
   } else {
     throw new Error(`Unknown paymentMethod: ${paymentMethod}`);
   }
@@ -77,8 +87,11 @@ async function settleBookingWallet(bookingId, paymentMethod) {
     paymentMethod,
     txnType,
     orderAmount,
+    taxAmount,
+    customerTotal,
     commissionRate,
     commissionAmount,
+    dealerEarnings,
     txnAmount,
     preBalance,
     newBalance,

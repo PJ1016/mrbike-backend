@@ -580,7 +580,8 @@ const getuserbookings = async (req, res) => {
           subtotal: subtotal,
           tax_amount: bill?.tax_amount || 0,
           grandTotal: grandTotal,
-          pickupCharges: b.pickupCharges || 0,
+          pickupCharges: bill?.pickup_charges || b.pickupCharges || 0,
+          dropCharges: bill?.drop_charges || b.dropCharges || 0,
         };
       });
 
@@ -600,6 +601,7 @@ const getuserbookings = async (req, res) => {
         tax_amount: 0,
         grandTotal: b.totalBill || 0,
         pickupCharges: b.pickupCharges || 0,
+        dropCharges: b.dropCharges || 0,
       }));
 
       return res.status(200).json({
@@ -1343,7 +1345,8 @@ async function getBookingDetails(req, res) {
       subtotal: subtotal,
       tax_amount: billData?.tax_amount || 0,
       grandTotal: grandTotal,
-      pickupCharges: bookingData.pickupCharges || 0,
+      pickupCharges: billData?.pickup_charges || bookingData.pickupCharges || 0,
+      dropCharges: billData?.drop_charges || bookingData.dropCharges || 0,
     };
 
     console.log("Returning booking details with grandTotal:", grandTotal);

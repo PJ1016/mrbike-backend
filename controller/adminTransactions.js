@@ -62,15 +62,18 @@ function customerName(customer) {
 // (see routes/dealerRoutes.js PUT /editDealer), which would silently rewrite
 // the commission shown against old transactions if we recomputed it from
 // `dealer.commission` today. Since settleBookingWallet() computes:
-//   ONLINE: wallet.Amount = orderAmount - commissionAmount  (net credit to dealer)
-//   CASH:   wallet.Amount = commissionAmount                (debited from dealer)
-// the original commission can be recovered exactly from booking.totalBill and
-// the ledger's own Amount field, with no dependency on the dealer's live rate.
-function computeCommission(transactionType, walletAmount, orderAmount) {
+//   ONLINE: wallet.Amount = customerTotal - commissionAmount  (Dealer Earnings, net credit)
+//   CASH:   wallet.Amount = commissionAmount                  (debited from dealer)
+// where customerTotal = orderAmount (Booking.totalBill, the Subtotal) + taxAmount,
+// the original commission can be recovered exactly from booking.totalBill,
+// booking.tax and the ledger's own Amount field, with no dependency on the
+// dealer's live rate.
+function computeCommission(transactionType, walletAmount, orderAmount, taxAmount) {
   const amount = walletAmount || 0;
   const total = orderAmount || 0;
+  const tax = taxAmount || 0;
   if (transactionType === "settlement_online") {
-    return parseFloat((total - amount).toFixed(2));
+    return parseFloat(((total + tax) - amount).toFixed(2));
   }
   if (transactionType === "settlement_cash") {
     return parseFloat(amount.toFixed(2));
@@ -259,7 +262,7 @@ const getTransactionsList = async (req, res) => {
         ? { _id: w.customer._id, name: customerName(w.customer), phone: w.customer.phone }
         : null,
       amount: w.Amount,
-      commission: computeCommission(w.transaction_type, w.Amount, w.booking?.totalBill),
+      commission: computeCommission(w.transaction_type, w.Amount, w.booking?.totalBill, w.booking?.tax),
       transactionType: w.transaction_type,
       status: w.order_status,
       paymentMethod: w.paymentMethod || null,
@@ -315,7 +318,7 @@ const getTransactionDetails = async (req, res) => {
       ? await Payment.findOne({ booking_id: booking._id }).sort({ createdAt: -1 }).lean()
       : await Payment.findOne({ orderId: wallet.orderId }).sort({ createdAt: -1 }).lean();
 
-    const commission = computeCommission(wallet.transaction_type, wallet.Amount, booking?.totalBill);
+    const commission = computeCommission(wallet.transaction_type, wallet.Amount, booking?.totalBill, booking?.tax);
     const orderAmount = booking?.totalBill || 0;
     const taxes = booking?.tax || 0;
 
@@ -350,6 +353,8 @@ const getTransactionDetails = async (req, res) => {
               bookingId: booking.bookingId,
               status: booking.status,
               totalBill: booking.totalBill,
+              pickupCharges: booking.pickupCharges || 0,
+              dropCharges: booking.dropCharges || 0,
               tax: booking.tax,
               paymentMethod: booking.payment_method,
               serviceSummary: booking.serviceSummary || [],
@@ -384,7 +389,8 @@ const getTransactionDetails = async (req, res) => {
         amountBreakdown: {
           orderAmount,
           platformCommission: commission,
-          dealerShare: parseFloat((orderAmount - commission - taxes).toFixed(2)),
+          // Dealer Earnings = Customer Total − Commission = (orderAmount + taxes) − commission
+          dealerShare: parseFloat((orderAmount + taxes - commission).toFixed(2)),
           taxes,
           walletAmount: wallet.Amount,
           preBalance: wallet.pre_balance,
