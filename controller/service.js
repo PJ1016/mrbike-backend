@@ -784,6 +784,7 @@ async function getDealerServices(req, res) {
         pricing.push({
           type: "base",
           serviceId: doc.base_service_id?._id || doc.base_service_id,
+          adminServiceId: doc._id,
           serviceName: doc.base_service_id?.name,
           serviceImage: doc.base_service_id?.image,
           description: doc.base_service_id?.description || "",
