@@ -374,8 +374,9 @@ const generateBill = async (payment) => {
             });
         }
 
-        // Calculate tax and total
-        const taxRate = 18; // 18% GST
+        // Tax rate always comes from the dealer's Admin-configured rate — never hardcoded
+        const dealer = await Dealer.findById(booking.dealer_id).select("tax").lean();
+        const taxRate = parseFloat(dealer?.tax) || 0;
         const taxAmount = (subtotal * taxRate) / 100;
         const totalAmount = subtotal + taxAmount;
 
@@ -414,11 +415,12 @@ const generateBill = async (payment) => {
         await bill.save();
         console.log(`✅ Bill generated successfully: ${billNumber} for booking: ${payment.booking_id}`);
 
-        // Update booking with bill generated flag
+        // Update booking with bill generated flag.
+        // totalBill must stay the pure pre-tax service subtotal — it's the
+        // commission base for walletSettlement.js and adminFinance.js.
         await Booking.findByIdAndUpdate(payment.booking_id, {
             $set: {
                 billGenerated: true,
-                totalBill: totalAmount,
                 tax: taxAmount
             }
         });

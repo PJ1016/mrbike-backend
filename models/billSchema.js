@@ -48,7 +48,7 @@ const billSchema = new mongoose.Schema({
     },
     tax_rate: {
         type: Number,
-        default: 18 // 18% GST
+        default: 0
     },
     total_amount: {
         type: Number,
