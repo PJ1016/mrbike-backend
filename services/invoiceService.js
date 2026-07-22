@@ -2,8 +2,6 @@ const Booking = require("../models/Booking");
 const Bill = require("../models/billSchema");
 const Dealer = require("../models/dealerModel");
 const InvoiceCounter = require("../models/invoiceCounterModel");
-const PromoCode = require("../models/PromoCode");
-const PromoCodeUsage = require("../models/PromoCodeUsage");
 const { PRICING_WRITE_BYPASS_FLAG, round2 } = require("./pricingEngine");
 
 // Sequential, atomic, per-year invoice numbers (e.g. INV-2026-000001).
@@ -238,21 +236,13 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     await bill.save();
     console.log(`✅ Invoice generated: ${billNumber} for booking: ${booking._id}`);
 
-    // ── Promo usage — counted exactly here, exactly once ─────────────────────
-    // getOrCreateInvoice is the single choke point every "booking successfully
-    // paid" path (online webhook, cashfree QR, cash-received/cash-confirm)
-    // funnels through, and it early-returns above if a Bill already exists
-    // for this booking — so this runs once per booking, only once payment is
-    // actually complete. Never increment usage anywhere else.
-    if (booking.promoCodeId) {
-        await PromoCodeUsage.create({
-            promoCode: booking.promoCodeId,
-            user_id: booking.user_id?._id || booking.user_id,
-            booking_id: booking._id,
-            discountApplied: booking.promoDiscountAmount || 0,
-        });
-        await PromoCode.findByIdAndUpdate(booking.promoCodeId, { $inc: { usedCount: 1 } });
-    }
+    // Promo usage is NOT touched here. Per the final business rule, a promo
+    // is consumed exactly once — when the dealer confirms the booking (see
+    // controller/booking.js#updateBookingStatus) — and payment/invoice
+    // generation are fully independent of that. This function only reads
+    // booking.promoCode/promoName/discountAmount above to DISPLAY the
+    // already-locked snapshot; it must never create a PromoCodeUsage or
+    // increment PromoCode.usedCount.
 
     if (hasPricingSnapshot) {
         await Booking.findByIdAndUpdate(booking._id, { $set: { billGenerated: true } });

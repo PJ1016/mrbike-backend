@@ -12,11 +12,13 @@
  *   POST   /bulk-delete        → bulkDeletePromoCodes   body: { ids }
  *   POST   /bulk-status        → bulkUpdatePromoCodeStatus body: { ids, status }
  *
- * Usage tracking: each redemption is recorded in the PromoCodeUsage
- * collection (promoCode, user_id, booking_id, discountApplied) by
- * services/invoiceService.js#getOrCreateInvoice — the single choke point
- * every "booking successfully paid" path funnels through. `usedCount` on
- * the PromoCode document is the running aggregate shown here.
+ * Usage tracking: a promo is NOT consumed by applying it, quoting it, or
+ * creating a pending booking with it — only when the DEALER confirms the
+ * booking. Each redemption is recorded in the PromoCodeUsage collection
+ * (promoCode, code, user_id, booking_id, discountApplied, confirmedAt) by
+ * controller/booking.js#updateBookingStatus at the moment of dealer
+ * confirmation; payment and invoice generation never touch usage. `usedCount`
+ * on the PromoCode document is the running aggregate shown here.
  */
 
 const mongoose = require("mongoose");

@@ -30,6 +30,8 @@ const {
   PricingError,
 } = require("../services/pricingEngine");
 const { validatePromoCode } = require("../services/promoService");
+const PromoCode = require("../models/PromoCode");
+const PromoCodeUsage = require("../models/PromoCodeUsage");
 const { ACTIVE_BOOKING_QUERY } = require("../utils/bookingStatus");
 
 async function checkPermission(user_id, requiredPermission) {
@@ -1460,6 +1462,54 @@ async function updateBookingStatus(req, res) {
         console.log(`[BOOKING-ACCEPTED] Dealer accepted booking: ${bookingId}`);
       } else {
         console.log(`[BOOKING-REJECTED] Dealer rejected booking: ${bookingId}`);
+      }
+
+      // ── Promo consumption — happens ONLY on dealer confirmation ────────────
+      // Final business rule: applying a promo, requesting a quote, and
+      // creating a pending booking never consume it; rejecting a booking
+      // never consumes it either. Payment and invoice generation are fully
+      // independent of promo usage (see services/invoiceService.js, which
+      // only displays the snapshot locked here — it never touches usedCount
+      // or PromoCodeUsage). This is the single place both are written.
+      //
+      // The promo snapshot itself (promoCodeId/promoCode/promoDiscountAmount)
+      // is already locked onto the booking at createBooking() time — nothing
+      // to (re)lock here; if it's missing there's simply no promo to consume.
+      if (status === "confirmed" && existingBooking.promoCodeId) {
+        try {
+          // Atomic, race-safe increment: usage is only CHECKED (not reserved)
+          // when the booking is created, so multiple pending bookings for the
+          // same code can exist at once. $expr guards usedCount from ever
+          // exceeding usageLimit even if several of them get confirmed
+          // concurrently.
+          const promoUpdateResult = await PromoCode.findOneAndUpdate(
+            { _id: existingBooking.promoCodeId, $expr: { $lt: ["$usedCount", "$usageLimit"] } },
+            { $inc: { usedCount: 1 } },
+            { new: true }
+          );
+
+          if (promoUpdateResult) {
+            await PromoCodeUsage.create({
+              promoCode: existingBooking.promoCodeId,
+              code: existingBooking.promoCode,
+              user_id: existingBooking.user_id,
+              booking_id: existingBooking._id,
+              discountApplied: existingBooking.promoDiscountAmount || 0,
+              confirmedAt: new Date(),
+            });
+            console.log(`[PROMO-CONSUMED] ${existingBooking.promoCode} consumed on booking confirm: ${bookingId}`);
+          } else {
+            // Usage limit was reached by other confirmations between this
+            // booking's creation and now. The customer already saw and was
+            // promised this discount when the booking was created, so the
+            // booking still confirms normally — we simply don't count usage
+            // that no longer fits the limit.
+            console.warn(`[PROMO-LIMIT-RACE] ${existingBooking.promoCode} usage limit reached before booking ${bookingId} could be counted.`);
+          }
+        } catch (promoErr) {
+          // Promo bookkeeping must never block a dealer's booking confirmation.
+          console.error("[PROMO-CONSUMED] Failed to record promo usage:", promoErr.message);
+        }
       }
 
       // Notify user via socket
