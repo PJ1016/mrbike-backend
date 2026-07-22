@@ -229,14 +229,29 @@ async function sendBookingNotification({ token, title, body, data, receiverId, r
     Object.entries(data).map(([k, v]) => [k, String(v)])
   );
 
+  // Rich push: when the caller's data includes an image (e.g. campaign
+  // notifications), attach it so Android renders Big Picture style and iOS
+  // (via a notification service extension) can render an attachment.
+  const imageUrl = typeof data?.image === "string" && data.image ? data.image : undefined;
+
   const message = {
     token,
-    notification: { title, body },
+    notification: { title, body, ...(imageUrl && { imageUrl }) },
     data: fcmData,
     android: {
       priority: "high",
-      notification: { sound: "notifi", channel_id: "Provider.channel" },
+      notification: {
+        sound: "notifi",
+        channel_id: "Provider.channel",
+        ...(imageUrl && { imageUrl }),
+      },
     },
+    ...(imageUrl && {
+      apns: {
+        payload: { aps: { "mutable-content": 1 } },
+        fcmOptions: { imageUrl },
+      },
+    }),
   };
 
   try {
