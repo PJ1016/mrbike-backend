@@ -21,7 +21,7 @@ async function dispatchCampaign(campaign) {
       token,
       title: campaign.title,
       body: campaign.description,
-      data: { type: "campaign", campaignId: campaign._id.toString() },
+      data: { type: "campaign", campaignId: campaign._id.toString(), image: campaign.image },
       receiverId: recipient._id,
       receiverType,
     });
