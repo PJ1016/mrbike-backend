@@ -11,6 +11,17 @@ const { cancelPendingPaymentSessions } = require("../helper/paymentSession")
 
 const genDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000)
 
+const QR_DATA_URI_PREFIX = "data:image/png;base64,"
+
+// Cashfree's session/payments APIs are inconsistent about whether
+// payload.qrcode / default_qr_code is pure base64 or already a full data
+// URI — normalize once here so we never double-prepend the prefix.
+const normalizeQrCode = (value) => {
+  if (!value) return { qrCodeDataUrl: null, qrCodeBase64: null }
+  const base64 = value.startsWith(QR_DATA_URI_PREFIX) ? value.slice(QR_DATA_URI_PREFIX.length) : value
+  return { qrCodeDataUrl: `${QR_DATA_URI_PREFIX}${base64}`, qrCodeBase64: base64 }
+}
+
 // Advance a booking to ready_for_delivery once its QR/UPI payment is confirmed
 // SUCCESS — mirrors confirmCashReceived so both payment methods land in the
 // same place: invoice generated, wallet settled, delivery OTP issued.
@@ -244,11 +255,9 @@ const generateUPIQRCode = async (req, res) => {
 
       // Extract QR code or UPI link from response
       if (paymentData.data?.payload?.qrcode) {
-        qrCodeBase64 = paymentData.data.payload.qrcode
-        qrCodeDataUrl = `data:image/png;base64,${qrCodeBase64}`
+        ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(paymentData.data.payload.qrcode))
       } else if (paymentData.data?.payload?.default_qr_code) {
-        qrCodeBase64 = paymentData.data.payload.default_qr_code
-        qrCodeDataUrl = `data:image/png;base64,${qrCodeBase64}`
+        ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(paymentData.data.payload.default_qr_code))
       } else if (paymentData.data?.url) {
         upiLink = paymentData.data.url
       }
@@ -267,7 +276,7 @@ const generateUPIQRCode = async (req, res) => {
       upiLink = cashfreePaymentLink
 
       // Generate QR code from payment link
-      qrCodeDataUrl = await QRCode.toDataURL(cashfreePaymentLink, {
+      const generatedDataUrl = await QRCode.toDataURL(cashfreePaymentLink, {
         width: 400,
         margin: 2,
         color: {
@@ -276,7 +285,7 @@ const generateUPIQRCode = async (req, res) => {
         },
         errorCorrectionLevel: "M",
       })
-      qrCodeBase64 = qrCodeDataUrl.replace(/^data:image\/png;base64,/, "")
+      ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(generatedDataUrl))
 
       console.log("Generated QR from payment link:", cashfreePaymentLink)
     }
@@ -652,13 +661,15 @@ const regenerateQRCode = async (req, res) => {
     const paymentData = paymentResponse.data
 
     let qrCodeDataUrl = null
+    let qrCodeBase64 = null
     if (paymentData.data?.payload?.qrcode) {
-      qrCodeDataUrl = `data:image/png;base64,${paymentData.data.payload.qrcode}`
+      ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(paymentData.data.payload.qrcode))
     } else if (paymentData.data?.url) {
-      qrCodeDataUrl = await QRCode.toDataURL(paymentData.data.url, {
+      const generatedDataUrl = await QRCode.toDataURL(paymentData.data.url, {
         width: 300,
         margin: 2,
       })
+      ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(generatedDataUrl))
     }
 
     res.status(200).json({
@@ -667,6 +678,7 @@ const regenerateQRCode = async (req, res) => {
       data: {
         order_id: payment.orderId,
         qr_code: qrCodeDataUrl,
+        qr_code_raw: qrCodeBase64,
         amount: payment.orderAmount,
         status: payment.order_status,
       },
