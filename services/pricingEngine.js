@@ -6,7 +6,10 @@
  *   Tax             = Subtotal × Dealer.tax %
  *   Customer Total  = Subtotal + Tax
  *   Commission      = Subtotal × Dealer.commission %
- *   Dealer Earnings = Customer Total − Commission
+ *   Dealer Earnings = Subtotal − Commission
+ *
+ * Tax is collected from the customer but belongs to platform accounting —
+ * it is never part of Dealer Earnings.
  *
  * No values here are ever hardcoded — tax %, commission %, pickupCharges and
  * dropCharges always come from the Dealer document passed in by the caller.
@@ -140,7 +143,7 @@ function computePriceBreakdown({ serviceAmount, transportOption, dealer, discoun
 
   const commissionRate = Number(dealer?.commission) || 0;
   const commissionAmount = round2((subtotal * commissionRate) / 100);
-  const dealerEarnings = round2(customerTotal - commissionAmount);
+  const dealerEarnings = round2(subtotal - commissionAmount);
 
   return {
     transportOption,

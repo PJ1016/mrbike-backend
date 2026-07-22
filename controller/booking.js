@@ -1460,7 +1460,40 @@ async function updateBookingStatus(req, res) {
         console.error("[BOOKING-RESPONSE] User FCM notification error:", notifyErr.message);
       }
     } else {
-      // All other transitions (completed, cash received, cancelled, etc.)
+      // All other transitions (completed, cash received, cancelled, etc.) via
+      // this generic legacy endpoint.
+      //
+      // The payment flow itself (awaiting_payment → payment_selected →
+      // ready_for_delivery) is owned exclusively by serviceComplete() /
+      // selectPaymentMethod() / generateUPIQRCode() / confirmCashReceived() —
+      // those enforce their own preconditions and are the only sanctioned way
+      // to enter or advance those statuses. This generic setter must never
+      // write them directly, and must never move a booking OUT of an
+      // in-flight payment status either: doing so from here (no precondition
+      // checks) could strand a booking somewhere neither serviceComplete()
+      // (requires status === "confirmed") nor selectPaymentMethod() (requires
+      // status in ["awaiting_payment","payment_selected"]) will accept it
+      // back from, permanently hiding payment options in the dealer app.
+      const PAYMENT_FLOW_STATUSES = ["awaiting_payment", "payment_selected", "ready_for_delivery"];
+
+      if (PAYMENT_FLOW_STATUSES.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Use the dedicated payment endpoints to reach "${status}" (service-complete / select-payment-method / generate-qr / confirm-cash-received).`,
+        });
+      }
+
+      if (
+        PAYMENT_FLOW_STATUSES.includes(existingBooking.status) &&
+        status !== "cancelled" &&
+        status !== "user_cancelled"
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: `Booking is mid-payment ("${existingBooking.status}") — use the dedicated payment endpoints instead of a generic status update.`,
+        });
+      }
+
       existingBooking.status = status;
 
       if (status === "cash received") {

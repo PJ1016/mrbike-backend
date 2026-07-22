@@ -4,6 +4,7 @@ const Vendor = require("../models/dealerModel")
 const { createS3Upload, deleteS3Object } = require("../utils/s3Upload")
 const { requireAdmin } = require("../middlewares/requireAdmin")
 const { verifyDealerToken, requireActiveDealer, requireOwnDealer } = require("../middlewares/dealerAuth")
+const { requireAdminOrOwnDealer } = require("../middlewares/sharedAuth")
 const { getDealerStatus } = require("../helper/dealerStatus")
 const {
   buildDealerUpdate,
@@ -521,8 +522,10 @@ router.get("/dealerList", requireAdmin, dealerList)
 router.get("/dealerWithInRange", dealerWithInRange)
 router.get("/dealerWithInRange2", dealerWithInRange2)
 router.get("/dealer/:id", verifyDealerToken, requireOwnDealer("id"), singledealer)
-router.get("/dealerWallet/:id", verifyDealerToken, requireOwnDealer("id"), GetwalletInfo)
-router.get("/dealerWallet", requireAdmin, getWallet)
+// Shared with the admin panel (dealer wallet transaction history / summary
+// views) — admins may look up any dealer, a dealer may only look up their own.
+router.get("/dealerWallet/:id", requireAdminOrOwnDealer((req) => req.params.id), GetwalletInfo)
+router.get("/dealerWallet", requireAdminOrOwnDealer((req) => req.query.dealer_id), getWallet)
 router.get("/dealersWithDocFalse", requireAdmin, getAllDealersWithDocFalse)
 router.get("/dealersWithVerifyFalse", requireAdmin, getAllDealersWithVerifyFalse)
 router.get("/activity-history/:dealerId", requireAdmin, getDealerActivityHistory)

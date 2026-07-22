@@ -33,13 +33,30 @@ const CASHFREE_BASE_URL =
 // Initiate Payment
 const initiatePayment = async (req, res) => {
     try {
-        // Temporary data
-        const booking_id = "68fc8781a2bb1e138c0e0e04";
-        const dealer_id = "68d8dbbd1b6028afae8ee02b";
-        const user_id = "688cd4088e19dcba2bcff2b7";
-        const orderAmount = 1200;
-        const payment_by = "user";
+        const { booking_id, dealer_id, user_id, customer_email, customer_phone, payment_by = "user" } = req.body;
         const payment_type = "ONLINE";
+
+        if (!booking_id || !dealer_id || !user_id) {
+            return res.status(400).json({
+                success: false,
+                message: "Missing required fields (booking_id, dealer_id, user_id)",
+            });
+        }
+
+        const bookingForCharge = await Booking.findById(booking_id);
+        if (!bookingForCharge) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // Server always charges Booking.customerTotal - Booking.discountAmount
+        // (the `amountDue` virtual) — never a client-supplied amount.
+        const orderAmount = bookingForCharge.amountDue;
+        if (!(orderAmount > 0)) {
+            return res.status(400).json({
+                success: false,
+                message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
+            });
+        }
 
         const orderId = `ORD_${Date.now()}`;
 
@@ -49,19 +66,19 @@ const initiatePayment = async (req, res) => {
             order_currency: "INR",
             customer_details: {
                 customer_id: user_id,
-                customer_email: "user@example.com",
-                customer_phone: "9999999999",
+                customer_email: customer_email || "customer@example.com",
+                customer_phone: customer_phone || "9999999999",
             },
             order_meta: {
-                return_url: `https://yourfrontend.com/payment-success?order_id={order_id}`,
-                notify_url: `https://yourbackend.com/api/payments/webhook`,
+                return_url: `${process.env.FRONTEND_URL || "https://bikedoctor.app"}/payment-success?order_id={order_id}`,
+                notify_url: `${process.env.BACKEND_URL || "https://api.bikedoctor.app"}/bikedoctor/cashfree/webhook`,
             },
         };
 
         const response = await axios.post(CASHFREE_BASE_URL, payload, {
             headers: {
-                "x-client-id": process.env.APP_ID,
-                "x-client-secret": process.env.SECRET_KEY,
+                "x-client-id": process.env.CASHFREE_APP_ID,
+                "x-client-secret": process.env.CASHFREE_SECRET_KEY,
                 "x-api-version": "2022-09-01",
                 "Content-Type": "application/json",
             },
@@ -425,7 +442,7 @@ const generateBill = async (payment) => {
 
             commissionRate = parseFloat(dealer?.commission) || 0;
             commissionAmount = parseFloat(((subtotal * commissionRate) / 100).toFixed(2));
-            dealerEarnings = parseFloat((totalAmount - commissionAmount).toFixed(2));
+            dealerEarnings = parseFloat((subtotal - commissionAmount).toFixed(2));
         }
 
         if (pickupCharge > 0) {
@@ -773,10 +790,10 @@ const getAllPayments = async (req, res) => {
 const createCheckoutUrl = async (req, res) => {
     try {
         console.log("Cashfree Credentials Check:", {
-            hasAppId: !!process.env.APP_ID,
-            hasSecretKey: !!process.env.SECRET_KEY,
-            appIdLength: process.env.APP_ID ? process.env.APP_ID.length : 0,
-            secretKeyLength: process.env.SECRET_KEY ? process.env.SECRET_KEY.length : 0,
+            hasAppId: !!process.env.CASHFREE_APP_ID,
+            hasSecretKey: !!process.env.CASHFREE_SECRET_KEY,
+            appIdLength: process.env.CASHFREE_APP_ID ? process.env.CASHFREE_APP_ID.length : 0,
+            secretKeyLength: process.env.CASHFREE_SECRET_KEY ? process.env.CASHFREE_SECRET_KEY.length : 0,
             env: process.env.CASHFREE_ENV
         });
 
@@ -817,13 +834,13 @@ const createCheckoutUrl = async (req, res) => {
         }
 
         // Check if credentials exist
-        if (!process.env.APP_ID || !process.env.SECRET_KEY) {
+        if (!process.env.CASHFREE_APP_ID || !process.env.CASHFREE_SECRET_KEY) {
             return res.status(500).json({
                 success: false,
                 message: "Cashfree credentials not configured",
                 debug: {
-                    APP_ID: process.env.APP_ID ? "***" + process.env.APP_ID.slice(-4) : "MISSING",
-                    SECRET_KEY: process.env.SECRET_KEY ? "***" + process.env.SECRET_KEY.slice(-4) : "MISSING"
+                    CASHFREE_APP_ID: process.env.CASHFREE_APP_ID ? "***" + process.env.CASHFREE_APP_ID.slice(-4) : "MISSING",
+                    CASHFREE_SECRET_KEY: process.env.CASHFREE_SECRET_KEY ? "***" + process.env.CASHFREE_SECRET_KEY.slice(-4) : "MISSING"
                 }
             });
         }
@@ -851,15 +868,15 @@ const createCheckoutUrl = async (req, res) => {
         };
 
         console.log("Making request to Cashfree with credentials:", {
-            appId: "***" + process.env.APP_ID.slice(-4),
+            appId: "***" + process.env.CASHFREE_APP_ID.slice(-4),
             baseUrl: CASHFREE_BASE_URL
         });
 
         // Make API call to Cashfree
         const response = await axios.post(CASHFREE_BASE_URL, payload, {
             headers: {
-                "x-client-id": process.env.APP_ID,
-                "x-client-secret": process.env.SECRET_KEY,
+                "x-client-id": process.env.CASHFREE_APP_ID,
+                "x-client-secret": process.env.CASHFREE_SECRET_KEY,
                 "x-api-version": "2022-09-01",
                 "Content-Type": "application/json",
             },
@@ -1080,7 +1097,7 @@ const createPaymentLink = async (req, res) => {
         await Booking.findByIdAndUpdate(booking_id, {
             $set: {
                 billStatus: "pending",
-                status: "payment",
+                status: "Payment",
             },
         });
 
@@ -1111,8 +1128,8 @@ const createPaymentLink = async (req, res) => {
                 payload,
                 {
                     headers: {
-                        "x-client-id": process.env.APP_ID,
-                        "x-client-secret": process.env.SECRET_KEY,
+                        "x-client-id": process.env.CASHFREE_APP_ID,
+                        "x-client-secret": process.env.CASHFREE_SECRET_KEY,
                         "x-api-version": "2025-01-01",
                         "Content-Type": "application/json",
                     },

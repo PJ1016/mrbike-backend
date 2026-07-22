@@ -67,17 +67,23 @@ function customerName(customer) {
 // — see services/pricingEngine.js). For bookings that predate the snapshot,
 // we fall back to reconstructing the numbers from the ledger entry actually
 // recorded at settlement time (helper/walletSettlement.js), since:
-//   ONLINE: wallet.Amount = customerTotal - commissionAmount  (Dealer Earnings, net credit)
-//   CASH:   wallet.Amount = commissionAmount                  (debited from dealer)
-// where customerTotal = orderAmount (Booking.totalBill, the legacy Subtotal
-// mirror) + taxAmount (Booking.tax) — recoverable with no dependency on the
-// dealer's live rate either way.
+//   ONLINE: wallet.Amount = orderAmount - commissionAmount  (Dealer Earnings, net credit — tax excluded)
+//   CASH:   wallet.Amount = commissionAmount                (debited from dealer)
+// where orderAmount = Booking.totalBill (the legacy Subtotal mirror) — tax
+// (Booking.tax) never enters the dealer-earnings/commission math, it belongs
+// to platform accounting only.
+//
+// NOTE: wallet ledger rows settled before this formula was fixed used the old
+// (incorrect) `customerTotal - commissionAmount` credit — this reconstruction
+// assumes the corrected formula and will misstate `commission` for those
+// historical rows. See services/pricingEngine.js and helper/walletSettlement.js
+// for the fix; pre-existing rows need a separate reconciliation pass, not a
+// change to this read-only reconstruction.
 function computeCommission(transactionType, walletAmount, orderAmount, taxAmount) {
   const amount = walletAmount || 0;
   const total = orderAmount || 0;
-  const tax = taxAmount || 0;
   if (transactionType === "settlement_online") {
-    return parseFloat(((total + tax) - amount).toFixed(2));
+    return parseFloat((total - amount).toFixed(2));
   }
   if (transactionType === "settlement_cash") {
     return parseFloat(amount.toFixed(2));
@@ -100,7 +106,7 @@ function resolveBookingMoney(booking, walletAmount, transactionType) {
   const orderAmount = booking?.totalBill || 0;
   const taxes = booking?.tax || 0;
   const commission = computeCommission(transactionType, walletAmount, orderAmount, taxes);
-  const dealerShare = parseFloat((orderAmount + taxes - commission).toFixed(2));
+  const dealerShare = parseFloat((orderAmount - commission).toFixed(2));
   return { orderAmount, taxes, commission, dealerShare };
 }
 

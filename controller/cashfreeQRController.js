@@ -241,13 +241,12 @@ const generateUPIQRCode = async (req, res) => {
     }
 
     if (!qrCodeDataUrl) {
-      // Create UPI intent URL manually for the order
-      // Format: upi://pay?pa=<VPA>&pn=<Name>&am=<Amount>&tr=<TxnRef>&tn=<Note>
-      const upiIntentUrl = `upi://pay?pa=${process.env.CASHFREE_UPI_VPA || "bikedoctor@cashfree"}&pn=BikeDoctor&am=${Number.parseFloat(amount)}&tr=${orderId}&tn=Payment for Booking&cu=INR`
-
-      // Use Cashfree payment link as fallback
-const cashfreePaymentLink =
-  `https://payments${process.env.CASHFREE_ENV === "production" ? "" : "-test"}.cashfree.com/order?session_id=${paymentSessionId}`
+      // Fallback: Cashfree's hosted checkout page for this order/session —
+      // no UPI VPA is ever hardcoded here; the customer completes payment on
+      // Cashfree's own page, which is the only way a payment stays trackable
+      // via the order-status/webhook flow below.
+      const cashfreePaymentLink =
+        `https://payments${process.env.CASHFREE_ENV === "production" ? "" : "-test"}.cashfree.com/order/#${paymentSessionId}`
 
       upiLink = cashfreePaymentLink
 

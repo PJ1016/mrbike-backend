@@ -59,7 +59,7 @@ async function settleBookingWallet(bookingId, paymentMethod) {
     customerTotal = parseFloat((orderAmount + taxAmount).toFixed(2));
     commissionRate = parseFloat(dealer.commission) || 0;
     commissionAmount = parseFloat(((commissionRate / 100) * orderAmount).toFixed(2));
-    dealerEarnings = parseFloat((customerTotal - commissionAmount).toFixed(2));
+    dealerEarnings = parseFloat((orderAmount - commissionAmount).toFixed(2));
   }
 
   const preBalance = parseFloat(dealer.wallet) || 0;
