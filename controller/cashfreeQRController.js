@@ -7,6 +7,7 @@ const Dealer = require("../models/dealerModel")
 const { generateBill } = require("./payment")
 const { settleBookingWallet } = require("../helper/walletSettlement")
 const { sendBookingNotification } = require("../helper/pushNotification")
+const { cancelPendingPaymentSessions } = require("../helper/paymentSession")
 
 const genDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000)
 
@@ -21,6 +22,16 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
     currentBooking.status,
   )
   if (alreadyAdvanced) return
+
+  // Defense in depth: if the dealer has since switched this booking to CASH,
+  // this payment belongs to an abandoned QR — do not let a late confirmation
+  // silently override the dealer's cash flow (and double-settle the wallet).
+  if (currentBooking.payment_method && currentBooking.payment_method !== "ONLINE") {
+    console.warn(
+      `[CASHFREE] Ignoring SUCCESS for payment ${payment._id} — booking ${currentBooking._id} was switched to ${currentBooking.payment_method}. Needs manual reconciliation.`,
+    )
+    return
+  }
 
   const freshOtp = genDeliveryOtp()
 
@@ -159,6 +170,11 @@ const generateUPIQRCode = async (req, res) => {
         message: "Payment already completed for this booking",
       })
     }
+
+    // Cancel any still-pending session from an earlier QR (e.g. dealer chose
+    // ONLINE, switched to CASH, then switched back to ONLINE) so only the
+    // fresh order below stays payable — never two live QR codes at once.
+    await cancelPendingPaymentSessions(booking_id)
 
     // Generate unique order ID
     const orderId = `BIKEDOC_${Date.now()}_${Math.random().toString(36).substr(2, 6).toUpperCase()}`
@@ -373,17 +389,29 @@ const checkPaymentStatus = async (req, res) => {
 
       // Update payment if status changed
       if (payment.order_status !== mappedStatus) {
+        // This exact session was superseded by a later method switch / fresh
+        // QR (see cancelPendingPaymentSessions) — a late PAID confirmation
+        // must not resurrect it into advancing the booking.
+        const wasSupersededByDealerSwitch = payment.order_status === "CANCELLED"
+
         payment.order_status = mappedStatus
         payment.metadata = {
           ...payment.metadata,
           last_status_check: new Date(),
           cashfree_status: orderData.order_status,
+          ...(wasSupersededByDealerSwitch && mappedStatus === "SUCCESS"
+            ? { orphaned_after_method_switch: true }
+            : {}),
         }
         await payment.save()
 
         // Update booking if payment successful
-        if (mappedStatus === "SUCCESS") {
+        if (mappedStatus === "SUCCESS" && !wasSupersededByDealerSwitch) {
           await advanceBookingAfterOnlinePayment(payment, req.app.get("io"))
+        } else if (mappedStatus === "SUCCESS" && wasSupersededByDealerSwitch) {
+          console.warn(
+            `[CASHFREE] Payment ${payment._id} for booking ${payment.booking_id} confirmed PAID after being superseded — flagged for manual reconciliation, booking not auto-advanced.`,
+          )
         }
       }
     }
@@ -481,6 +509,11 @@ const cashfreeWebhook = async (req, res) => {
         mappedStatus = "PENDING"
     }
 
+    // This exact session was superseded by a later method switch / fresh QR
+    // (see cancelPendingPaymentSessions) — a late webhook must not resurrect
+    // it into advancing the booking or re-settling the wallet.
+    const wasSupersededByDealerSwitch = payment.order_status === "CANCELLED"
+
     // Update payment record
     payment.order_status = mappedStatus
     payment.payment_method = paymentMethodGroup
@@ -494,13 +527,16 @@ const cashfreeWebhook = async (req, res) => {
       payment_group: data.payment?.payment_group,
       verified_via: "orders_api",
       verified_at: new Date(),
+      ...(wasSupersededByDealerSwitch && mappedStatus === "SUCCESS"
+        ? { orphaned_after_method_switch: true }
+        : {}),
     }
 
     await payment.save()
     console.log(`Payment updated: ${orderId} -> ${mappedStatus}`)
 
     // Update booking if payment successful
-    if (mappedStatus === "SUCCESS") {
+    if (mappedStatus === "SUCCESS" && !wasSupersededByDealerSwitch) {
       const io = req.app.get("io")
       await advanceBookingAfterOnlinePayment(payment, io)
       console.log(`Booking ${payment.booking_id} marked as paid`)
@@ -514,6 +550,10 @@ const cashfreeWebhook = async (req, res) => {
           status: "SUCCESS",
         })
       }
+    } else if (mappedStatus === "SUCCESS" && wasSupersededByDealerSwitch) {
+      console.warn(
+        `[CASHFREE] Webhook confirmed PAID for superseded order ${orderId} (booking ${payment.booking_id}) — flagged for manual reconciliation, booking not auto-advanced.`,
+      )
     }
 
     res.status(200).json({ success: true, message: "Webhook processed" })

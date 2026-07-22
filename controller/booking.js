@@ -13,6 +13,7 @@ const { Notification, sendBookingNotification } = require("../helper/pushNotific
 const { handleBookingCompletion } = require("../controller/reward")
 const { generateBill } = require("../controller/payment")
 const { settleBookingWallet } = require("../helper/walletSettlement")
+const { cancelPendingPaymentSessions } = require("../helper/paymentSession")
 const UserBike = require("../models/userBikeModel");
 const AdminService = require("../models/adminService");
 const Customer = require("../models/customer_model");
@@ -2427,6 +2428,12 @@ const selectPaymentMethod = async (req, res) => {
         message: "Payment has already been completed. Payment method cannot be changed.",
       });
     }
+
+    // Cancel any pending Cashfree session left over from a previous method
+    // choice (e.g. dealer switched ONLINE → CASH after a QR was shown) so a
+    // stale, abandoned order can never be paid later and mistaken by the
+    // webhook for the customer's current session.
+    await cancelPendingPaymentSessions(bookingDoc._id);
 
     bookingDoc.payment_method = payment_method;
     bookingDoc.status = "payment_selected";
