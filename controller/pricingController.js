@@ -1,24 +1,33 @@
+const jwt_decode = require("jwt-decode");
 const AdminService = require("../models/adminService");
 const Vendor = require("../models/dealerModel");
 const {
   computePriceBreakdown,
+  computeTransportCharges,
   resolveServiceAmount,
+  round2,
   PricingError,
 } = require("../services/pricingEngine");
+const { validatePromoCode } = require("../services/promoService");
 
 // POST /pricing/quote
 //
 // Live pricing preview — NO database writes. Any client (User App, Dealer
 // App, Admin UI, or this backend itself) calls this to know what a booking
-// would cost before committing to createBooking().
+// would cost before committing to createBooking(). Also doubles as the
+// "Apply Promo" call: pass `promoCode` to validate a code and see the
+// discounted total before confirming — this never writes usage/PromoCodeUsage,
+// it's a preview only (see controller/booking.js#createBooking for where a
+// promo is actually locked onto a booking, and services/invoiceService.js
+// for where its usage is finally counted, only after payment succeeds).
 //
-// Body: { dealerId, serviceIds: [AdminServiceId], additionalServiceIds?, transportOption, bikeCC }
+// Body: { dealerId, serviceIds: [AdminServiceId], additionalServiceIds?, transportOption, bikeCC, promoCode? }
 // bikeCC is required to resolve per-CC service pricing (AdminService.bikes is
 // keyed by cc) — not called out explicitly in the original spec's input list,
 // but there is no way to price a service without it.
 const getPricingQuote = async (req, res) => {
   try {
-    const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC } = req.body;
+    const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC, promoCode } = req.body;
 
     if (!dealerId) {
       return res.status(400).json({ success: false, message: "dealerId is required" });
@@ -61,7 +70,25 @@ const getPricingQuote = async (req, res) => {
     }
 
     const serviceAmount = resolveServiceAmount({ services, additionalServices, bikeCC });
-    const breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer });
+
+    let promo = null;
+    if (promoCode) {
+      let userId;
+      try {
+        userId = jwt_decode(req.headers.token)?.user_id;
+      } catch (_) {
+        userId = undefined;
+      }
+      // Resolve the real subtotal (service + pickup/drop) the same way
+      // computePriceBreakdown will, so the minOrder/discount check below
+      // matches exactly what the breakdown call further down computes.
+      const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
+      const subtotal = round2(serviceAmount + pickupCharges + dropCharges);
+      const validated = await validatePromoCode({ code: promoCode, userId, subtotal });
+      promo = validated.promo;
+    }
+
+    const breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer, promo });
 
     return res.status(200).json({ success: true, data: breakdown });
   } catch (error) {

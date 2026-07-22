@@ -2,7 +2,9 @@ const Booking = require("../models/Booking");
 const Bill = require("../models/billSchema");
 const Dealer = require("../models/dealerModel");
 const InvoiceCounter = require("../models/invoiceCounterModel");
-const { PRICING_WRITE_BYPASS_FLAG } = require("./pricingEngine");
+const PromoCode = require("../models/PromoCode");
+const PromoCodeUsage = require("../models/PromoCodeUsage");
+const { PRICING_WRITE_BYPASS_FLAG, round2 } = require("./pricingEngine");
 
 // Sequential, atomic, per-year invoice numbers (e.g. INV-2026-000001).
 // findOneAndUpdate($inc, upsert) is a single atomic Mongo op, so concurrent
@@ -144,6 +146,9 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     const hasPricingSnapshot = Boolean(booking.pricingVersion);
 
     let pickupCharge, dropCharge, taxRate, taxAmount, totalAmount, commissionRate, commissionAmount, dealerEarnings;
+    // Only ever non-zero when hasPricingSnapshot — bookings without a
+    // pricing snapshot predate the promo-code feature entirely.
+    let discountAmount = 0;
 
     if (hasPricingSnapshot) {
         pickupCharge = Number(booking.pickupCharges);
@@ -151,7 +156,11 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         subtotal = Number(booking.subtotal);
         taxRate = Number(booking.taxRate);
         taxAmount = Number(booking.taxAmount);
-        totalAmount = Number(booking.customerTotal);
+        discountAmount = Number(booking.discountAmount) || 0;
+        // total_amount / "Total Paid" is what the customer actually paid —
+        // customerTotal minus whatever discount (promo) was applied, i.e.
+        // the same amountDue virtual payment.js charges against.
+        totalAmount = round2(Number(booking.customerTotal) - discountAmount);
         commissionRate = Number(booking.commissionRate);
         commissionAmount = Number(booking.commissionAmount);
         dealerEarnings = Number(booking.dealerEarnings);
@@ -211,6 +220,9 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         drop_charges: dropCharge,
         tax_amount: taxAmount,
         tax_rate: taxRate,
+        discount_amount: discountAmount,
+        promo_code: booking.promoCode || null,
+        promo_name: booking.promoName || null,
         total_amount: totalAmount,
         commission_rate: commissionRate,
         commission_amount: commissionAmount,
@@ -225,6 +237,22 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
 
     await bill.save();
     console.log(`✅ Invoice generated: ${billNumber} for booking: ${booking._id}`);
+
+    // ── Promo usage — counted exactly here, exactly once ─────────────────────
+    // getOrCreateInvoice is the single choke point every "booking successfully
+    // paid" path (online webhook, cashfree QR, cash-received/cash-confirm)
+    // funnels through, and it early-returns above if a Bill already exists
+    // for this booking — so this runs once per booking, only once payment is
+    // actually complete. Never increment usage anywhere else.
+    if (booking.promoCodeId) {
+        await PromoCodeUsage.create({
+            promoCode: booking.promoCodeId,
+            user_id: booking.user_id?._id || booking.user_id,
+            booking_id: booking._id,
+            discountApplied: booking.promoDiscountAmount || 0,
+        });
+        await PromoCode.findByIdAndUpdate(booking.promoCodeId, { $inc: { usedCount: 1 } });
+    }
 
     if (hasPricingSnapshot) {
         await Booking.findByIdAndUpdate(booking._id, { $set: { billGenerated: true } });
@@ -286,6 +314,9 @@ function buildInvoiceResponse(bill) {
         },
         subtotal: bill.subtotal,
         tax: { rate: bill.tax_rate, amount: bill.tax_amount },
+        discount: bill.promo_code
+            ? { code: bill.promo_code, name: bill.promo_name || null, amount: bill.discount_amount || 0 }
+            : null,
         totalPaid: bill.total_amount,
         settlement: {
             commissionRate: bill.commission_rate,

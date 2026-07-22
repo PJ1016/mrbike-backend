@@ -122,16 +122,72 @@ function computeTransportCharges({ transportOption, dealer }) {
 }
 
 /**
+ * Compute the discount a promo code is worth against a given subtotal. Pure —
+ * takes an already-fetched PromoCode document/lean object and performs no DB
+ * access itself. Usage-limit / per-user-limit checks require querying
+ * PromoCodeUsage, so those live in services/promoService.js and must pass
+ * BEFORE this is called; everything checkable from the promo document alone
+ * (active flag, validity window, minimum order) is enforced here so it can
+ * never be bypassed by a caller that forgets to check.
+ *
+ * Throws PricingError with a specific `code` for every rule violated — the
+ * caller returns `error.message` verbatim to the client. The frontend must
+ * never compute a discount itself; this is the single source of truth.
+ */
+function computePromoDiscountAmount({ promo, subtotal }) {
+  if (!promo || promo.isDeleted) {
+    throw new PricingError("Invalid promo code", "PROMO_NOT_FOUND");
+  }
+  if (!promo.isActive) {
+    throw new PricingError("This promo code is not active", "PROMO_INACTIVE");
+  }
+
+  const now = new Date();
+  if (promo.validFrom && now < new Date(promo.validFrom)) {
+    throw new PricingError("This promo code is not valid yet", "PROMO_NOT_STARTED");
+  }
+  if (promo.validTo && now > new Date(promo.validTo)) {
+    throw new PricingError("This promo code has expired", "PROMO_EXPIRED");
+  }
+
+  const amount = round2(Number(subtotal) || 0);
+  if (promo.minOrder !== null && promo.minOrder !== undefined && amount < Number(promo.minOrder)) {
+    throw new PricingError(
+      `Minimum booking amount of ₹${promo.minOrder} required for this promo code`,
+      "PROMO_MIN_ORDER_NOT_MET"
+    );
+  }
+
+  let discount =
+    promo.discountType === "percentage"
+      ? round2((amount * Number(promo.discountValue)) / 100)
+      : round2(Number(promo.discountValue));
+
+  if (promo.maxDiscount !== null && promo.maxDiscount !== undefined) {
+    discount = Math.min(discount, round2(Number(promo.maxDiscount)));
+  }
+  // Never discount more than the booking is actually worth.
+  discount = Math.min(discount, amount);
+
+  if (discount <= 0) {
+    throw new PricingError("This promo code does not apply any discount", "PROMO_ZERO_DISCOUNT");
+  }
+
+  return discount;
+}
+
+/**
  * Compute the full price breakdown for a booking or a live quote.
  *
- * `discountAmount` is accepted and stored on the returned breakdown so the
- * Booking snapshot has a place to hold it, but Phase 1 does not fold any
- * discount/coupon logic into the formula above — that is out of scope here
- * and left for the offers/coupons phase to wire in explicitly.
+ * `discountAmount` is accepted directly for callers that already know a
+ * discount (kept for applyRewardDiscount's use elsewhere). Passing `promo`
+ * (an already-fetched PromoCode doc) folds a promo-code discount into the
+ * same `discountAmount`/`amountDue` mechanism and stamps the promo snapshot
+ * fields onto the returned breakdown so applyBreakdownToBooking() can lock
+ * them onto the Booking at creation time.
  */
-function computePriceBreakdown({ serviceAmount, transportOption, dealer, discountAmount = 0 }) {
+function computePriceBreakdown({ serviceAmount, transportOption, dealer, discountAmount = 0, promo = null }) {
   const amount = round2(Number(serviceAmount) || 0);
-  const discount = round2(Number(discountAmount) || 0);
 
   const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
 
@@ -144,6 +200,24 @@ function computePriceBreakdown({ serviceAmount, transportOption, dealer, discoun
   const commissionRate = Number(dealer?.commission) || 0;
   const commissionAmount = round2((subtotal * commissionRate) / 100);
   const dealerEarnings = round2(subtotal - commissionAmount);
+
+  let promoDiscountAmount = 0;
+  let promoCodeId = null;
+  let promoCode = null;
+  let promoName = null;
+  let promoDiscountType = null;
+  let promoDiscountValue = null;
+
+  if (promo) {
+    promoDiscountAmount = computePromoDiscountAmount({ promo, subtotal });
+    promoCodeId = promo._id;
+    promoCode = promo.code;
+    promoName = promo.name;
+    promoDiscountType = promo.discountType;
+    promoDiscountValue = promo.discountValue;
+  }
+
+  const discount = round2((Number(discountAmount) || 0) + promoDiscountAmount);
 
   return {
     transportOption,
@@ -159,6 +233,12 @@ function computePriceBreakdown({ serviceAmount, transportOption, dealer, discoun
     dealerEarnings,
     discountAmount: discount,
     pricingVersion: PRICING_VERSION,
+    promoCodeId,
+    promoCode,
+    promoName,
+    promoDiscountType,
+    promoDiscountValue,
+    promoDiscountAmount,
   };
 }
 
@@ -184,6 +264,15 @@ const PRICING_SNAPSHOT_FIELDS = Object.freeze([
   "discountAmount",
   "pricingVersion",
   "priceSnapshotAt",
+  // Promo code snapshot — set once at creation via applyBreakdownToBooking()
+  // when a promo was supplied; immutable for the same reason as every other
+  // field here (a promo can't be swapped after the customer saw the price).
+  "promoCodeId",
+  "promoCode",
+  "promoName",
+  "promoDiscountType",
+  "promoDiscountValue",
+  "promoDiscountAmount",
   // Legacy mirrors kept for backward-compatible readers (walletSettlement,
   // adminFinance/adminTransactions reporting) — same lock applies to them.
   "totalBill",
@@ -219,6 +308,15 @@ function applyBreakdownToBooking(bookingDoc, breakdown) {
   bookingDoc.discountAmount = breakdown.discountAmount;
   bookingDoc.pricingVersion = breakdown.pricingVersion;
   bookingDoc.priceSnapshotAt = new Date();
+
+  if (breakdown.promoCodeId) {
+    bookingDoc.promoCodeId = breakdown.promoCodeId;
+    bookingDoc.promoCode = breakdown.promoCode;
+    bookingDoc.promoName = breakdown.promoName;
+    bookingDoc.promoDiscountType = breakdown.promoDiscountType;
+    bookingDoc.promoDiscountValue = breakdown.promoDiscountValue;
+    bookingDoc.promoDiscountAmount = breakdown.promoDiscountAmount;
+  }
 
   // Legacy mirrors — kept for backward-compatible readers.
   bookingDoc.tax = breakdown.taxAmount;
@@ -274,6 +372,7 @@ module.exports = {
   resolvePriceForCC,
   resolveServiceAmount,
   computeTransportCharges,
+  computePromoDiscountAmount,
   computePriceBreakdown,
   applyBreakdownToBooking,
   applyRewardDiscount,

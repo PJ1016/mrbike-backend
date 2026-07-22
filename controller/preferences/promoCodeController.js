@@ -12,10 +12,11 @@
  *   POST   /bulk-delete        → bulkDeletePromoCodes   body: { ids }
  *   POST   /bulk-status        → bulkUpdatePromoCodeStatus body: { ids, status }
  *
- * Usage tracking: each redemption is expected to be recorded in the
- * PromoCodeUsage collection (promoCode, user_id, booking_id, discountApplied)
- * by the customer-facing checkout flow when it adopts this PromoCode model;
- * `usedCount` on the PromoCode document is the running aggregate shown here.
+ * Usage tracking: each redemption is recorded in the PromoCodeUsage
+ * collection (promoCode, user_id, booking_id, discountApplied) by
+ * services/invoiceService.js#getOrCreateInvoice — the single choke point
+ * every "booking successfully paid" path funnels through. `usedCount` on
+ * the PromoCode document is the running aggregate shown here.
  */
 
 const mongoose = require("mongoose");
@@ -88,10 +89,13 @@ const getPromoCodeById = async (req, res) => {
 };
 
 function validatePromoCodeInput(body, { partial = false } = {}) {
-  const { code, discountType, discountValue, usageLimit, perUserLimit, validFrom, validTo } = body;
+  const { code, name, discountType, discountValue, usageLimit, perUserLimit, validFrom, validTo } = body;
 
   if (!partial || code !== undefined) {
     if (!code || !String(code).trim()) return "Promo code is required";
+  }
+  if (!partial || name !== undefined) {
+    if (!name || !String(name).trim()) return "Promo name is required";
   }
   if (!partial || discountType !== undefined) {
     if (!discountType || !DISCOUNT_TYPES.includes(discountType)) {
@@ -130,7 +134,7 @@ const createPromoCode = async (req, res) => {
     const error = validatePromoCodeInput(req.body);
     if (error) return res.status(400).json({ success: false, message: error });
 
-    const { code, discountType, discountValue, maxDiscount, minOrder, usageLimit, perUserLimit, validFrom, validTo, isActive } = req.body;
+    const { code, name, description, discountType, discountValue, maxDiscount, minOrder, usageLimit, perUserLimit, validFrom, validTo, isActive } = req.body;
 
     const normalizedCode = String(code).trim().toUpperCase().replace(/\s+/g, "");
     const existing = await PromoCode.findOne({ code: normalizedCode, isDeleted: false });
@@ -138,6 +142,8 @@ const createPromoCode = async (req, res) => {
 
     const promoCode = await PromoCode.create({
       code: normalizedCode,
+      name: String(name).trim(),
+      description: description ? String(description).trim() : "",
       discountType,
       discountValue: Number(discountValue),
       maxDiscount: maxDiscount === undefined || maxDiscount === null || maxDiscount === "" ? null : Number(maxDiscount),
@@ -171,7 +177,7 @@ const updatePromoCode = async (req, res) => {
     const error = validatePromoCodeInput(req.body, { partial: true });
     if (error) return res.status(400).json({ success: false, message: error });
 
-    const { code, discountType, discountValue, maxDiscount, minOrder, usageLimit, perUserLimit, validFrom, validTo, isActive } = req.body;
+    const { code, name, description, discountType, discountValue, maxDiscount, minOrder, usageLimit, perUserLimit, validFrom, validTo, isActive } = req.body;
 
     if (code !== undefined) {
       const normalizedCode = String(code).trim().toUpperCase().replace(/\s+/g, "");
@@ -181,6 +187,8 @@ const updatePromoCode = async (req, res) => {
         promoCode.code = normalizedCode;
       }
     }
+    if (name !== undefined) promoCode.name = String(name).trim();
+    if (description !== undefined) promoCode.description = String(description).trim();
     if (discountType !== undefined) promoCode.discountType = discountType;
     if (discountValue !== undefined) promoCode.discountValue = Number(discountValue);
     if (maxDiscount !== undefined) promoCode.maxDiscount = maxDiscount === null || maxDiscount === "" ? null : Number(maxDiscount);

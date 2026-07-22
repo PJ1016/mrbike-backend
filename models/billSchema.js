@@ -71,6 +71,18 @@ const billSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    discount_amount: {
+        type: Number,
+        default: 0
+    },
+    promo_code: {
+        type: String,
+        default: null
+    },
+    promo_name: {
+        type: String,
+        default: null
+    },
     total_amount: {
         type: Number,
         required: true

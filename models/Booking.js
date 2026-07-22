@@ -177,6 +177,20 @@ const bookingSchema = new mongoose.Schema(
     pricingVersion: { type: Number, default: null },
     priceSnapshotAt: { type: Date, default: null },
 
+    // ── Promo Code snapshot ────────────────────────────────────────────────
+    // Set once at booking creation via pricingEngine.applyBreakdownToBooking()
+    // when a valid promo code is supplied. Immutable after creation (locked
+    // fields, see PRICING_SNAPSHOT_FIELDS below) — a promo can't be swapped
+    // or removed once the booking exists, matching "promo cannot change
+    // after payment" and keeping the discount consistent with what the
+    // customer actually saw before confirming.
+    promoCodeId: { type: mongoose.Schema.Types.ObjectId, ref: "PromoCode", default: null },
+    promoCode: { type: String, default: null },
+    promoName: { type: String, default: null },
+    promoDiscountType: { type: String, enum: ["percentage", "flat", null], default: null },
+    promoDiscountValue: { type: Number, default: null },
+    promoDiscountAmount: { type: Number, default: 0 },
+
     billStatus: {
       type: String,
       enum: ["pending", "paid", "cancelled"],

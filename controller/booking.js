@@ -21,12 +21,15 @@ const Customer = require("../models/customer_model");
 const Vendor = require("../models/dealerModel");
 const {
   computePriceBreakdown,
+  computeTransportCharges,
   resolveServiceAmount,
   applyBreakdownToBooking,
   applyRewardDiscount,
+  round2,
   TRANSPORT_OPTIONS,
   PricingError,
 } = require("../services/pricingEngine");
+const { validatePromoCode } = require("../services/promoService");
 const { ACTIVE_BOOKING_QUERY } = require("../utils/bookingStatus");
 
 async function checkPermission(user_id, requiredPermission) {
@@ -807,6 +810,7 @@ async function createBooking(req, res) {
       scheduleDate,
       timeSlot,
       pickupAddress,
+      promoCode,
     } = req.body;
     // transportOption is optional for backward compatibility with clients
     // that predate this field (see legacy-inference block below).
@@ -907,7 +911,21 @@ async function createBooking(req, res) {
         additionalServices: additionalServiceDocs,
         bikeCC,
       });
-      breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer });
+
+      // ── Re-validate promo code at creation time ─────────────────────────────
+      // Never trust a discount the client echoes back from the earlier
+      // /pricing/quote "Apply Promo" call — the code could have been
+      // deactivated, hit its usage limit, or expired in the meantime. This
+      // is the ONLY place a promo is actually locked onto a booking.
+      let promo = null;
+      if (promoCode) {
+        const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
+        const subtotal = round2(serviceAmount + pickupCharges + dropCharges);
+        const validated = await validatePromoCode({ code: promoCode, userId: user_id, subtotal });
+        promo = validated.promo;
+      }
+
+      breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer, promo });
     } catch (pricingError) {
       if (pricingError instanceof PricingError) {
         return res.status(400).json({ success: false, message: pricingError.message, code: pricingError.code });
