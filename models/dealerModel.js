@@ -48,6 +48,7 @@ const dealerModel = new mongoose.Schema(
       },
     },
     shopContact: { type: String, required: false },
+    gstNumber: { type: String, required: false },
     panCardNo: {
       type: String,
       required: false,

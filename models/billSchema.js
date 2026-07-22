@@ -21,16 +21,29 @@ const billSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
+    booking_number: {
+        type: String,
+        required: false
+    },
     customer_details: {
         name: String,
         email: String,
         phone: String,
         address: String
     },
+    dealer_details: {
+        name: String,
+        address: String,
+        phone: String,
+        gst_number: String,
+        logo_url: String
+    },
     bike_details: {
         model: String,
         registration: String,
-        vin: String
+        vin: String,
+        company: String,
+        engine_cc: Number
     },
     services: [{
         name: String,

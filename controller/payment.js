@@ -23,7 +23,6 @@ const API_KEY_ID = process.env.API_KEY_ID_RAZO;
 const API_KEY_SECRET = process.env.API_KEY_SECRET_RAZO;
 const Customer = require("../models/customer_model");
 const Bill = require("../models/billSchema");
-const { PRICING_WRITE_BYPASS_FLAG } = require("../services/pricingEngine");
 
 const CASHFREE_BASE_URL =
     process.env.CASHFREE_ENV === "production"
@@ -316,215 +315,19 @@ const paymentWebhook = async (req, res) => {
     }
 };
 
-// ✅ NEW: Bill Generation Function
+// Bill generation is centralized in services/invoiceService.js (single
+// source of truth shared by the webhook, cashfree QR flow, cash-received/
+// cash-confirm paths, and the booking-completed fallback). This wrapper
+// keeps the historical name/signature so none of those call sites need to
+// change — they already gate on the correct booking/payment state before
+// calling this.
+const { getOrCreateInvoice } = require("../services/invoiceService");
 const generateBill = async (payment) => {
-    try {
-        // Check if bill already exists
-        const existingBill = await Bill.findOne({ booking_id: payment.booking_id });
-        if (existingBill) {
-            console.log(`📄 Bill already exists for booking: ${payment.booking_id}`);
-            return existingBill;
-        }
-
-        // Get booking details with populated data
-        const booking = await Booking.findById(payment.booking_id)
-            .populate("user_id", "first_name last_name email phone")
-            .populate("userBike_id", "model registration_number vin bike_cc")
-            .populate({
-                path: "services",
-                model: "AdminService",
-                select: "bikes",
-                populate: { path: "base_service_id", select: "name" }
-            })
-            .populate({
-                path: "additionalServices",
-                select: "bikes",
-                populate: { path: "base_additional_service_id", select: "name" }
-            });
-
-        if (!booking) {
-            throw new Error("Booking not found for bill generation");
-        }
-
-        const bikeCC = parseInt(booking.userBike_id?.bike_cc || 0);
-        const resolvePrice = (doc) => {
-            if (!doc || !Array.isArray(doc.bikes)) return 0;
-            const match = doc.bikes.find(b => b.cc === bikeCC);
-            return match ? match.price : 0;
-        };
-
-        // Prepare services array
-        const services = [];
-        let subtotal = 0;
-
-        // Add main services
-        if (booking.services && booking.services.length > 0) {
-            booking.services.forEach(svc => {
-                const name = svc.base_service_id?.name || "Service";
-                const price = resolvePrice(svc);
-                services.push({ name, price, quantity: 1, total: price });
-                subtotal += price;
-            });
-        }
-
-        // Add additional services
-        if (booking.additionalServices && booking.additionalServices.length > 0) {
-            booking.additionalServices.forEach(svc => {
-                const name = svc.base_additional_service_id?.name || "Additional Service";
-                const price = resolvePrice(svc);
-                services.push({ name: `Additional: ${name}`, price, quantity: 1, total: price });
-                subtotal += price;
-            });
-        }
-
-        // Use serviceSummary if available (fallback)
-        if (services.length === 0 && booking.serviceSummary && booking.serviceSummary.length > 0) {
-            booking.serviceSummary.forEach(service => {
-                if (service.serviceName) {
-                    services.push({
-                        name: service.serviceName,
-                        price: service.price || 0,
-                        quantity: 1,
-                        total: service.price || 0
-                    });
-                    subtotal += service.price || 0;
-                }
-            });
-        }
-
-        // Pricing is the frozen snapshot taken by pricingEngine at booking
-        // creation (controller/booking.js#createBooking) — NOT recomputed
-        // from the dealer's current settings. A dealer editing their tax/
-        // commission/charges after a booking was created must never change
-        // that booking's bill. Bookings created before this snapshot existed
-        // (no pricingVersion) fall back to the legacy recompute-from-current-
-        // dealer-settings path for backward compatibility.
-        //
-        // Detection is `pricingVersion` presence ONLY — never
-        // `parseFloat(field) || fallback` on the individual fields, since a
-        // legitimately-zero value (e.g. a free service, 0% tax) would then
-        // wrongly fall through to the legacy recompute branch below.
-        const hasPricingSnapshot = Boolean(booking.pricingVersion);
-
-        let pickupCharge, dropCharge, taxRate, taxAmount, totalAmount, commissionRate, commissionAmount, dealerEarnings;
-
-        if (hasPricingSnapshot) {
-            pickupCharge = Number(booking.pickupCharges);
-            dropCharge = Number(booking.dropCharges);
-            subtotal = Number(booking.subtotal);
-            taxRate = Number(booking.taxRate);
-            taxAmount = Number(booking.taxAmount);
-            totalAmount = Number(booking.customerTotal);
-            commissionRate = Number(booking.commissionRate);
-            commissionAmount = Number(booking.commissionAmount);
-            dealerEarnings = Number(booking.dealerEarnings);
-        } else {
-            // Legacy path (pre pricing-engine bookings) — pickup/drop charges
-            // come from the dealer's Admin-configured settings.
-            const dealer = await Dealer.findById(booking.dealer_id)
-                .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
-                .lean();
-
-            const hasPickupDrop = Boolean(booking.pickupAndDropId);
-            pickupCharge = hasPickupDrop && dealer?.providesPickup
-                ? (parseFloat(dealer.pickupCharges) || 0)
-                : 0;
-            dropCharge = hasPickupDrop && dealer?.providesDrop
-                ? (parseFloat(dealer.dropCharges) || 0)
-                : 0;
-
-            // Subtotal = Service Charges + Pickup Charges (if selected) + Drop Charges (if selected)
-            subtotal += pickupCharge + dropCharge;
-
-            taxRate = parseFloat(dealer?.tax) || 0;
-            taxAmount = (subtotal * taxRate) / 100;
-            totalAmount = subtotal + taxAmount; // Customer Total = Subtotal + Tax
-
-            commissionRate = parseFloat(dealer?.commission) || 0;
-            commissionAmount = parseFloat(((subtotal * commissionRate) / 100).toFixed(2));
-            dealerEarnings = parseFloat((subtotal - commissionAmount).toFixed(2));
-        }
-
-        if (pickupCharge > 0) {
-            services.push({ name: "Pickup Charges", price: pickupCharge, quantity: 1, total: pickupCharge });
-        }
-        if (dropCharge > 0) {
-            services.push({ name: "Drop Charges", price: dropCharge, quantity: 1, total: dropCharge });
-        }
-
-        // Generate bill number
-        const billNumber = `BILL-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-
-        // Create bill
-        const bill = new Bill({
-            booking_id: payment.booking_id,
-            payment_id: payment._id,
-            bill_number: billNumber,
-            bill_date: new Date(),
-            customer_details: {
-                name: `${booking.user_id.first_name} ${booking.user_id.last_name}`,
-                email: booking.user_id.email,
-                phone: booking.user_id.phone
-            },
-            bike_details: {
-                model: booking.userBike_id?.model || "N/A",
-                registration: booking.userBike_id?.registration_number || "N/A",
-                vin: booking.userBike_id?.vin || "N/A"
-            },
-            services: services,
-            subtotal: subtotal,
-            pickup_charges: pickupCharge,
-            drop_charges: dropCharge,
-            tax_amount: taxAmount,
-            tax_rate: taxRate,
-            total_amount: totalAmount,
-            commission_rate: commissionRate,
-            commission_amount: commissionAmount,
-            dealer_earnings: dealerEarnings,
-            payment_details: {
-                payment_method: payment.payment_method || "online",
-                transaction_id: payment.transaction_id,
-                payment_date: new Date()
-            },
-            status: "generated"
-        });
-
-        await bill.save();
-        console.log(`✅ Bill generated successfully: ${billNumber} for booking: ${payment.booking_id}`);
-
-        if (hasPricingSnapshot) {
-            // Pricing fields are already correct and immutable — only the
-            // non-pricing billGenerated flag needs to move. No pricing write,
-            // so no bypass flag needed; the schema guard never even engages.
-            await Booking.findByIdAndUpdate(payment.booking_id, {
-                $set: { billGenerated: true },
-            });
-        } else {
-            // Legacy backfill only: this booking predates the pricing snapshot,
-            // so this is the one-time derivation that establishes tax/totalBill/
-            // pickup/drop for it. Explicitly authorized past the immutability
-            // guard — never do this for a booking that already has a snapshot.
-            await Booking.findByIdAndUpdate(
-                payment.booking_id,
-                {
-                    $set: {
-                        billGenerated: true,
-                        tax: taxAmount,
-                        totalBill: subtotal,
-                        pickupCharges: pickupCharge,
-                        dropCharges: dropCharge,
-                    },
-                },
-                { [PRICING_WRITE_BYPASS_FLAG]: true }
-            );
-        }
-
-        return bill;
-
-    } catch (error) {
-        console.error("❌ Bill generation error:", error);
-        throw error;
-    }
+    return getOrCreateInvoice(payment.booking_id, {
+        payment_id: payment._id,
+        payment_method: payment.payment_method,
+        transaction_id: payment.transaction_id,
+    });
 };
 
 // Get Bill by Booking ID

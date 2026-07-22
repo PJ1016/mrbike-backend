@@ -12,6 +12,7 @@ const Admin = require('../models/admin_model')
 const { Notification, sendBookingNotification } = require("../helper/pushNotification");
 const { handleBookingCompletion } = require("../controller/reward")
 const { generateBill } = require("../controller/payment")
+const { getOrCreateInvoice } = require("../services/invoiceService")
 const { settleBookingWallet } = require("../helper/walletSettlement")
 const { cancelPendingPaymentSessions } = require("../helper/paymentSession")
 const UserBike = require("../models/userBikeModel");
@@ -1525,6 +1526,21 @@ async function updateBookingStatus(req, res) {
     // Handle completion logic if needed
     if (status === "completed") {
       await handleBookingCompletion(existingBooking);
+    }
+
+    // Fallback only: a booking reaching "completed" while payment was
+    // already marked paid (billStatus === "paid") but no invoice exists yet
+    // (e.g. the payment-success trigger fired before this status update was
+    // saved). Payment completion remains the primary trigger — this never
+    // fires for an unpaid booking, since billStatus !== "paid" short-circuits it.
+    if (status === "completed" && existingBooking.billStatus === "paid" && !existingBooking.billGenerated) {
+      try {
+        await getOrCreateInvoice(existingBooking._id, {
+          payment_method: existingBooking.payment_method || "N/A",
+        });
+      } catch (billError) {
+        console.error("Bill generation failed on completion fallback:", billError.message);
+      }
     }
 
     // Generate invoice for cash payment if not already generated
