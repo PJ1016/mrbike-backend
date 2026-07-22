@@ -26,6 +26,7 @@ const {
   TRANSPORT_OPTIONS,
   PricingError,
 } = require("../services/pricingEngine");
+const { ACTIVE_BOOKING_QUERY } = require("../utils/bookingStatus");
 
 async function checkPermission(user_id, requiredPermission) {
   try {
@@ -841,6 +842,23 @@ async function createBooking(req, res) {
       return res.status(400).json({ success: false, message: "User bike not found" });
     }
     const bikeCC = parseInt(bikeData.bike_cc || 0);
+
+    // ── Single Active Booking Per Bike ────────────────────────────────────────
+    // Server-side source of truth: a bike cannot have two non-final bookings
+    // at once, regardless of what the client UI allows. See utils/bookingStatus.js
+    // for the definition of "active" vs. "final".
+    const activeBookingForBike = await booking
+      .findOne({ userBike_id, ...ACTIVE_BOOKING_QUERY })
+      .select("_id bookingId status")
+      .lean();
+    if (activeBookingForBike) {
+      return res.status(409).json({
+        success: false,
+        message: "This bike already has an active service booking.",
+        booking_id: activeBookingForBike.bookingId || activeBookingForBike._id,
+        status: activeBookingForBike.status,
+      });
+    }
 
     // Primary: incoming IDs are BaseService IDs — find AdminService for this dealer
     serviceDocs = await AdminService.find({
