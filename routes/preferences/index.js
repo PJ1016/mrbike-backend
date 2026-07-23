@@ -10,5 +10,6 @@ router.use("/legal", require("./legalRoutes"));
 router.use("/app-banners", require("./appBannerRoutes"));
 router.use("/faq", require("./faqRoutes"));
 router.use("/app-settings", require("./appSettingsRoutes"));
+router.use("/referral-settings", require("./referralSettingsRoutes"));
 
 module.exports = router;
