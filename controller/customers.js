@@ -791,6 +791,67 @@ async function customerlist(req, res) {
   }
 }
 
+// Backs the admin UI's Customer Details page/modal (GET /customers/view/:id).
+// Read-only: unlike getMyReferralCode/getReferralSummary (customer-facing),
+// this never lazily generates a missing referralCode — viewing a customer
+// as an admin must not have side effects on their record.
+async function getCustomerById(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: "id is required" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+
+    const customerDoc = await customers
+      .findById(id)
+      .populate({ path: "referredBy", select: "first_name last_name referralCode" });
+
+    if (!customerDoc) {
+      return res.status(404).json({ success: false, message: "No Customer Account Found" });
+    }
+
+    const userBike = await fetchBikesForCustomer(customerDoc._id);
+
+    const [totalReferrals, convertedReferredUsers] = await Promise.all([
+      customers.countDocuments({ referredBy: customerDoc._id }),
+      ReferralTransaction.distinct("referredUserId", {
+        referrerUserId: customerDoc._id,
+        rewardType: "referrer",
+      }),
+    ]);
+
+    const referrer = customerDoc.referredBy;
+    const referrerName = referrer
+      ? `${referrer.first_name || ""} ${referrer.last_name || ""}`.trim() || "N/A"
+      : null;
+
+    return res.status(200).json({
+      success: true,
+      message: "success",
+      data: {
+        ...customerDoc.toJSON(),
+        userBike,
+        referredBy: referrer ? { name: referrerName, referralCode: referrer.referralCode || null } : null,
+        joinedViaReferral: !!referrer,
+        referralCodeUsed: referrer?.referralCode || null,
+        myReferralCode: customerDoc.referralCode || null,
+        totalReferrals,
+        successfulReferrals: convertedReferredUsers.length,
+        referralEarnings: customerDoc.referralEarnings || 0,
+      },
+      image_base_url: process.env.BASE_URL,
+    });
+  } catch (error) {
+    console.error("getCustomerById error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
 async function deletecustomer(req, res) {
   try {
     const { customer_id } = req.body;
@@ -992,6 +1053,7 @@ module.exports = {
   deletecustomer,
   editcustomer,
   getcustomer,
+  getCustomerById,
   changeImage,
   updateUserBike,
   getMyBikes,

@@ -3,12 +3,14 @@ var multer = require("multer")
 const path = require("path")
 var fs = require("fs-extra")
 const { verifyToken } = require("../helper/verifyAuth")
+const { requireAdmin } = require("../middlewares/requireAdmin")
 var {
   addProfile,
   customerlist,
   deletecustomer,
   editcustomer,
   getcustomer,
+  getCustomerById,
   changeImage,
   updateUserBike,
   getMyBikes,
@@ -58,6 +60,7 @@ router.get("/customerlist", customerlist)
 // router.get('/customer',getcustomer);
 router.get("/customer/:user_id", getcustomer)
 router.get("/customersdata/:user_id", getcustomersData)
+router.get("/view/:id", requireAdmin, getCustomerById)
 router.delete("/deletecustomer", deletecustomer)
 router.put("/editcustomer/:id", verifyToken, editcustomer)
 router.put("/editimage", verifyToken, s3Upload.single("images"), changeImage)
