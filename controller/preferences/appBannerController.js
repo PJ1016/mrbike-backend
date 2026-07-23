@@ -19,6 +19,16 @@ function isValidBannerType(bannerType) {
   return BANNER_TYPES.includes(bannerType);
 }
 
+// scheduleEnd comes in as a date-only string (e.g. "2026-07-23") from the
+// admin date picker. `new Date(dateString)` alone parses to 00:00:00 UTC of
+// that day, which made banners expire at the start of their end date instead
+// of the end of it. Normalize to 23:59:59.999 UTC of the same calendar day so
+// the banner stays visible through its whole end date.
+function endOfDayUTC(dateInput) {
+  const d = new Date(dateInput);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+}
+
 const getAppBanners = async (req, res) => {
   try {
     const { bannerType } = req.params;
@@ -71,7 +81,7 @@ const createAppBanner = async (req, res) => {
       linkUrl: linkUrl || "",
       displayOrder: displayOrder !== undefined ? Number(displayOrder) : 0,
       scheduleStart: scheduleStart ? new Date(scheduleStart) : null,
-      scheduleEnd: scheduleEnd ? new Date(scheduleEnd) : null,
+      scheduleEnd: scheduleEnd ? endOfDayUTC(scheduleEnd) : null,
       isActive: isActive !== undefined ? isActive === "true" || isActive === true : true,
     });
 
@@ -99,7 +109,7 @@ const updateAppBanner = async (req, res) => {
     if (linkUrl !== undefined) banner.linkUrl = linkUrl;
     if (displayOrder !== undefined) banner.displayOrder = Number(displayOrder);
     if (scheduleStart !== undefined) banner.scheduleStart = scheduleStart ? new Date(scheduleStart) : null;
-    if (scheduleEnd !== undefined) banner.scheduleEnd = scheduleEnd ? new Date(scheduleEnd) : null;
+    if (scheduleEnd !== undefined) banner.scheduleEnd = scheduleEnd ? endOfDayUTC(scheduleEnd) : null;
     if (isActive !== undefined) banner.isActive = isActive === "true" || isActive === true;
 
     if (req.file) {

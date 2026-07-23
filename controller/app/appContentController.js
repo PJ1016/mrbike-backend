@@ -66,13 +66,22 @@ const getPublicAppBanners = async (req, res) => {
       return res.status(400).json({ success: false, message: `Invalid bannerType. Allowed: ${BANNER_TYPES.join(", ")}` });
     }
     const now = new Date();
+    // scheduleEnd is compared against the start of today rather than the
+    // exact instant `now`: banners written before the end-of-day fix have
+    // scheduleEnd stored at 00:00:00 UTC of their end date, and would
+    // otherwise look expired from the very start of that date. Comparing
+    // against start-of-day treats "expires on day D" as valid through all of
+    // day D regardless of which time-of-day D's timestamp was stored with,
+    // so both legacy (00:00:00) and current (23:59:59.999) documents behave
+    // the same — no migration required.
+    const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const data = await AppBanner.find({
       bannerType,
       isDeleted: false,
       isActive: true,
       $and: [
         { $or: [{ scheduleStart: null }, { scheduleStart: { $lte: now } }] },
-        { $or: [{ scheduleEnd: null }, { scheduleEnd: { $gte: now } }] },
+        { $or: [{ scheduleEnd: null }, { scheduleEnd: { $gte: startOfToday } }] },
       ],
     })
       .sort({ displayOrder: 1, createdAt: -1 })
