@@ -773,12 +773,27 @@ const addUserBike = async (req, res) => {
 // By prashant
 async function customerlist(req, res) {
   try {
-    const customerResponse = await customers.find();
+    // Populate referredBy just far enough to read the referrer's own
+    // referralCode (the code this customer entered at registration) — same
+    // relationship/fields getCustomerById already reads, just for the list.
+    const customerResponse = await customers
+      .find()
+      .populate({ path: "referredBy", select: "referralCode" });
+
+    const data = customerResponse.map((c) => {
+      const doc = c.toJSON();
+      return {
+        ...doc,
+        referredBy: c.referredBy ? c.referredBy._id : null, // keep raw id shape for existing consumers
+        joinedViaReferral: !!c.referredBy,
+        referralCodeUsed: c.referredBy?.referralCode || null,
+      };
+    });
 
     const response = {
       status: 200,
       message: "success",
-      data: customerResponse,
+      data,
       image_base_url: process.env.BASE_URL, // Keep for list as individual items might vary
     };
     return res.status(200).send(response);
