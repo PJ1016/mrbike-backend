@@ -11,5 +11,6 @@ router.use("/app-banners", require("./appBannerRoutes"));
 router.use("/faq", require("./faqRoutes"));
 router.use("/app-settings", require("./appSettingsRoutes"));
 router.use("/referral-settings", require("./referralSettingsRoutes"));
+router.use("/referral-transactions", require("./referralTransactionRoutes"));
 
 module.exports = router;

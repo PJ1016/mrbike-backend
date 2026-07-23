@@ -9,6 +9,7 @@ const otpAuth = require("../helper/otpAuth");
 const UserBike = require("../models/userBikeModel");
 const BikeVariant = require("../models/bikeVariantModel");
 const ReferralSettings = require("../models/ReferralSettings");
+const ReferralTransaction = require("../models/ReferralTransaction");
 const { generateUniqueReferralCode } = require("../utils/referralCodeGenerator");
 
 async function getReferralSettingsSingleton() {
@@ -887,6 +888,104 @@ async function validateReferralCode(req, res) {
   }
 }
 
+// Backs the Rewards & Referrals screen header. Also carries
+// showRewardsReferralsMenu/enableReferralSystem so the Profile tab can
+// decide whether to render the menu entry at all, without a separate
+// settings-read endpoint for customers.
+async function getReferralSummary(req, res) {
+  try {
+    const user_id = req.user_id;
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    const user = await customers.findOne({ _id: user_id });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.referralCode) {
+      user.referralCode = await generateUniqueReferralCode(customers);
+      await user.save({ validateModifiedOnly: true });
+    }
+
+    const settings = await getReferralSettingsSingleton();
+
+    // Distinct referred users who produced a "referrer" reward for this
+    // user — i.e. how many people they referred that actually converted,
+    // not raw transaction count (which could exceed this if firstBookingOnly
+    // is ever disabled and a referred user completes multiple bookings).
+    const convertedReferredUsers = await ReferralTransaction.distinct("referredUserId", {
+      referrerUserId: user_id,
+      rewardType: "referrer",
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        referralCode: user.referralCode,
+        referralEarnings: user.referralEarnings || 0,
+        successfulReferralsCount: convertedReferredUsers.length,
+        showRewardsReferralsMenu: !!settings.showRewardsReferralsMenu,
+        enableReferralSystem: !!settings.enableReferralSystem,
+      },
+    });
+  } catch (error) {
+    console.error("getReferralSummary error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
+// Backs the Rewards & Referrals screen's transaction list. Includes
+// transactions where the user was rewarded either as referrer (earnings
+// from people they referred) or as the referred user (their own signup
+// reward) — together these always sum to referralEarnings above.
+async function getReferralTransactions(req, res) {
+  try {
+    const user_id = req.user_id;
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const filter = {
+      $or: [{ referrerUserId: user_id }, { referredUserId: user_id }],
+    };
+
+    const [transactions, total] = await Promise.all([
+      ReferralTransaction.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate({ path: "referredUserId", select: "first_name last_name" })
+        .populate({ path: "bookingId", select: "bookingId" })
+        .lean(),
+      ReferralTransaction.countDocuments(filter),
+    ]);
+
+    const data = transactions.map((txn) => ({
+      rewardAmount: txn.rewardAmount,
+      rewardType: txn.rewardType,
+      referredUserName: `${txn.referredUserId?.first_name || ""} ${txn.referredUserId?.last_name || ""}`.trim() || "N/A",
+      bookingId: txn.bookingId?.bookingId || null,
+      status: txn.status,
+      createdDate: txn.createdAt,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error("getReferralTransactions error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
 module.exports = {
   addProfile,
   customerlist,
@@ -901,4 +1000,6 @@ module.exports = {
   getcustomersData,
   getMyReferralCode,
   validateReferralCode,
+  getReferralSummary,
+  getReferralTransactions,
 };

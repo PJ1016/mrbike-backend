@@ -3,6 +3,7 @@ const jwt_decode = require('jwt-decode');
 const Booking = require('../models/Booking')
 const Customer = require('../models/customer_model')
 const { applyRewardDiscount, PricingError } = require('../services/pricingEngine')
+const { awardReferralRewardsIfEligible } = require('../services/referralRewardService')
 
 const createReward = async (req, res) => {
     try {
@@ -154,6 +155,12 @@ async function handleBookingCompletion(booking) {
     });
 
     console.log("✅ Reward Created Successfully:", reward);
+
+    try {
+        await awardReferralRewardsIfEligible(booking);
+    } catch (referralError) {
+        console.error("❌ Referral reward error:", referralError.message);
+    }
 }
 
 const getRewardPoints = async (req, res) => {

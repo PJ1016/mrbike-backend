@@ -17,6 +17,8 @@ var {
   getcustomersData,
   getMyReferralCode,
   validateReferralCode,
+  getReferralSummary,
+  getReferralTransactions,
 } = require("../controller/customers")
 const { createS3Upload } = require("../utils/s3Upload")
 const router = express.Router()
@@ -61,6 +63,8 @@ router.put("/editcustomer/:id", verifyToken, editcustomer)
 router.put("/editimage", verifyToken, s3Upload.single("images"), changeImage)
 router.get("/getMyReferralCode", verifyToken, getMyReferralCode)
 router.post("/validateReferralCode", verifyToken, validateReferralCode)
+router.get("/getReferralSummary", verifyToken, getReferralSummary)
+router.get("/getReferralTransactions", verifyToken, getReferralTransactions)
 
 //Uploading Single file
 router.post("/uploadfile", upload.single("myFile"), (req, res, next) => {

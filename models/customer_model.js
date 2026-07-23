@@ -83,6 +83,10 @@ const CustomerSchema = new mongoose.Schema(
       ref: "customers",
       default: null,
     },
+    // Running total of referral rewards credited to this user, as either
+    // referrer or referred user. Separate from reward_points (the unrelated
+    // scratch-card system) so referral money is never conflated with it.
+    referralEarnings: { type: Number, default: 0, min: 0 },
   },
 
   {
