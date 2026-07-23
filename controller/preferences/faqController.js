@@ -8,17 +8,46 @@
  *   DELETE /:id            → deleteFaq       (soft delete)
  *   PATCH  /:id/status     → toggleFaqStatus body: { status } (boolean)
  *   POST   /bulk-delete    → bulkDeleteFaqs  body: { ids }
+ *   POST   /upload-image   → uploadFaqImage  (multipart, field "image")
  */
 
 const mongoose = require("mongoose");
 const Faq = require("../../models/Faq");
+const { toYoutubeEmbedUrl } = require("../../utils/youtube");
+const { sanitizeFaqAnswer } = require("../../utils/sanitizeHtml");
+
+const APP_TYPES = ["user", "dealer"];
+
+// Validates/normalizes the appType field from a request body. Returns
+// { value, error } — value is undefined when the field wasn't sent at all
+// (leave existing/schema default untouched), error is set on bad input.
+function parseAppType(appType) {
+  if (appType === undefined) return { value: undefined };
+  const list = Array.isArray(appType) ? appType : [appType];
+  const cleaned = list.filter(Boolean);
+  if (cleaned.length === 0 || cleaned.some((v) => !APP_TYPES.includes(v))) {
+    return { error: `appType must be one or more of: ${APP_TYPES.join(", ")}` };
+  }
+  return { value: cleaned };
+}
+
+// Validates/normalizes the optional YouTube videoUrl. Returns
+// { value, error } — value is undefined when not sent, null when explicitly cleared.
+function parseVideoUrl(videoUrl) {
+  if (videoUrl === undefined) return { value: undefined };
+  if (videoUrl === null || videoUrl === "") return { value: null };
+  const embedUrl = toYoutubeEmbedUrl(videoUrl);
+  if (!embedUrl) return { error: "videoUrl must be a valid YouTube watch, short, or embed URL" };
+  return { value: embedUrl };
+}
 
 const getFaqs = async (req, res) => {
   try {
-    const { page, limit, search, category, isActive } = req.query;
+    const { page, limit, search, category, isActive, appType } = req.query;
     const filter = { isDeleted: false };
     if (category) filter.category = category;
     if (isActive !== undefined) filter.isActive = isActive === "true";
+    if (appType) filter.appType = appType;
     if (search) {
       filter.$or = [
         { question: { $regex: search, $options: "i" } },
@@ -53,14 +82,21 @@ const getFaqs = async (req, res) => {
 
 const createFaq = async (req, res) => {
   try {
-    const { question, answer, category, displayOrder, isActive } = req.body;
+    const { question, answer, category, displayOrder, isActive, appType, videoUrl } = req.body;
     if (!question || !question.trim()) return res.status(400).json({ success: false, message: "Question is required" });
     if (!answer || !answer.trim()) return res.status(400).json({ success: false, message: "Answer is required" });
 
+    const parsedAppType = parseAppType(appType);
+    if (parsedAppType.error) return res.status(400).json({ success: false, message: parsedAppType.error });
+    const parsedVideoUrl = parseVideoUrl(videoUrl);
+    if (parsedVideoUrl.error) return res.status(400).json({ success: false, message: parsedVideoUrl.error });
+
     const faq = await Faq.create({
       question: question.trim(),
-      answer,
+      answer: sanitizeFaqAnswer(answer),
       category: category || "General",
+      appType: parsedAppType.value ?? ["user", "dealer"],
+      videoUrl: parsedVideoUrl.value ?? null,
       displayOrder: displayOrder !== undefined ? Number(displayOrder) : 0,
       isActive: isActive !== undefined ? Boolean(isActive) : true,
     });
@@ -81,10 +117,18 @@ const updateFaq = async (req, res) => {
     const faq = await Faq.findOne({ _id: id, isDeleted: false });
     if (!faq) return res.status(404).json({ success: false, message: "FAQ not found" });
 
-    const { question, answer, category, displayOrder, isActive } = req.body;
+    const { question, answer, category, displayOrder, isActive, appType, videoUrl } = req.body;
+
+    const parsedAppType = parseAppType(appType);
+    if (parsedAppType.error) return res.status(400).json({ success: false, message: parsedAppType.error });
+    const parsedVideoUrl = parseVideoUrl(videoUrl);
+    if (parsedVideoUrl.error) return res.status(400).json({ success: false, message: parsedVideoUrl.error });
+
     if (question !== undefined) faq.question = question.trim();
-    if (answer !== undefined) faq.answer = answer;
+    if (answer !== undefined) faq.answer = sanitizeFaqAnswer(answer);
     if (category !== undefined) faq.category = category;
+    if (parsedAppType.value !== undefined) faq.appType = parsedAppType.value;
+    if (parsedVideoUrl.value !== undefined) faq.videoUrl = parsedVideoUrl.value;
     if (displayOrder !== undefined) faq.displayOrder = Number(displayOrder);
     if (isActive !== undefined) faq.isActive = Boolean(isActive);
 
@@ -145,4 +189,14 @@ const bulkDeleteFaqs = async (req, res) => {
   }
 };
 
-module.exports = { getFaqs, createFaq, updateFaq, deleteFaq, toggleFaqStatus, bulkDeleteFaqs };
+const uploadFaqImage = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "Image file is required" });
+    return res.status(201).json({ success: true, url: req.file.location });
+  } catch (error) {
+    console.error("uploadFaqImage error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+module.exports = { getFaqs, createFaq, updateFaq, deleteFaq, toggleFaqStatus, bulkDeleteFaqs, uploadFaqImage };

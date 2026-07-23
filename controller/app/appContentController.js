@@ -93,9 +93,17 @@ const getPublicAppBanners = async (req, res) => {
   }
 };
 
+const FAQ_APP_TYPES = ["user", "dealer"];
+
 const getPublicFaqs = async (req, res) => {
   try {
-    const data = await Faq.find({ isDeleted: false, isActive: true })
+    // appType is optional so app builds that predate this filter keep
+    // getting every active FAQ, unfiltered, exactly as before.
+    const { appType } = req.query;
+    const filter = { isDeleted: false, isActive: true };
+    if (appType && FAQ_APP_TYPES.includes(appType)) filter.appType = appType;
+
+    const data = await Faq.find(filter)
       .sort({ displayOrder: 1, createdAt: -1 })
       .lean();
     return res.status(200).json({ success: true, data });
