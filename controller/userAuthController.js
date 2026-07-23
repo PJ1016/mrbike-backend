@@ -3,6 +3,7 @@ var validation = require('../helper/validation');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const customers = require('../models/customer_model');
 const twilio = require('twilio');
+const { generateUniqueReferralCode } = require('../utils/referralCodeGenerator');
 
 function getTwilioClient() {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -27,7 +28,8 @@ async function userLogin(req, res) {
         let user = await customers.findOne({ phone });
 
         if (!user) {
-            user = new customers({ phone, ftoken, device_token, isVerified: false });
+            const referralCode = await generateUniqueReferralCode(customers);
+            user = new customers({ phone, ftoken, device_token, isVerified: false, referralCode });
             await user.save({ validateModifiedOnly: true });
         } else {
             user.device_token = device_token || user.device_token;

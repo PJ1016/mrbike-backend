@@ -15,6 +15,8 @@ var {
   deleteMyBike,
   addUserBike,
   getcustomersData,
+  getMyReferralCode,
+  validateReferralCode,
 } = require("../controller/customers")
 const { createS3Upload } = require("../utils/s3Upload")
 const router = express.Router()
@@ -57,6 +59,8 @@ router.get("/customersdata/:user_id", getcustomersData)
 router.delete("/deletecustomer", deletecustomer)
 router.put("/editcustomer/:id", verifyToken, editcustomer)
 router.put("/editimage", verifyToken, s3Upload.single("images"), changeImage)
+router.get("/getMyReferralCode", verifyToken, getMyReferralCode)
+router.post("/validateReferralCode", verifyToken, validateReferralCode)
 
 //Uploading Single file
 router.post("/uploadfile", upload.single("myFile"), (req, res, next) => {

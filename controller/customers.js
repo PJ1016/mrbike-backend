@@ -8,6 +8,37 @@ const jwt_decode = require("jwt-decode");
 const otpAuth = require("../helper/otpAuth");
 const UserBike = require("../models/userBikeModel");
 const BikeVariant = require("../models/bikeVariantModel");
+const ReferralSettings = require("../models/ReferralSettings");
+const { generateUniqueReferralCode } = require("../utils/referralCodeGenerator");
+
+async function getReferralSettingsSingleton() {
+  let settings = await ReferralSettings.findOne({});
+  if (!settings) settings = await ReferralSettings.create({});
+  return settings;
+}
+
+// Resolves a referral code entered by `user` against the referrer it
+// belongs to, enforcing: system/registration-referral enabled, one-time
+// use (never overwrite an existing referredBy), code exists, and no
+// self-referral. Returns { error } or { referrerId }.
+async function resolveReferralCodeForUser(referralCode, user) {
+  const settings = await getReferralSettingsSingleton();
+  if (!settings.enableReferralSystem || !settings.allowReferralCodeDuringRegistration) {
+    return { error: "Referral code entry is currently disabled" };
+  }
+  if (user.referredBy) {
+    return { error: "Referral code has already been applied to this account" };
+  }
+  const code = String(referralCode).trim().toUpperCase();
+  if (!code) return { error: "Referral code is required" };
+
+  const referrer = await customers.findOne({ referralCode: code });
+  if (!referrer) return { error: "Invalid referral code" };
+  if (referrer._id.toString() === user._id.toString()) {
+    return { error: "You cannot use your own referral code" };
+  }
+  return { referrerId: referrer._id };
+}
 
 // async function customersignup(req, res) {
 
@@ -141,7 +172,7 @@ const updateUserBike = async (req, res) => {
 
 async function addProfile(req, res) {
   try {
-    const { first_name, last_name, state, city, address, pincode } = req.body;
+    const { first_name, last_name, state, city, address, pincode, referralCode } = req.body;
 
     // Extract user_id from request (set by authentication middleware)
     const user_id = req.user_id;
@@ -170,6 +201,14 @@ async function addProfile(req, res) {
 
     if (req.file) {
       user.image = req.file.location
+    }
+
+    if (referralCode) {
+      const result = await resolveReferralCodeForUser(referralCode, user);
+      if (result.error) {
+        return res.status(400).json({ success: false, message: result.error });
+      }
+      user.referredBy = result.referrerId;
     }
 
     await user.save();
@@ -476,6 +515,7 @@ async function editcustomer(req, res) {
       city,
       address,
       pincode,
+      referralCode,
     } = req.body;
 
     const customerResp = await customers.findOne({ _id: req.params.id });
@@ -492,6 +532,15 @@ async function editcustomer(req, res) {
         pincode: pincode,
         isProfile: true,
       };
+
+      if (referralCode) {
+        const result = await resolveReferralCodeForUser(referralCode, customerResp);
+        if (result.error) {
+          return res.status(400).json({ success: false, message: result.error });
+        }
+        data.referredBy = result.referrerId;
+      }
+
       customers.findByIdAndUpdate(
         { _id: req.params.id },
         { $set: data },
@@ -776,6 +825,68 @@ async function deletecustomer(req, res) {
   }
 }
 
+async function getMyReferralCode(req, res) {
+  try {
+    const user_id = req.user_id;
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    const user = await customers.findOne({ _id: user_id });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.referralCode) {
+      user.referralCode = await generateUniqueReferralCode(customers);
+      await user.save({ validateModifiedOnly: true });
+    }
+
+    return res.status(200).json({ success: true, data: { referralCode: user.referralCode } });
+  } catch (error) {
+    console.error("getMyReferralCode error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
+async function validateReferralCode(req, res) {
+  try {
+    const user_id = req.user_id;
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    const { referralCode } = req.body;
+    if (!referralCode) {
+      return res.status(400).json({ success: false, message: "Referral code is required" });
+    }
+
+    const user = await customers.findOne({ _id: user_id });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const result = await resolveReferralCodeForUser(referralCode, user);
+    if (result.error) {
+      return res.status(400).json({ success: false, message: result.error });
+    }
+
+    const referrer = await customers.findById(result.referrerId).select("first_name last_name referralCode");
+    return res.status(200).json({
+      success: true,
+      message: "Valid referral code",
+      data: {
+        valid: true,
+        referrerId: referrer._id,
+        referrerName: `${referrer.first_name || ""} ${referrer.last_name || ""}`.trim(),
+      },
+    });
+  } catch (error) {
+    console.error("validateReferralCode error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
 module.exports = {
   addProfile,
   customerlist,
@@ -788,4 +899,6 @@ module.exports = {
   deleteMyBike,
   addUserBike,
   getcustomersData,
+  getMyReferralCode,
+  validateReferralCode,
 };

@@ -71,6 +71,18 @@ const CustomerSchema = new mongoose.Schema(
       default: false,
     },
     reward_points: { type: Number, default: 0 },
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+    },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "customers",
+      default: null,
+    },
   },
 
   {
