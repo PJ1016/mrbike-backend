@@ -11,6 +11,7 @@ var {
   editcustomer,
   getcustomer,
   getCustomerById,
+  getReferredCustomers,
   changeImage,
   updateUserBike,
   getMyBikes,
@@ -61,6 +62,7 @@ router.get("/customerlist", customerlist)
 router.get("/customer/:user_id", getcustomer)
 router.get("/customersdata/:user_id", getcustomersData)
 router.get("/view/:id", requireAdmin, getCustomerById)
+router.get("/:id/referrals", requireAdmin, getReferredCustomers)
 router.delete("/deletecustomer", deletecustomer)
 router.put("/editcustomer/:id", verifyToken, editcustomer)
 router.put("/editimage", verifyToken, s3Upload.single("images"), changeImage)

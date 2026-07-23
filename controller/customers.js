@@ -8,6 +8,7 @@ const jwt_decode = require("jwt-decode");
 const otpAuth = require("../helper/otpAuth");
 const UserBike = require("../models/userBikeModel");
 const BikeVariant = require("../models/bikeVariantModel");
+const Booking = require("../models/Booking");
 const ReferralSettings = require("../models/ReferralSettings");
 const ReferralTransaction = require("../models/ReferralTransaction");
 const { generateUniqueReferralCode } = require("../utils/referralCodeGenerator");
@@ -852,6 +853,79 @@ async function getCustomerById(req, res) {
   }
 }
 
+// Backs the admin UI's Customer Details "Referrals" tab (GET /customers/:id/referrals).
+// Read-only, admin-only: lists every customer this user referred, left-joined with
+// their earliest booking (for first-booking status — reuses Booking's own
+// vehicleLifecycleStatus virtual rather than re-deriving lifecycle text here) and
+// with the referrer-side ReferralTransaction (for reward amount/status). Neither
+// join implies the other — a referred customer may not have booked yet, and a
+// booking may exist without (yet) being reward-eligible.
+async function getReferredCustomers(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: "id is required" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+
+    const referredCustomers = await customers
+      .find({ referredBy: id })
+      .select("first_name last_name id createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (referredCustomers.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const referredIds = referredCustomers.map((c) => c._id);
+
+    const [firstBookings, transactions] = await Promise.all([
+      Booking.find({ user_id: { $in: referredIds } }).sort({ createdAt: 1 }),
+      ReferralTransaction.find({
+        referrerUserId: id,
+        referredUserId: { $in: referredIds },
+        rewardType: "referrer",
+      })
+        .populate({ path: "bookingId", select: "bookingId" })
+        .lean(),
+    ]);
+
+    const firstBookingByUser = new Map();
+    for (const booking of firstBookings) {
+      const key = booking.user_id.toString();
+      if (!firstBookingByUser.has(key)) firstBookingByUser.set(key, booking.toJSON());
+    }
+
+    const transactionByUser = new Map(
+      transactions.map((txn) => [txn.referredUserId.toString(), txn]),
+    );
+
+    const data = referredCustomers.map((c) => {
+      const firstBooking = firstBookingByUser.get(c._id.toString()) || null;
+      const transaction = transactionByUser.get(c._id.toString()) || null;
+
+      return {
+        customerId: c.id ? `MRBDC${c.id.toString().padStart(4, "0")}` : null,
+        customerName: `${c.first_name || ""} ${c.last_name || ""}`.trim() || "N/A",
+        joinedDate: c.createdAt,
+        firstBookingStatus: firstBooking ? firstBooking.vehicleLifecycleStatus : "No Booking Yet",
+        rewardAmount: transaction?.rewardAmount || 0,
+        rewardStatus: transaction ? transaction.status : "Pending",
+        bookingId: transaction?.bookingId?.bookingId || firstBooking?.bookingId || null,
+      };
+    });
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("getReferredCustomers error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
 async function deletecustomer(req, res) {
   try {
     const { customer_id } = req.body;
@@ -1054,6 +1128,7 @@ module.exports = {
   editcustomer,
   getcustomer,
   getCustomerById,
+  getReferredCustomers,
   changeImage,
   updateUserBike,
   getMyBikes,
