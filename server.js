@@ -372,6 +372,10 @@ app.get("/privacy-policy", (req, res) => {
   res.sendFile(path.join(process.cwd(), "public", "privacy-policy.html"));
 });
 
+app.get("/delete-account", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "delete-account.html"));
+});
+
 /* ==============================
    Routes
    ============================== */
