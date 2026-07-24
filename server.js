@@ -366,6 +366,13 @@ app.get("/bikedoctor", (req, res) =>
 );
 
 /* ==============================
+   Public Legal Pages
+   ============================== */
+app.get("/privacy-policy", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "privacy-policy.html"));
+});
+
+/* ==============================
    Routes
    ============================== */
 app.use("/bikedoctor", apiRouter);
