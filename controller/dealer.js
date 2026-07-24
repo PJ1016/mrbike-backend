@@ -4,7 +4,7 @@ const Service = require("../models/service_model");
 const Vendor = require("../models/dealerModel");
 const jwt = require("jsonwebtoken");
 var validation = require("../helper/validation");
-const { getDealerStatus } = require("../helper/dealerStatus");
+const { getDealerStatus, isDealerBookable } = require("../helper/dealerStatus");
 const Rating = require("../models/rating_model");
 const Wallet = require("../models/Wallet_modal")
 const Role = require('../models/Roles_modal')
@@ -82,13 +82,13 @@ const dealerWithInRange = async (req, res) => {
       });
     }
 
-    const dealers = await Vendor.find({
+    const dealers = (await Vendor.find({
       online: true,
       wallet: { $gt: -500 },
       isBlocked: { $ne: true },
       latitude: { $gte: latitude - 0.03, $lte: latitude + 0.03 },
       longitude: { $gte: longitude - 0.03, $lte: longitude + 0.03 },
-    });
+    })).filter(isDealerBookable); // approved + active + online, not just online
 
     console.log(`✅ Total Dealers Found: ${dealers}`);
 
@@ -175,10 +175,11 @@ const dealerWithInRange2 = async (req, res) => {
     console.log(`📍 Searching dealers near lat: ${userLat}, lon: ${userLon} with variant_id: ${variant_id}`);
 
     // Step 1: Fetch all active dealers within 3km and ensure they are not blocked
-    const dealers = await Vendor.find({
+    const dealers = (await Vendor.find({
+      online: true,
       wallet: { $gt: -500 },
       isBlocked: { $ne: true },
-    });
+    })).filter(isDealerBookable); // approved + active + online, not just online
 
     console.log(`✅ Total Dealers Found: ${dealers.length}`);
 
@@ -791,10 +792,20 @@ async function getShopDetails(req, res) {
 
     // Fetch dealer details
     const dealer = await Vendor.findById(dealer_id)
-      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges dropCharges providesPickup providesDrop minWalletAmount ownerName phone fullAddress registrationStatus tax");
+      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges dropCharges providesPickup providesDrop minWalletAmount ownerName phone fullAddress registrationStatus tax online isActive isBlocked status dealerStatus");
 
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found!" });
+    }
+
+    // A dealer that's gone offline, been deactivated/unapproved, or blocked
+    // must not be viewable by users — even if the User App still has a
+    // stale garage id from before the status changed (deep link, history, etc).
+    if (!isDealerBookable(dealer)) {
+      return res.status(403).json({
+        success: false,
+        message: "This garage is currently unavailable.",
+      });
     }
 
     // Fetch AdminServices that include this dealer in their dealers array

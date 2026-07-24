@@ -42,6 +42,18 @@ function getDealerStatus(dealer) {
   return deriveDealerStatus(dealer);
 }
 
+// Single source of truth for "can a customer see/book this dealer right now".
+// `dealerStatus` alone (Active/Inactive/...) only reflects admin approval +
+// admin-side isActive — it says nothing about the dealer's own online/offline
+// toggle (models/dealerModel.js `online`). A dealer must be approved, active,
+// not blocked, AND currently online to be visible or bookable by users.
+function isDealerBookable(dealer) {
+  if (!dealer) return false;
+  if (dealer.isBlocked) return false;
+  if (!dealer.online) return false;
+  return getDealerStatus(dealer) === "Active";
+}
+
 // Merges a flat/dotted findOneAndUpdate `$set` payload onto a dealer
 // document's current status-relevant fields, so dealerStatus can be
 // re-derived before the write lands.
@@ -77,4 +89,5 @@ module.exports = {
   deriveDealerStatus,
   getDealerStatus,
   mergeForStatus,
+  isDealerBookable,
 };

@@ -33,6 +33,7 @@ const { validatePromoCode } = require("../services/promoService");
 const PromoCode = require("../models/PromoCode");
 const PromoCodeUsage = require("../models/PromoCodeUsage");
 const { ACTIVE_BOOKING_QUERY } = require("../utils/bookingStatus");
+const { isDealerBookable } = require("../helper/dealerStatus");
 
 async function checkPermission(user_id, requiredPermission) {
   try {
@@ -833,11 +834,19 @@ async function createBooking(req, res) {
     }
 
     // ── Validate Dealer ───────────────────────────────────────────────────────
+    // Reload fresh from the DB on every booking attempt — never trust a garage
+    // shown in the app that may have gone offline/inactive since it was fetched.
     const dealer = await Vendor.findById(dealer_id)
-      .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+      .select("tax commission pickupCharges dropCharges providesPickup providesDrop online isActive isBlocked status registrationStatus dealerStatus")
       .lean();
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found" });
+    }
+    if (!isDealerBookable(dealer)) {
+      return res.status(400).json({
+        success: false,
+        message: "This garage is currently unavailable.",
+      });
     }
 
     // ── Validate Services (resolve BaseService IDs -> AdminService docs) ──────
