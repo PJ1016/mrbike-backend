@@ -221,6 +221,9 @@ const getFinanceSummary = async (req, res) => {
         },
       ]),
       Vendor.aggregate([
+        // Google Play Review Test Account
+        // Do not remove without replacing the Play Store testing process.
+        { $match: { isPlayStoreTestAccount: { $ne: true } } },
         {
           $facet: {
             walletSum: [{ $group: { _id: null, totalWalletBalance: { $sum: "$wallet" } } }],
@@ -363,7 +366,9 @@ const getDealerWalletsSummary = async (req, res) => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
     const skip = (pageNum - 1) * limitNum;
 
-    const matchStage = {};
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    const matchStage = { isPlayStoreTestAccount: { $ne: true } };
     if (search) {
       matchStage.$or = [
         { shopName: { $regex: search, $options: "i" } },
@@ -548,7 +553,9 @@ const getDealerWallets = async (req, res) => {
       });
     }
 
-    const matchStage = {};
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    const matchStage = { isPlayStoreTestAccount: { $ne: true } };
     if (search) {
       matchStage.$or = [
         { ownerName: { $regex: search, $options: "i" } },

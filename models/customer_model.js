@@ -87,6 +87,9 @@ const CustomerSchema = new mongoose.Schema(
     // referrer or referred user. Separate from reward_points (the unrelated
     // scratch-card system) so referral money is never conflated with it.
     referralEarnings: { type: Number, default: 0, min: 0 },
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    isPlayStoreTestAccount: { type: Boolean, default: false },
   },
 
   {

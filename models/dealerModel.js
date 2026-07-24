@@ -282,6 +282,10 @@ const dealerModel = new mongoose.Schema(
       default: "self",
     },
     createdVia: { type: String, required: false }, // e.g. 'admin-panel', 'mobile', 'web'
+
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    isPlayStoreTestAccount: { type: Boolean, default: false },
   },
   { timestamps: true },
 )

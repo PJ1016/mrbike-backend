@@ -4,6 +4,7 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const customers = require('../models/customer_model');
 const twilio = require('twilio');
 const { generateUniqueReferralCode } = require('../utils/referralCodeGenerator');
+const { isCustomerTestPhone, isCustomerTestOtpValid } = require('../helper/playStoreTestAccounts');
 
 function getTwilioClient() {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -30,11 +31,25 @@ async function userLogin(req, res) {
         if (!user) {
             const referralCode = await generateUniqueReferralCode(customers);
             user = new customers({ phone, ftoken, device_token, isVerified: false, referralCode });
+            if (isCustomerTestPhone(phone)) user.isPlayStoreTestAccount = true;
             await user.save({ validateModifiedOnly: true });
         } else {
             user.device_token = device_token || user.device_token;
             user.ftoken = ftoken || user.ftoken;
             await user.save({ validateModifiedOnly: true });
+        }
+
+        // Google Play Review Test Account
+        // Do not remove without replacing the Play Store testing process.
+        // Fixed reviewer number: never hits Twilio, no OTP is actually sent —
+        // the app-side verify step accepts only the hardcoded OTP for this number.
+        if (isCustomerTestPhone(phone)) {
+            const isNew = !user.isVerified;
+            return res.status(isNew ? 201 : 200).json({
+                success: true,
+                message: "OTP sent to your mobile.",
+                user: { phone: user.phone, isVerified: user.isVerified },
+            });
         }
 
         const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
@@ -70,6 +85,35 @@ async function otpVerify(req, res) {
 
         if (!phone || !otp) {
             return res.status(400).json({ success: false, message: "Phone and OTP are required" });
+        }
+
+        // Google Play Review Test Account
+        // Do not remove without replacing the Play Store testing process.
+        // Fixed reviewer number: bypasses Twilio entirely and only ever
+        // succeeds for the exact hardcoded OTP below. The account is
+        // auto-created with minimum fields if it doesn't already exist so
+        // reviewers never depend on prior app state. No SMS is sent and no
+        // Twilio quota is consumed for this number.
+        if (isCustomerTestPhone(phone)) {
+            if (!isCustomerTestOtpValid(phone, otp)) {
+                return res.status(400).json({ success: false, message: "Incorrect OTP" });
+            }
+
+            let user = await customers.findOne({ phone });
+            if (!user) {
+                user = new customers({ phone, isVerified: true, isPlayStoreTestAccount: true });
+            }
+            user.isVerified = true;
+            user.isPlayStoreTestAccount = true;
+            if (device_token) user.device_token = device_token;
+            if (ftoken) user.ftoken = ftoken;
+            await user.save({ validateModifiedOnly: true });
+
+            const hasProfile = user.isProfile || (user.first_name && user.first_name.trim().length > 0);
+            const token = validation.generateUserToken(user._id, 'logged', 4);
+            return res.status(200)
+                .cookie("token", token, { expires: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), httpOnly: true })
+                .json({ success: true, message: "OTP verified successfully", token, user_id: user._id, isProfile: hasProfile });
         }
 
         const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
@@ -123,6 +167,14 @@ async function resendOtp(req, res) {
         const user = await customers.findOne({ phone });
         if (!user) {
             return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        // Google Play Review Test Account
+        // Do not remove without replacing the Play Store testing process.
+        // Fixed reviewer number: OTP is a hardcoded constant, so there is
+        // nothing to resend and Twilio must never be hit for this number.
+        if (isCustomerTestPhone(phone)) {
+            return res.status(200).json({ success: true, message: "OTP sent successfully" });
         }
 
         const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;

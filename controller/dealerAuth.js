@@ -13,6 +13,7 @@ const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const { sendemails } = require("../helper/helper");
 const twilio = require("twilio");
+const { isDealerTestPhone, isDealerTestOtpValid } = require("../helper/playStoreTestAccounts");
 
 function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -161,7 +162,25 @@ async function usersignin(req, res) {
       dealer.isActive = true;
     }
 
+    if (isDealerTestPhone(phone)) dealer.isPlayStoreTestAccount = true;
     await dealer.save({ validateModifiedOnly: true });
+
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    // Fixed reviewer number: never hits Twilio, no OTP is actually sent — the
+    // app-side verify step accepts only the hardcoded OTP for this number.
+    if (isDealerTestPhone(phone)) {
+      return res.status(dealer.isNew ? 201 : 200).json({
+        success: true,
+        message: "OTP sent to your mobile.",
+        data: {
+          phone: dealer.phone,
+          isVerify: dealer.isVerify,
+          isDoc: dealer.isDoc,
+          isProfile: dealer.isProfile,
+        },
+      });
+    }
 
     const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
     console.log("[dealerAuth/signin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
@@ -211,24 +230,44 @@ async function verifyOTP(req, res) {
       });
     }
 
-    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
-    console.log("[dealerAuth/verifyotp] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
-    console.log("[dealerAuth/verifyotp] VERIFY_SID:", verifySid);
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    // Fixed reviewer number: bypasses Twilio entirely and only ever succeeds
+    // for the exact hardcoded OTP below. The account is auto-created with
+    // minimum fields if it doesn't already exist so reviewers never depend
+    // on prior app state. No SMS is sent and no Twilio quota is consumed
+    // for this number.
+    let isTestAccountLogin = false;
+    if (isDealerTestPhone(phone)) {
+      if (!isDealerTestOtpValid(phone, otp)) {
+        return res.status(401).json({
+          success: false,
+          message: "Incorrect OTP",
+        });
+      }
+      isTestAccountLogin = true;
+    }
 
-    const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
-    console.log("Twilio TO:", phoneNumber);
+    if (!isTestAccountLogin) {
+      const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
+      console.log("[dealerAuth/verifyotp] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
+      console.log("[dealerAuth/verifyotp] VERIFY_SID:", verifySid);
 
-    const twilioClient = getTwilioClient();
-    const verificationCheck = await twilioClient.verify.v2
-      .services(verifySid)
-      .verificationChecks
-      .create({ to: phoneNumber, code: otp });
+      const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+      console.log("Twilio TO:", phoneNumber);
 
-    if (verificationCheck.status !== "approved") {
-      return res.status(401).json({
-        success: false,
-        message: "Incorrect OTP",
-      });
+      const twilioClient = getTwilioClient();
+      const verificationCheck = await twilioClient.verify.v2
+        .services(verifySid)
+        .verificationChecks
+        .create({ to: phoneNumber, code: otp });
+
+      if (verificationCheck.status !== "approved") {
+        return res.status(401).json({
+          success: false,
+          message: "Incorrect OTP",
+        });
+      }
     }
 
     const dealer = await Vendor.findOne({ phone });
@@ -241,6 +280,7 @@ async function verifyOTP(req, res) {
         isProfile: false,
         isDoc: false,
         isActive: true,
+        ...(isTestAccountLogin ? { isPlayStoreTestAccount: true } : {}),
       });
 
       await newDealer.save();
@@ -261,6 +301,11 @@ async function verifyOTP(req, res) {
           },
         },
       });
+    }
+
+    if (isTestAccountLogin && !dealer.isPlayStoreTestAccount) {
+      dealer.isPlayStoreTestAccount = true;
+      await dealer.save({ validateModifiedOnly: true });
     }
 
     const token = validation.generateUserToken(dealer._id, "dealer", "2h");

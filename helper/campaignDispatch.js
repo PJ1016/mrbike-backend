@@ -13,7 +13,12 @@ async function dispatchCampaign(campaign) {
   const Model = isDealerAudience ? Dealer : Customer;
   const receiverType = isDealerAudience ? "dealer" : "user";
 
-  const recipients = await Model.find({}).select("device_token ftoken").lean();
+  // Google Play Review Test Account
+  // Do not remove without replacing the Play Store testing process.
+  // Play Store reviewer accounts must never receive promotional campaigns.
+  const recipients = await Model.find({ isPlayStoreTestAccount: { $ne: true } })
+    .select("device_token ftoken")
+    .lean();
 
   for (const recipient of recipients) {
     const token = campaign.pushNotification ? recipient.device_token || recipient.ftoken : null;

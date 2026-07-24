@@ -628,12 +628,15 @@ const dashboardCounts = async (req, res) => {
     const adminCount = await admin.countDocuments()
     const offersCount = await offer.countDocuments()
     const bikeCompanyCount = await bikeCompanySchema.countDocuments()
-    const customerCount = await customerSchema.countDocuments()
+    // Google Play Review Test Account
+    // Do not remove without replacing the Play Store testing process.
+    // Keep the permanent Play Store test accounts out of production analytics.
+    const customerCount = await customerSchema.countDocuments({ isPlayStoreTestAccount: { $ne: true } })
     const bookingCount = await bookingSchema.countDocuments()
     const serviceCount = await servicesSchema.countDocuments()
-    const dealerCount = await dealersSchema.countDocuments()
-    const blockedDealersCount = await dealersSchema.countDocuments({ isBlocked: true })
-    const inactiveDealersCount = await dealersSchema.countDocuments({ isActive: false })
+    const dealerCount = await dealersSchema.countDocuments({ isPlayStoreTestAccount: { $ne: true } })
+    const blockedDealersCount = await dealersSchema.countDocuments({ isBlocked: true, isPlayStoreTestAccount: { $ne: true } })
+    const inactiveDealersCount = await dealersSchema.countDocuments({ isActive: false, isPlayStoreTestAccount: { $ne: true } })
 
     res.status(200).json({
       status: 200,
