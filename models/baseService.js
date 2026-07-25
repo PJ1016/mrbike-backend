@@ -23,6 +23,31 @@ const baseServiceSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    categoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ServiceCategory",
+      default: null,
+    },
+    // Reference/starting price shown to users before a dealer/bike-specific
+    // price is resolved (AdminService.bikes[].price remains the source of
+    // truth for what a customer is actually charged).
+    basePrice: {
+      type: Number,
+      default: 0,
+    },
+    // Estimated duration in minutes.
+    duration: {
+      type: Number,
+      default: 0,
+    },
+    pickupAvailable: {
+      type: Boolean,
+      default: false,
+    },
+    warranty: {
+      type: Boolean,
+      default: false,
+    },
     isActive: {
       type: Boolean,
       default: true,

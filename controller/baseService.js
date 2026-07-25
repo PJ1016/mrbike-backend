@@ -44,7 +44,7 @@ async function createBaseService(req, res) {
       })
     }
 
-    const { name, description } = req.body
+    const { name, description, categoryId, basePrice, duration, pickupAvailable, warranty } = req.body
 
     /* =========================
        1. Validate name
@@ -65,6 +65,14 @@ async function createBaseService(req, res) {
         status: false,
         message: "Service image is required",
         field: "image",
+      })
+    }
+
+    if (categoryId && !mongoose.Types.ObjectId.isValid(categoryId)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid categoryId",
+        field: "categoryId",
       })
     }
 
@@ -90,6 +98,11 @@ async function createBaseService(req, res) {
       name: name.trim(),
       description: description?.trim(),
       image: req.file.location, // S3 URL
+      categoryId: categoryId || null,
+      basePrice: basePrice !== undefined ? Number(basePrice) : 0,
+      duration: duration !== undefined ? Number(duration) : 0,
+      pickupAvailable: pickupAvailable === true || pickupAvailable === "true",
+      warranty: warranty === true || warranty === "true",
     })
 
     return res.status(201).json({
@@ -112,7 +125,19 @@ async function createBaseService(req, res) {
  */
 async function listBaseServices(req, res) {
   try {
-    const services = await BaseService.find({ isActive: { $ne: false } }).sort({ id: -1 })
+    const { categoryId } = req.query
+    const filter = { isActive: { $ne: false } }
+    if (categoryId) {
+      if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+        return res.status(400).json({
+          status: false,
+          message: "Invalid categoryId",
+        })
+      }
+      filter.categoryId = categoryId
+    }
+
+    const services = await BaseService.find(filter).populate("categoryId", "name icon").sort({ id: -1 })
 
     return res.status(200).json({
       status: true,
@@ -143,7 +168,7 @@ async function getBaseServiceById(req, res) {
       })
     }
 
-    const service = await BaseService.findById(id)
+    const service = await BaseService.findById(id).populate("categoryId", "name icon")
 
     if (!service) {
       return res.status(404).json({
@@ -173,7 +198,7 @@ async function getBaseServiceById(req, res) {
 async function updateBaseService(req, res) {
   try {
     const { id } = req.params
-    const { name, description } = req.body
+    const { name, description, categoryId, basePrice, duration, pickupAvailable, warranty } = req.body
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -187,6 +212,14 @@ async function updateBaseService(req, res) {
         status: false,
         message: "Service name is required",
         field: "name",
+      })
+    }
+
+    if (categoryId && !mongoose.Types.ObjectId.isValid(categoryId)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid categoryId",
+        field: "categoryId",
       })
     }
 
@@ -210,6 +243,26 @@ async function updateBaseService(req, res) {
 
     if (description !== undefined) {
       updateData.description = description?.trim()
+    }
+
+    if (categoryId !== undefined) {
+      updateData.categoryId = categoryId || null
+    }
+
+    if (basePrice !== undefined) {
+      updateData.basePrice = Number(basePrice)
+    }
+
+    if (duration !== undefined) {
+      updateData.duration = Number(duration)
+    }
+
+    if (pickupAvailable !== undefined) {
+      updateData.pickupAvailable = pickupAvailable === true || pickupAvailable === "true"
+    }
+
+    if (warranty !== undefined) {
+      updateData.warranty = warranty === true || warranty === "true"
     }
 
     if (req.file) {
