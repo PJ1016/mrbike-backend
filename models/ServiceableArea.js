@@ -20,15 +20,18 @@ const serviceableAreaSchema = new mongoose.Schema(
       default: null,
     },
     // Required when type === "radius". GeoJSON Point, center of the geofence.
+    // No `default` on either sub-path: Mongoose auto-instantiates a nested
+    // object's sub-paths that have defaults even when the parent key is
+    // never set on the input doc, which previously produced a stored
+    // `location: { type: "Point" }` (no coordinates) for every city-type
+    // area — invalid GeoJSON that a 2dsphere index rejects on insert.
     location: {
       type: {
         type: String,
         enum: ["Point"],
-        default: "Point",
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
-        default: undefined,
       },
     },
     // Required when type === "radius". Radius in kilometers.
