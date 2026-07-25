@@ -115,6 +115,7 @@ async function garagesForService(req, res) {
           ratingCount: rating.ratingCount,
           providesPickup: !!e.dealer.providesPickup,
           providesDrop: !!e.dealer.providesDrop,
+          shopImages: (e.dealer.shopImages || []).map(url => formatImage(url, req)),
         }
       })
       .sort((a, b) => {

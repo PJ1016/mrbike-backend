@@ -288,6 +288,7 @@ async function topGarages(req, res) {
           distanceKm: distanceKm != null ? Number(distanceKm.toFixed(2)) : null,
           averageRating: rating.averageRating,
           ratingCount: rating.ratingCount,
+          shopImages: (dealer.shopImages || []).map(url => formatImage(url, req)),
         }
       })
       .sort((a, b) => {
