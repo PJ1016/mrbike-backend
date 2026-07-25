@@ -1390,6 +1390,28 @@ async function updateServiceById(req, res) {
 }
 
 /**
+ * Resolves the distinct BikeCompany ids that a set of bike variants belongs
+ * to (variant -> model -> company), for stamping AdminService.companies when
+ * a dealer's per-bike pricing is saved. Returns [] for empty/invalid input
+ * rather than throwing — a service with no priced bikes yet legitimately has
+ * no compatible companies.
+ */
+async function resolveCompanyIdsForVariants(variantIds) {
+  const uniqueIds = [...new Set((variantIds || []).filter(Boolean).map(String))];
+  if (!uniqueIds.length) return [];
+
+  const variants = await BikeVariant.find({ _id: { $in: uniqueIds } }).populate("model_id", "company_id");
+
+  const companyIds = new Set();
+  variants.forEach(variant => {
+    const companyId = variant.model_id?.company_id;
+    if (companyId) companyIds.add(String(companyId));
+  });
+
+  return Array.from(companyIds);
+}
+
+/**
  * NEW: Save Dealer Services (Upsert)
  * POST /dealer/services
  */
@@ -1418,15 +1440,23 @@ async function saveDealerServices(req, res) {
     // Process Base Services (AdminService model)
     for (const [baseSvcId, bikes] of Object.entries(baseMap)) {
       if (bikes.length === 0) continue;
-      
-      const existing = await adminservices.findOne({ 
-        dealer_id: dealerId, 
-        base_service_id: baseSvcId 
+
+      // `companies` drives bike-compatibility matching for Quick Services /
+      // Recommended (see getCompatibleServiceIds in v1-api/helpers/geoAndRatings.js) —
+      // derive it from the bike company each mapped variant actually belongs
+      // to, rather than leaving it empty, or this service will never surface
+      // for any bike.
+      const companies = await resolveCompanyIdsForVariants(bikes.map(b => b.variant_id));
+
+      const existing = await adminservices.findOne({
+        dealer_id: dealerId,
+        base_service_id: baseSvcId
       });
 
       if (existing) {
         existing.bikes = bikes;
         existing.isActive = true;
+        existing.companies = companies;
         await existing.save();
       } else {
         await adminservices.create({
@@ -1434,7 +1464,7 @@ async function saveDealerServices(req, res) {
           base_service_id: baseSvcId,
           bikes,
           isActive: true,
-          companies: [] // Required field
+          companies
         });
       }
     }
