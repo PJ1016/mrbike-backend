@@ -2,7 +2,7 @@ const mongoose = require("mongoose")
 const BaseService = require("../../models/baseService")
 const AdminService = require("../../models/adminService")
 const { isDealerBookable } = require("../../helper/dealerStatus")
-const { getRatingsMap, calculateDistanceKm } = require("../helpers/geoAndRatings")
+const { getRatingsMap, calculateDistanceKm, resolveBikeContext, getCompatibleServiceIds } = require("../helpers/geoAndRatings")
 
 function formatImage(url, req) {
   if (url && !url.startsWith("http")) {
@@ -11,10 +11,10 @@ function formatImage(url, req) {
   return url
 }
 
-// GET /api/v1/services?categoryId=
+// GET /api/v1/services?categoryId=&bikeId=
 async function listByCategory(req, res) {
   try {
-    const { categoryId } = req.query
+    const { categoryId, bikeId } = req.query
     const filter = { isActive: true }
 
     if (categoryId) {
@@ -22,6 +22,19 @@ async function listByCategory(req, res) {
         return res.status(400).json({ status: false, message: "Invalid categoryId" })
       }
       filter.categoryId = categoryId
+    }
+
+    let bikeMatched = false
+    if (bikeId) {
+      if (!mongoose.Types.ObjectId.isValid(bikeId)) {
+        return res.status(400).json({ status: false, message: "Invalid bikeId" })
+      }
+      const bikeContext = await resolveBikeContext(bikeId)
+      if (bikeContext) {
+        const allowedServiceIds = await getCompatibleServiceIds(bikeContext.companyId)
+        filter._id = { $in: allowedServiceIds }
+        bikeMatched = true
+      }
     }
 
     const services = await BaseService.find(filter).populate("categoryId", "name icon").sort({ name: 1 })
@@ -40,6 +53,7 @@ async function listByCategory(req, res) {
         pickupAvailable: s.pickupAvailable,
         warranty: s.warranty,
       })),
+      meta: { bikeMatched },
     })
   } catch (error) {
     console.error("Error fetching services:", error)
