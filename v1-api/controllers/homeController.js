@@ -48,38 +48,110 @@ async function resolveDealerScope(req, res) {
 }
 
 // GET /api/v1/home/quick-services?bikeId=&lat=&lng=
+//
+// Sourced from nearby dealers' own Base Services (AdminService docs), not a
+// standalone catalog: we collect what nearby dealers actually offer, filter
+// to the bike's brand/model when one is given, then de-dupe by
+// base_service_id (one card per service name/type) picking the closest (or,
+// with no live location, best-rated) dealer's price for the card.
 async function quickServices(req, res) {
   try {
     const { bikeId } = req.query
 
     const scope = await resolveDealerScope(req, res)
     if (scope === null) return
-    const { nearbyDealerIds } = scope
+    const { nearbyDealerIds, distanceByDealerId } = scope
 
-    let allowedServiceIds = null
+    let bikeContext = null
     if (bikeId) {
       if (!mongoose.Types.ObjectId.isValid(bikeId)) {
         return res.status(400).json({ status: false, message: "Invalid bikeId" })
       }
-      const bikeContext = await resolveBikeContext(bikeId)
-      if (bikeContext) {
-        allowedServiceIds = await getCompatibleServiceIds(bikeContext.companyId)
-      }
+      bikeContext = await resolveBikeContext(bikeId)
     }
+
+    const dealerServiceFilter = { isActive: true }
+    if (nearbyDealerIds) dealerServiceFilter.dealer_id = { $in: nearbyDealerIds }
+    if (bikeContext) dealerServiceFilter.companies = bikeContext.companyId
+
+    const dealerServices = await AdminService.find(dealerServiceFilter).select("base_service_id dealer_id bikes")
+
+    // Brand match is enforced by the query above; model match (when a model
+    // is pinned on the dealer's mapping) is narrowed here.
+    const matchedDealerServices = bikeContext
+      ? dealerServices.filter(ds =>
+          (ds.bikes || []).some(b => !b.model_id || String(b.model_id) === String(bikeContext.modelId)),
+        )
+      : dealerServices
+
+    if (!matchedDealerServices.length) {
+      return res.status(200).json({
+        status: true,
+        message: "No quick services found",
+        data: [],
+        meta: { bikeMatched: !!bikeContext, scope: nearbyDealerIds ? "area" : "network" },
+      })
+    }
+
+    const ratingsMap = await getRatingsMap(Array.from(new Set(matchedDealerServices.map(ds => String(ds.dealer_id)))))
+
+    const bestByBaseServiceId = new Map()
+    matchedDealerServices.forEach(ds => {
+      const key = String(ds.base_service_id)
+      const distanceKm = distanceByDealerId.get(String(ds.dealer_id))
+      const rating = ratingsMap.get(String(ds.dealer_id))?.averageRating || 0
+      const candidate = { adminService: ds, distanceKm, rating }
+      const current = bestByBaseServiceId.get(key)
+      if (!current) {
+        bestByBaseServiceId.set(key, candidate)
+        return
+      }
+
+      const currentHasDistance = current.distanceKm != null
+      const candidateHasDistance = candidate.distanceKm != null
+      let candidateIsBetter = false
+      if (candidateHasDistance && currentHasDistance) candidateIsBetter = candidate.distanceKm < current.distanceKm
+      else if (candidateHasDistance && !currentHasDistance) candidateIsBetter = true
+      else if (!candidateHasDistance && !currentHasDistance) candidateIsBetter = candidate.rating > current.rating
+
+      if (candidateIsBetter) bestByBaseServiceId.set(key, candidate)
+    })
 
     const popularity = await computeServicePopularity(nearbyDealerIds)
 
-    const filter = { isActive: true }
-    if (allowedServiceIds) filter._id = { $in: allowedServiceIds }
+    const baseServiceIds = Array.from(bestByBaseServiceId.keys())
+    const baseServices = await BaseService.find({ _id: { $in: baseServiceIds }, isActive: true })
+    const baseServiceById = new Map(baseServices.map(s => [String(s._id), s]))
 
-    const services = await BaseService.find(filter)
+    const ranked = baseServiceIds
+      .filter(id => baseServiceById.has(id))
+      .map(id => {
+        const best = bestByBaseServiceId.get(id)
+        const bikes = best.adminService.bikes || []
+        const priceMatch = bikeContext
+          ? bikes.find(
+              b =>
+                (!b.variant_id || String(b.variant_id) === String(bikeContext.variantId)) &&
+                (bikeContext.cc == null || b.cc === bikeContext.cc),
+            ) || bikes.find(b => !b.model_id || String(b.model_id) === String(bikeContext.modelId))
+          : null
+        const price = priceMatch ? priceMatch.price : bikes.length ? Math.min(...bikes.map(b => b.price)) : null
 
-    const ranked = services
-      .map(s => ({ service: s, popularity: popularity.get(String(s._id)) || { count: 0, source: "dealerCount" } }))
+        return {
+          service: baseServiceById.get(id),
+          popularity: popularity.get(id) || { count: 0, source: "dealerCount" },
+          price,
+          dealerId: best.adminService.dealer_id,
+          distanceKm: best.distanceKm,
+        }
+      })
       .sort((a, b) => b.popularity.count - a.popularity.count)
       .slice(0, 8)
-      .map(({ service, popularity: p }) => ({
+      .map(({ service, popularity: p, price, dealerId, distanceKm }) => ({
         ...serializeService(service, req),
+        basePrice: price != null ? price : service.basePrice,
+        dealerId,
+        distanceKm: distanceKm != null ? Number(distanceKm.toFixed(2)) : null,
         popularityCount: p.count,
         popularitySource: p.source,
       }))
@@ -88,7 +160,7 @@ async function quickServices(req, res) {
       status: true,
       message: ranked.length ? "Quick services fetched" : "No quick services found",
       data: ranked,
-      meta: { bikeMatched: !!allowedServiceIds, scope: nearbyDealerIds ? "area" : "network" },
+      meta: { bikeMatched: !!bikeContext, scope: nearbyDealerIds ? "area" : "network" },
     })
   } catch (error) {
     console.error("Error fetching quick services:", error)
