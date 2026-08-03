@@ -4,6 +4,11 @@ const path = require("path")
 var fs = require("fs-extra")
 const { verifyToken } = require("../helper/verifyAuth")
 const { requireAdmin } = require("../middlewares/requireAdmin")
+const {
+  requireCustomer,
+  requireOwnCustomerParam,
+  requireOwnedBike,
+} = require("../middlewares/customerAuth")
 var {
   addProfile,
   customerlist,
@@ -48,31 +53,31 @@ const upload = multer({
 /* POST users listing. */
 router.post(
   "/addProfile",
-  verifyToken,
+  requireCustomer,
   s3Upload.single("images"),
   addProfile,
 )
-router.get("/getMyBikes", verifyToken, getMyBikes)
-router.post("/deleteMyBike/:bike_id", verifyToken, deleteMyBike)
-router.post("/addUserBike", verifyToken, addUserBike)
+router.get("/getMyBikes", requireCustomer, getMyBikes)
+router.post("/deleteMyBike/:bike_id", requireCustomer, requireOwnedBike("bike_id"), deleteMyBike)
+router.post("/addUserBike", requireCustomer, addUserBike)
 
-router.put("/user-bike/:id", verifyToken, updateUserBike)
-router.get("/customerlist", customerlist)
+router.put("/user-bike/:id", requireCustomer, requireOwnedBike("id"), updateUserBike)
+router.get("/customerlist", requireAdmin, customerlist)
 // router.get('/customer',getcustomer);
-router.get("/customer/:user_id", getcustomer)
-router.get("/customersdata/:user_id", getcustomersData)
+router.get("/customer/:user_id", requireAdmin, getcustomer)
+router.get("/customersdata/:user_id", requireCustomer, requireOwnCustomerParam("user_id"), getcustomersData)
 router.get("/view/:id", requireAdmin, getCustomerById)
 router.get("/:id/referrals", requireAdmin, getReferredCustomers)
-router.delete("/deletecustomer", deletecustomer)
-router.put("/editcustomer/:id", verifyToken, editcustomer)
-router.put("/editimage", verifyToken, s3Upload.single("images"), changeImage)
-router.get("/getMyReferralCode", verifyToken, getMyReferralCode)
-router.post("/validateReferralCode", verifyToken, validateReferralCode)
-router.get("/getReferralSummary", verifyToken, getReferralSummary)
-router.get("/getReferralTransactions", verifyToken, getReferralTransactions)
+router.delete("/deletecustomer", requireAdmin, deletecustomer)
+router.put("/editcustomer/:id", requireCustomer, requireOwnCustomerParam("id"), editcustomer)
+router.put("/editimage", requireCustomer, s3Upload.single("images"), changeImage)
+router.get("/getMyReferralCode", requireCustomer, getMyReferralCode)
+router.post("/validateReferralCode", requireCustomer, validateReferralCode)
+router.get("/getReferralSummary", requireCustomer, getReferralSummary)
+router.get("/getReferralTransactions", requireCustomer, getReferralTransactions)
 
 //Uploading Single file
-router.post("/uploadfile", upload.single("myFile"), (req, res, next) => {
+router.post("/uploadfile", requireCustomer, upload.single("myFile"), (req, res, next) => {
   const file = req.file
   if (!file) {
     const error = new Error("Please upload a file")
@@ -88,7 +93,7 @@ router.post("/uploadfile", upload.single("myFile"), (req, res, next) => {
 })
 
 //Uploading multiple files
-router.post("/uploadmultiple", upload.array("myFiles", 12), (req, res, next) => {
+router.post("/uploadmultiple", requireCustomer, upload.array("myFiles", 12), (req, res, next) => {
   const files = req.files
   if (!files) {
     const error = new Error("Please choose files")

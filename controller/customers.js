@@ -148,16 +148,19 @@ async function resolveReferralCodeForUser(referralCode, user) {
 const updateUserBike = async (req, res) => {
   try {
     const { id } = req.params; // Get bike ID from URL params
-    const updateData = req.body; // Get update data from request body
+    const allowedFields = ["name", "model", "bike_cc", "plate_number", "variant_id", "status"];
+    const updateData = Object.fromEntries(
+      allowedFields.filter((field) => req.body[field] !== undefined).map((field) => [field, req.body[field]]),
+    );
 
     // Check if the bike exists
-    const existingBike = await UserBike.findById(id);
+    const existingBike = await UserBike.findOne({ _id: id, user_id: req.user_id });
     if (!existingBike) {
       return res.status(404).json({ message: "Bike not found" });
     }
 
     // Update the bike details
-    const updatedBike = await UserBike.findByIdAndUpdate(id, updateData, {
+    const updatedBike = await UserBike.findOneAndUpdate({ _id: id, user_id: req.user_id }, updateData, {
       new: true, // Return the updated document
       runValidators: true, // Ensure validation rules are applied
     });
@@ -168,7 +171,7 @@ const updateUserBike = async (req, res) => {
     });
   } catch (error) {
     console.error("Update Error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
@@ -221,14 +224,13 @@ async function addProfile(req, res) {
       profile: user,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 }
 
 const deleteMyBike = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
+    const user_id = req.user_id;
     const { bike_id } = req.params; // Get bike ID from URL params
 
     console.log("🔹 Received User ID:", user_id);
@@ -243,7 +245,7 @@ const deleteMyBike = async (req, res) => {
     }
 
     // Find the bike and ensure it belongs to the user
-    const bike = await UserBike.findOne({ _id: bike_id });
+    const bike = await UserBike.findOne({ _id: bike_id, user_id });
 
     console.log("🔹 Found Bike:", bike); // Debugging log
 
@@ -496,11 +498,8 @@ async function deletecustomer(req, res) {
 
 async function editcustomer(req, res) {
   try {
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
-    const user_type = data.user_type;
-    const type = data.type;
-    if (user_id == null || (user_type != 1 && user_type != 4)) {
+    const user_id = req.user_id;
+    if (!user_id || String(req.params.id) !== String(user_id)) {
       var response = {
         status: 401,
         message: "admin is un-authorised !",
@@ -520,7 +519,7 @@ async function editcustomer(req, res) {
       referralCode,
     } = req.body;
 
-    const customerResp = await customers.findOne({ _id: req.params.id });
+    const customerResp = await customers.findOne({ _id: user_id });
     // console.log("customerResp : ", customerResp);
     if (customerResp) {
       const data = {
@@ -544,7 +543,7 @@ async function editcustomer(req, res) {
       }
 
       customers.findByIdAndUpdate(
-        { _id: req.params.id },
+        { _id: user_id },
         { $set: data },
         { new: true },
         async function (err, docs) {
@@ -584,11 +583,9 @@ async function editcustomer(req, res) {
 
 async function changeImage(req, res) {
   try {
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
-    const user_type = data.user_type;
+    const user_id = req.user_id;
 
-    if (!user_id || (user_type !== 1 && user_type !== 4)) {
+    if (!user_id) {
       return res
         .status(200)
         .json({ success: false, message: "Unauthorized access!" });
