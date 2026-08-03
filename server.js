@@ -286,6 +286,9 @@ const db = require("./models/index");
 const errorMiddleware = require("./middlewares/error");
 const bookingExpiryJob = require("./helper/bookingExpiryJob");
 const campaignSchedulerJob = require("./helper/campaignSchedulerJob");
+const reviewReminderJob = require("./helper/reviewReminderJob");
+const validateRequest = require("./middlewares/requestValidation");
+const sensitiveRateLimit = require("./middlewares/rateLimits");
 
 const app = express();
 const server = http.createServer(app);
@@ -349,6 +352,10 @@ app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 
+// One validation boundary and category-specific throttling for every API mount.
+app.use(validateRequest);
+app.use(sensitiveRateLimit);
+
 /* ==============================
    🔥 STATIC FILES (IMPORTANT PART)
    ============================== */
@@ -404,6 +411,7 @@ db.mongoose
     console.log("Mongodb connected with:", data.connection.host);
     bookingExpiryJob.start(io);
     campaignSchedulerJob.start();
+    reviewReminderJob.start();
   })
   .catch((err) => console.log("MongoDB error:", err));
 

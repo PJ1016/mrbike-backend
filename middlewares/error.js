@@ -31,9 +31,13 @@ module.exports = (err, req, res, next) => {
         err = new ErrorHandler(message, 400);
     }
 
-    res.status(err.statusCode).json({
+    const response = {
         success: false,
         message: err.message,
-        stack: err.stack
-    });
+    };
+
+    // Never expose stack traces in production. Preserve them in development
+    // for diagnostics without changing the standard production error shape.
+    if (process.env.NODE_ENV !== "production") response.stack = err.stack;
+    res.status(err.statusCode).json(response);
 };

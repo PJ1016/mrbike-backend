@@ -230,6 +230,20 @@ const bookingSchema = new mongoose.Schema(
     otp_verified:        { type: Boolean, default: false },
     delivered_at:        { type: Date, default: null },
 
+    // Review lifecycle is denormalised here so booking clients can decide
+    // whether to show the rating CTA without an additional query.
+    reviewStatus: {
+      type: String,
+      enum: ["ineligible", "pending", "submitted"],
+      default: "ineligible",
+      index: true,
+    },
+    reviewId: { type: mongoose.Schema.Types.ObjectId, ref: "rating", default: null },
+    reviewEligibleAt: { type: Date, default: null },
+    reviewSubmittedAt: { type: Date, default: null },
+    reviewReminder24hSentAt: { type: Date, default: null },
+    reviewReminder3dSentAt: { type: Date, default: null },
+
     otp_regen_count:     { type: Number, default: 0 },
     otp_failed_attempts: { type: Number, default: 0 },
   },

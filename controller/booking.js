@@ -2854,6 +2854,10 @@ const verifyDeliveryOtp = async (req, res) => {
     bookingDoc.otp_verified         = true;
     bookingDoc.delivered_at         = new Date();
     bookingDoc.status               = "delivered";
+    // Delivery is the final lifecycle gate. Payment and invoice guards above
+    // have already succeeded before a delivery OTP can be issued/verified.
+    bookingDoc.reviewStatus         = "pending";
+    bookingDoc.reviewEligibleAt     = new Date();
     await bookingDoc.save();
 
     console.log(`[VERIFY-OTP] Booking ${bookingId} → delivered`);
@@ -2877,6 +2881,15 @@ const verifyDeliveryOtp = async (req, res) => {
           title: "Bike Delivered",
           body: "Your bike has been handed over. Ride safe!",
           data: { type: "bike_delivered", bookingId: bookingId.toString() },
+          receiverId: bookingDoc.user_id,
+          receiverType: "user",
+          bookingId: bookingDoc._id,
+        });
+        await sendBookingNotification({
+          token: userToken,
+          title: "How was your service?",
+          body: "Please rate your MR Bike Doctor experience.",
+          data: { type: "review_request", bookingId: bookingId.toString() },
           receiverId: bookingDoc.user_id,
           receiverType: "user",
           bookingId: bookingDoc._id,

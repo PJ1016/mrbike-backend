@@ -71,6 +71,7 @@ const CustomerSchema = new mongoose.Schema(
       default: false,
     },
     reward_points: { type: Number, default: 0 },
+    reviewCount: { type: Number, default: 0, min: 0 },
     referralCode: {
       type: String,
       unique: true,

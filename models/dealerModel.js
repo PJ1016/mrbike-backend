@@ -5,6 +5,8 @@ const { DEALER_STATUSES, deriveDealerStatus, mergeForStatus } = require("../help
 const dealerModel = new mongoose.Schema(
   {
     id: { type: Number },
+    averageRating: { type: Number, default: 0, min: 0, max: 5 },
+    ratingCount: { type: Number, default: 0, min: 0 },
     shopName: { type: String, required: false },
     email: {
       type: String,
