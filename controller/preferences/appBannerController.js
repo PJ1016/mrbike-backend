@@ -29,6 +29,24 @@ function endOfDayUTC(dateInput) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
 }
 
+function bannerLocationFields(body) {
+  const locationType = body.locationType === "specific" ? "specific" : "all";
+  const latitude = body.latitude === "" || body.latitude == null ? null : Number(body.latitude);
+  const longitude = body.longitude === "" || body.longitude == null ? null : Number(body.longitude);
+  const radiusKm = body.radiusKm === "" || body.radiusKm == null ? 10 : Number(body.radiusKm);
+  if (locationType === "specific" &&
+      (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(radiusKm) || radiusKm <= 0)) {
+    return { error: "Valid latitude, longitude and radius are required for a location-specific banner" };
+  }
+  return {
+    locationType,
+    placeName: locationType === "specific" ? String(body.placeName || "").trim() : "",
+    latitude: locationType === "specific" ? latitude : null,
+    longitude: locationType === "specific" ? longitude : null,
+    radiusKm: locationType === "specific" ? radiusKm : 10,
+  };
+}
+
 const getAppBanners = async (req, res) => {
   try {
     const { bannerType } = req.params;
@@ -70,18 +88,22 @@ const createAppBanner = async (req, res) => {
     if (!isValidBannerType(bannerType)) {
       return res.status(400).json({ success: false, message: `Invalid bannerType. Allowed: ${BANNER_TYPES.join(", ")}` });
     }
-    const { title, linkUrl, displayOrder, scheduleStart, scheduleEnd, isActive } = req.body;
+    const { title, description, linkUrl, displayOrder, scheduleStart, scheduleEnd, isActive } = req.body;
+    const location = bannerLocationFields(req.body);
+    if (location.error) return res.status(400).json({ success: false, message: location.error });
     if (!title || !title.trim()) return res.status(400).json({ success: false, message: "Title is required" });
     if (!req.file) return res.status(400).json({ success: false, message: "Banner image is required" });
 
     const banner = await AppBanner.create({
       bannerType,
       title: title.trim(),
+      description: String(description || "").trim(),
       image: req.file.location,
       linkUrl: linkUrl || "",
       displayOrder: displayOrder !== undefined ? Number(displayOrder) : 0,
       scheduleStart: scheduleStart ? new Date(scheduleStart) : null,
       scheduleEnd: scheduleEnd ? endOfDayUTC(scheduleEnd) : null,
+      ...location,
       isActive: isActive !== undefined ? isActive === "true" || isActive === true : true,
     });
 
@@ -104,13 +126,19 @@ const updateAppBanner = async (req, res) => {
     const banner = await AppBanner.findOne({ _id: id, bannerType, isDeleted: false });
     if (!banner) return res.status(404).json({ success: false, message: "Banner not found" });
 
-    const { title, linkUrl, displayOrder, scheduleStart, scheduleEnd, isActive } = req.body;
+    const { title, description, linkUrl, displayOrder, scheduleStart, scheduleEnd, isActive } = req.body;
     if (title !== undefined) banner.title = title.trim();
+    if (description !== undefined) banner.description = String(description).trim();
     if (linkUrl !== undefined) banner.linkUrl = linkUrl;
     if (displayOrder !== undefined) banner.displayOrder = Number(displayOrder);
     if (scheduleStart !== undefined) banner.scheduleStart = scheduleStart ? new Date(scheduleStart) : null;
     if (scheduleEnd !== undefined) banner.scheduleEnd = scheduleEnd ? endOfDayUTC(scheduleEnd) : null;
     if (isActive !== undefined) banner.isActive = isActive === "true" || isActive === true;
+    if (req.body.locationType !== undefined) {
+      const location = bannerLocationFields(req.body);
+      if (location.error) return res.status(400).json({ success: false, message: location.error });
+      Object.assign(banner, location);
+    }
 
     if (req.file) {
       const oldImage = banner.image;

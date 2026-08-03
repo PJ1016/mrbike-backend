@@ -646,8 +646,27 @@ const getMyBikes = async (req, res) => {
       });
     }
 
-    // Fetch user bikes
-    const userBikes = await UserBike.find({ user_id });
+    // Fetch user bikes and the most recent completed service for each bike.
+    // The additive serviceInfo field keeps the existing response contract
+    // intact for older clients.
+    const userBikes = await UserBike.find({ user_id }).lean();
+    const bikeIds = userBikes.map((bike) => bike._id);
+    const latestServices = bikeIds.length
+      ? await Booking.aggregate([
+          { $match: { user_id: new mongoose.Types.ObjectId(user_id), userBike_id: { $in: bikeIds }, status: { $in: ["completed", "delivered", "cash received", "Payment"] } } },
+          { $sort: { serviceDate: -1, updatedAt: -1 } },
+          { $group: { _id: "$userBike_id", lastServiceDate: { $first: "$serviceDate" } } },
+        ])
+      : [];
+    const serviceByBike = new Map(latestServices.map((row) => [String(row._id), row]));
+    const bikesWithServiceInfo = userBikes.map((bike) => {
+      const row = serviceByBike.get(String(bike._id));
+      const lastServiceDate = row?.lastServiceDate || null;
+      // No maintenance interval is currently stored in the database, so do
+      // not manufacture a due date. The nullable field is explicit and lets
+      // clients render an honest "not scheduled" state.
+      return { ...bike, serviceInfo: { lastServiceDate, nextServiceDue: null } };
+    });
     console.log(
       `[getMyBikes] Found ${userBikes.length} bikes for user ID: ${user_id}`,
     );
@@ -658,7 +677,7 @@ const getMyBikes = async (req, res) => {
         userBikes.length > 0
           ? "Bikes retrieved successfully"
           : "No bikes found",
-      data: userBikes,
+      data: bikesWithServiceInfo,
     });
   } catch (error) {
     console.error("Error fetching user bikes:", error);
@@ -1078,6 +1097,8 @@ async function getReferralSummary(req, res) {
         successfulReferralsCount: convertedReferredUsers.length,
         showRewardsReferralsMenu: !!settings.showRewardsReferralsMenu,
         enableReferralSystem: !!settings.enableReferralSystem,
+        enableReferrerReward: !!settings.enableReferrerReward,
+        referrerRewardAmount: settings.referrerRewardAmount || 0,
       },
     });
   } catch (error) {

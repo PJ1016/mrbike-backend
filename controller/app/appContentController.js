@@ -22,6 +22,14 @@ function isValidBannerType(bannerType) {
   return BANNER_TYPES.includes(bannerType);
 }
 
+function distanceKm(lat1, lng1, lat2, lng2) {
+  const rad = (value) => (value * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLng = rad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 const getPublicLegalDocuments = async (req, res) => {
   try {
     const documents = await LegalDocument.find({ isPublished: true }).lean();
@@ -75,7 +83,7 @@ const getPublicAppBanners = async (req, res) => {
     // so both legacy (00:00:00) and current (23:59:59.999) documents behave
     // the same — no migration required.
     const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const data = await AppBanner.find({
+    let data = await AppBanner.find({
       bannerType,
       isDeleted: false,
       isActive: true,
@@ -86,6 +94,18 @@ const getPublicAppBanners = async (req, res) => {
     })
       .sort({ displayOrder: 1, createdAt: -1 })
       .lean();
+    // Coordinates are optional for older app versions. When supplied, only
+    // global banners or specific banners whose radius contains the selected
+    // location are returned.
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      data = data.filter((banner) => {
+        if (!banner.locationType || banner.locationType === "all") return true;
+        if (!Number.isFinite(banner.latitude) || !Number.isFinite(banner.longitude)) return false;
+        return distanceKm(lat, lng, banner.latitude, banner.longitude) <= (banner.radiusKm || 10);
+      });
+    }
     return res.status(200).json({ success: true, data });
   } catch (error) {
     console.error("getPublicAppBanners error:", error);
