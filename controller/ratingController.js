@@ -97,6 +97,7 @@ async function updateReview(req, res) {
     if (req.body.recommend != null) review.recommend = req.body.recommend === true || req.body.recommend === "true";
     if (req.body.isAnonymous != null) review.isAnonymous = req.body.isAnonymous === true || req.body.isAnonymous === "true";
     review.lastEditedAt = new Date(); await review.save(); await recomputeSummaries(review.dealer_id);
+    if (req.files?.length) await ReviewImage.insertMany(req.files.map(file => ({ review_id: review._id, url: file.location || file.path, key: file.key, mimeType: file.mimetype })));
     return res.json({ success: true, message: "Review updated", data: review });
   } catch (error) { console.error("updateReview:", error); return res.status(500).json({ success: false, message: "Unable to update review" }); }
 }
