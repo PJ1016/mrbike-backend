@@ -193,7 +193,8 @@ const getuserbookings = async (req, res) => {
           path: "additionalServices",
           populate: { path: "base_additional_service_id", select: "name" },
         })
-        .populate("dealer_id", "shopName fullAddress address city locality shopImages phone")
+        .populate("dealer_id", "shopName fullAddress address city locality shopImages phone averageRating ratingCount status dealerStatus")
+        .populate("reviewId", "rating createdAt")
         .populate("pickupAndDropId")
         // populate user with optional inner population of user's bikes
         .populate({
@@ -1052,7 +1053,8 @@ async function getBookingDetails(req, res) {
     // Try to find the booking
     const bookingData = await booking.findOne({ _id: bookingId, user_id: req.user_id })
       .populate("user_id", "first_name last_name phone email image address city")
-      .populate("dealer_id", "shopName fullAddress address city locality shopImages phone")
+      .populate("dealer_id", "shopName fullAddress address city locality shopImages phone averageRating ratingCount status dealerStatus")
+      .populate("reviewId", "rating createdAt")
       .populate({
         path: "services",
         model: "AdminService",

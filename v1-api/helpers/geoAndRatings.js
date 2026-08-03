@@ -1,5 +1,5 @@
 const Vendor = require("../../models/dealerModel")
-const Rating = require("../../models/rating_model")
+const RatingSummary = require("../../models/RatingSummary")
 const AdminService = require("../../models/adminService")
 const Booking = require("../../models/Booking")
 const UserBike = require("../../models/userBikeModel")
@@ -66,26 +66,16 @@ async function findNearbyDealers({ lat, lng, city, radiusKm = DEFAULT_RADIUS_KM 
     .sort((a, b) => a.distanceKm - b.distanceKm)
 }
 
-/** Aggregates real average rating + count per dealer, never a client-supplied value. */
+/** Reads the maintained dealer rollups in one query (no per-card/N+1 work). */
 async function getRatingsMap(dealerIds) {
   if (!dealerIds.length) return new Map()
-
-  const rows = await Rating.aggregate([
-    { $match: { dealer_id: { $in: dealerIds.map(String) } } },
-    {
-      $group: {
-        _id: "$dealer_id",
-        averageRating: { $avg: "$rating" },
-        ratingCount: { $sum: 1 },
-      },
-    },
-  ])
+  const rows = await RatingSummary.find({ entityType: "dealer", entityId: { $in: dealerIds } }).select("entityId averageRating reviewCount").lean()
 
   const map = new Map()
   rows.forEach(row => {
-    map.set(String(row._id), {
+    map.set(String(row.entityId), {
       averageRating: Number((row.averageRating || 0).toFixed(1)),
-      ratingCount: row.ratingCount,
+      ratingCount: row.reviewCount,
     })
   })
   return map

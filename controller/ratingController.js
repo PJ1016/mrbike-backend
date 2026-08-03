@@ -116,8 +116,12 @@ async function getallreview(req, res) {
   if (requestedDealer) { if (!objectId(requestedDealer)) return res.status(400).json({ success: false, message: "Invalid dealer ID" }); match.dealer_id = new mongoose.Types.ObjectId(requestedDealer); }
   if (req.query.featured === "true") match.isFeatured = true;
   const page = Math.max(1, Number(req.query.page) || 1), limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
-  const [data, total] = await Promise.all([Review.aggregate(publicPipeline(match, (page - 1) * limit, limit)), Review.countDocuments(match)]);
-  return res.json({ success: true, status: 200, data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+  const [data, total, summary] = await Promise.all([
+    Review.aggregate(publicPipeline(match, (page - 1) * limit, limit)),
+    Review.countDocuments(match),
+    requestedDealer ? RatingSummary.findOne({ entityType: "dealer", entityId: requestedDealer }).lean() : null,
+  ]);
+  return res.json({ success: true, status: 200, data, summary, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 }
 
 async function dealerReviews(req, res) {

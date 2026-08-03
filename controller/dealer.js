@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 var validation = require("../helper/validation");
 const { getDealerStatus, isDealerBookable } = require("../helper/dealerStatus");
 const Rating = require("../models/rating_model");
+const RatingSummary = require("../models/RatingSummary");
 const Wallet = require("../models/Wallet_modal")
 const Role = require('../models/Roles_modal')
 const Admin = require('../models/admin_model')
@@ -792,7 +793,7 @@ async function getShopDetails(req, res) {
 
     // Fetch dealer details
     const dealer = await Vendor.findById(dealer_id)
-      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges dropCharges providesPickup providesDrop minWalletAmount ownerName phone fullAddress registrationStatus tax online isActive isBlocked status dealerStatus");
+      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges dropCharges providesPickup providesDrop minWalletAmount ownerName phone fullAddress registrationStatus tax online isActive isBlocked status dealerStatus averageRating ratingCount");
 
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found!" });
@@ -839,11 +840,7 @@ async function getShopDetails(req, res) {
       }).filter(service => service.bikes.length > 0); // Remove services with no matching bikes
     }
 
-    // Fetch ratings for the dealer
-    const ratings = await Rating.find({ dealer_id: dealer_id });
-    const totalRatings = ratings.length;
-    const sumRatings = ratings.reduce((acc, curr) => acc + curr.rating, 0);
-    const averageRating = totalRatings > 0 ? (sumRatings / totalRatings).toFixed(1) : "0.0";
+    const summary = await RatingSummary.findOne({ entityType: "dealer", entityId: dealer_id }).select("averageRating reviewCount").lean();
 
     return res.status(200).json({
       success: true,
@@ -851,7 +848,8 @@ async function getShopDetails(req, res) {
       data: {
         ...dealer.toObject(),
         services: adminServices,
-        averageRating
+        averageRating: summary?.averageRating ?? dealer.averageRating ?? 0,
+        ratingCount: summary?.reviewCount ?? dealer.ratingCount ?? 0,
       }
     });
 
