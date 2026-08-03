@@ -1428,8 +1428,6 @@ async function getActiveDealers(req, res) {
 // Admin progresses: PENDING → IN_PROGRESS → COMPLETED  (or REJECTED to rollback)
 const createWithdrawalRequest = async (req, res) => {
   try {
-    console.log('withdrawal headers', req.headers);
-    console.log('withdrawal body', req.body);
 
     if (!req.headers.token) {
       return res.status(401).json({ status: false, message: "Token is required" });
@@ -1442,7 +1440,6 @@ const createWithdrawalRequest = async (req, res) => {
       return res.status(401).json({ status: false, message: "Invalid token" });
     }
 
-    console.log('decoded token', data);
 
     const { user_id, user_type } = data;
     const { dealer_id, amount, note } = req.body;
@@ -1461,12 +1458,10 @@ const createWithdrawalRequest = async (req, res) => {
     }
 
     const dealer = await Vendor.findById(dealer_id);
-    console.log('dealer', dealer);
     if (!dealer) {
       return res.status(200).json({ status: false, message: "Dealer not found" });
     }
 
-    console.log('wallet balance', dealer?.wallet);
 
     if (user_type === 2 && dealer._id.toString() !== user_id) {
       return res.status(200).json({ status: false, message: "You can only withdraw from your own wallet" });

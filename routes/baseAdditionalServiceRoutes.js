@@ -2,6 +2,7 @@ const express = require("express")
 const router = express.Router()
 const { createS3Upload } = require("../utils/s3Upload")
 const { verifyToken } = require("../helper/verifyAuth")
+const { requireAdmin } = require("../middlewares/requireAdmin")
 const {
   createBaseAdditionalService,
   listBaseAdditionalServices,
@@ -15,7 +16,7 @@ const baseAdditionalServiceUpload = createS3Upload("base-additional-services")
 // Admin only routes — write operations require a valid admin token
 router.post(
   "/",
-  verifyToken,
+  requireAdmin,
   baseAdditionalServiceUpload.single("image"),
   createBaseAdditionalService
 )
@@ -23,10 +24,10 @@ router.get("/", listBaseAdditionalServices)
 router.get("/:id", getBaseAdditionalServiceById)
 router.put(
   "/:id",
-  verifyToken,
+  requireAdmin,
   baseAdditionalServiceUpload.single("image"),
   updateBaseAdditionalService
 )
-router.delete("/:id", verifyToken, deleteBaseAdditionalService)
+router.delete("/:id", requireAdmin, deleteBaseAdditionalService)
 
 module.exports = router

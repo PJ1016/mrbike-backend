@@ -13,6 +13,7 @@ var {
 } = require("../controller/additionalOptionscontroller")
 
 const router = express.Router()
+const { requireAdmin } = require("../middlewares/requireAdmin")
 
 // Define the folder path
 const uploadDir = path.join(__dirname, "../image")
@@ -40,10 +41,10 @@ const upload = multer({
 })
 
 // Define Routes
-router.post("/addservice", upload.single("images"), addservice)
+router.post("/addservice", requireAdmin, upload.single("images"), addservice)
 router.get("/servicelist", servicelist)
-router.put("/updateservice", upload.fields([{ name: "service_image", maxCount: 1 }]), updateService)
-router.delete("/deleteService", deleteService)
+router.put("/updateservice", requireAdmin, upload.fields([{ name: "service_image", maxCount: 1 }]), updateService)
+router.delete("/deleteService", requireAdmin, deleteService)
 router.get("/service/:id", singleService)
 
 router.get("/dealer/:dealer_id", getServicesByDealer)

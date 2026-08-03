@@ -2,6 +2,8 @@ var express = require('express');
 var multer = require('multer');
 var fs = require('fs-extra');
 const router = express.Router();
+const { requireAdmin } = require("../middlewares/requireAdmin");
+const { requireBookingParticipant } = require("../middlewares/bookingAuth");
 const {gettracking, updatetracking,getAlltracking} = require("../controller/trackings")
 
 const storage = multer.diskStorage({
@@ -17,9 +19,9 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* POST users listing. */getAlltracking
-router.get('/alltrackbooking',getAlltracking)
-router.get('/trackbooking/:id',gettracking)
-router.put('/updatetracking/:id',updatetracking)
+router.get('/alltrackbooking',requireAdmin,getAlltracking)
+router.get('/trackbooking/:id',requireBookingParticipant((req) => req.params.id),gettracking)
+router.put('/updatetracking/:id',requireBookingParticipant((req) => req.params.id),updatetracking)
 
 
 module.exports = router;

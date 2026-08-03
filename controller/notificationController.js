@@ -5,7 +5,8 @@ const getNotificationsByReceiverId = async (req, res) => {
 
   try {
     const notifications = await Notification.find({
-        receiverId,
+        receiverId: req.user_id,
+        receiverType: "user",
       }).sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -25,7 +26,7 @@ const getNotificationsByReceiverId = async (req, res) => {
 const deleteNotify = async (req,res) =>{
     try{
         let {id} = req.params
-        const notify = await Notification.findByIdAndDelete({_id:id})
+        const notify = await Notification.findOneAndDelete({_id:id, receiverId: req.user_id, receiverType: "user"})
         if(notify){
             res.status(200).json({
                 status: true,

@@ -259,7 +259,8 @@ const mongoose = require("mongoose");
 
 async function PicknDrop(req, res) {
   try {
-    const { dealer_id, user_id, user_lat, user_lng } = req.body;
+    const { dealer_id, user_lat, user_lng } = req.body;
+    const user_id = req.user_id;
 
     // ---- Validate required fields
     if (!dealer_id || !mongoose.isValidObjectId(dealer_id)) {

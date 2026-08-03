@@ -351,7 +351,6 @@ const generateUPIQRCode = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to generate UPI QR Code",
-      error: error.response?.data || error.message,
     })
   }
 }
@@ -443,7 +442,6 @@ const checkPaymentStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to check payment status",
-      error: error.response?.data || error.message,
     })
   }
 }
@@ -458,7 +456,7 @@ const checkPaymentStatus = async (req, res) => {
  */
 const cashfreeWebhook = async (req, res) => {
   try {
-    console.log("Cashfree Webhook received:", JSON.stringify(req.body, null, 2))
+    console.log("Cashfree webhook received")
 
     const eventType = req.body.type
     const data = req.body.data
@@ -602,7 +600,6 @@ const getPaymentByBooking = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch payment details",
-      error: error.message,
     })
   }
 }
@@ -688,7 +685,6 @@ const regenerateQRCode = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to regenerate QR Code",
-      error: error.response?.data || error.message,
     })
   }
 }
@@ -744,7 +740,6 @@ const cancelPayment = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to cancel payment",
-      error: error.message,
     })
   }
 }
@@ -798,7 +793,6 @@ const getAllQRPayments = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch payments",
-      error: error.message,
     })
   }
 }

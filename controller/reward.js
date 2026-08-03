@@ -1,5 +1,4 @@
 const Reward = require('../models/reward');
-const jwt_decode = require('jwt-decode');
 const Booking = require('../models/Booking')
 const Customer = require('../models/customer_model')
 const { applyRewardDiscount, PricingError } = require('../services/pricingEngine')
@@ -7,14 +6,6 @@ const { awardReferralRewardsIfEligible } = require('../services/referralRewardSe
 
 const createReward = async (req, res) => {
     try {
-        const data = jwt_decode(req.headers.token);
-        const user_type = data.user_type;
-
-
-        if (user_type !== 1) {
-            return res.status(200).json({ status: 200, message: 'Unauthorized access!' });
-        }
-
         const { user_id, booking_id } = req.body;
 
 
@@ -49,7 +40,7 @@ const createReward = async (req, res) => {
 
 async function scratchReward(req, res) {
     const { reward_id } = req.body;
-    const reward = await Reward.findById(reward_id);
+    const reward = await Reward.findOne({ _id: reward_id, user_id: req.user_id });
 
     if (!reward || reward.is_scratched) {
         return res.status(400).json({ message: "Invalid or already scratched reward!" });
@@ -72,8 +63,7 @@ async function scratchReward(req, res) {
 
 const getUserRewards = async (req, res) => {
     try {
-        const data = jwt_decode(req.headers.token);
-        const user_id = data.user_id;
+        const user_id = req.user_id;
 
         if (!user_id) {
             return res.status(200).json({ status: 200, message: 'User is unauthorized!' });
@@ -93,9 +83,10 @@ const getUserRewards = async (req, res) => {
 };
 
 async function applyRewardPoints(req, res) {
-    const { user_id, booking_id, points_to_use } = req.body;
+    const { booking_id, points_to_use } = req.body;
+    const user_id = req.user_id;
     const user = await Customer.findById(user_id);
-    const booking = await Booking.findById(booking_id);
+    const booking = await Booking.findOne({ _id: booking_id, user_id });
 
     if (!user || !booking) {
         return res.status(200).json({ message: "Invalid user or booking!" });
@@ -165,18 +156,7 @@ async function handleBookingCompletion(booking) {
 
 const getRewardPoints = async (req, res) => {
     try {
-        const token = req.headers.token;
-
-        if (!token) {
-            return res.status(401).json({
-                status: false,
-                message: 'Token is required',
-                data: null
-            });
-        }
-
-        const data = jwt_decode(token);
-        const user_id = data.user_id;
+        const user_id = req.user_id;
 
         if (!user_id) {
             return res.status(400).json({
@@ -186,7 +166,7 @@ const getRewardPoints = async (req, res) => {
             });
         }
 
-        const customer = await Customer.findOne({ where: { id: user_id } });
+        const customer = await Customer.findById(user_id).select("reward_points");
 
         if (!customer) {
             return res.status(404).json({

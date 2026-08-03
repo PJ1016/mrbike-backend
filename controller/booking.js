@@ -173,7 +173,7 @@ const getuserbookings = async (req, res) => {
 
     // pagination
     const page = Math.max(1, Number(req.query.page) || 1);
-    const limit = Math.min(100, Number(req.query.limit) || 20);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const skip = (page - 1) * limit;
 
     // Query and populate the bike details (userBike_id) + other fields
@@ -193,11 +193,12 @@ const getuserbookings = async (req, res) => {
           path: "additionalServices",
           populate: { path: "base_additional_service_id", select: "name" },
         })
-        .populate("dealer_id")
+        .populate("dealer_id", "shopName fullAddress address city locality shopImages phone")
         .populate("pickupAndDropId")
         // populate user with optional inner population of user's bikes
         .populate({
           path: "user_id",
+          select: "first_name last_name phone email image address city",
           // uncomment to populate user.userBike array as well:
           // populate: { path: "userBike" }
         })
@@ -298,8 +299,7 @@ const getuserbookings = async (req, res) => {
     console.error("Error fetching bookings:", error);
     return res.status(500).json({
       status: 500,
-      message: "Internal Server Error",
-      error: error.message
+      message: "Internal Server Error"
     });
   }
 };
@@ -784,7 +784,6 @@ async function createBooking(req, res) {
     const user_id = data.user_id;
 
     // ── 2. Entry logging ─────────────────────────────────────────────────────
-    console.log('[createBooking] REQUEST BODY:', JSON.stringify(req.body, null, 2));
     console.log('[createBooking] Authenticated user_id:', user_id);
 
     // ── 2b. Profile completeness check ───────────────────────────────────────
@@ -853,7 +852,7 @@ async function createBooking(req, res) {
     // User App sends BaseService IDs; resolve to AdminService IDs for correct pricing and refs
     let resolvedServiceIds = services;
     let serviceDocs = [];
-    const bikeData = await UserBike.findById(userBike_id);
+    const bikeData = await UserBike.findOne({ _id: userBike_id, user_id });
     if (!bikeData) {
       return res.status(400).json({ success: false, message: "User bike not found" });
     }
@@ -1030,12 +1029,10 @@ async function createBooking(req, res) {
   } catch (error) {
     console.error('[createBooking] FATAL ERROR — name:', error.name);
     console.error('[createBooking] FATAL ERROR — message:', error.message);
-    console.error('[createBooking] STACK:', error.stack);
+    console.error('[createBooking] failed:', error.message);
     return res.status(500).json({
       success: false,
-      message: error.message || 'Internal Server Error',
-      errorType: error.name,
-      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined,
+      message: 'Internal Server Error',
     });
   }
 }
@@ -1053,9 +1050,9 @@ async function getBookingDetails(req, res) {
     console.log("Is valid ObjectId:", mongoose.Types.ObjectId.isValid(bookingId));
 
     // Try to find the booking
-    const bookingData = await booking.findById(bookingId)
-      .populate("user_id")
-      .populate("dealer_id")
+    const bookingData = await booking.findOne({ _id: bookingId, user_id: req.user_id })
+      .populate("user_id", "first_name last_name phone email image address city")
+      .populate("dealer_id", "shopName fullAddress address city locality shopImages phone")
       .populate({
         path: "services",
         model: "AdminService",
@@ -1116,7 +1113,6 @@ async function getBookingDetails(req, res) {
     res.status(500).json({ 
       success: false, 
       message: "Internal Server Error", 
-      error: error.message 
     });
   }
 }
@@ -1150,7 +1146,7 @@ async function updateBooking(req, res) {
       return res.status(400).json({ success: false, message: "Booking ID is required" });
     }
 
-    const existingBooking = await booking.findById(bookingId);
+    const existingBooking = await booking.findOne({ _id: bookingId, user_id: req.user_id });
     if (!existingBooking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
@@ -1376,7 +1372,8 @@ async function updateBooking(req, res) {
 async function updateBookingStatus(req, res) {
   try {
     const { bookingId } = req.params;
-    const { status, user_id } = req.body;
+    const { status } = req.body;
+    const user_id = req.auth?.id || req.user_id;
     console.log("Booking id", bookingId)
     console.log("Status", req.body)
     if (!bookingId || !status || !user_id) {
@@ -1402,6 +1399,10 @@ async function updateBookingStatus(req, res) {
         success: false,
         message: "Unauthorized to update this booking"
       });
+    }
+
+    if (req.auth?.role === "customer" && !["cancelled", "user_cancelled"].includes(status)) {
+      return res.status(403).json({ success: false, message: "Customers may only cancel their own booking" });
     }
 
     // ── Expiry window guard (confirmed / rejected only) ──────────────────────
@@ -1687,12 +1688,10 @@ const sendBookingOTP = async (req, res) => {
     if (!bookingData) {
       return res.status(200).json({ success: false, message: "Booking not found" });
     }
-    console.log("Booking Data", bookingData)
     const dealer = await Vendor.findById(bookingData.dealer_id);
     if (!dealer || !dealer.phone) {
       return res.status(200).json({ success: false, message: "Dealer phone number not found" });
     }
-    console.log("Booking Data", bookingData)
 
     const phoneNumber = dealer.phone;
 
@@ -1700,7 +1699,7 @@ const sendBookingOTP = async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000);
 
     // OTP ko database me save karna
-    bookingData.otp = 9999;
+    bookingData.otp = otp;
     await bookingData.save();
 
     // Twilio ya SMS API se OTP bhejna
@@ -1749,7 +1748,7 @@ const sendOtpToMobile = async (req, res) => {
     }
 
     // 3) Generate & save OTP on customer
-    const otp = 1234; // static for now (testing)
+    const otp = genOtp();
     customer.otp = otp;
     // Optional expiry support if you add it to schema:
     // customer.otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
@@ -1761,8 +1760,7 @@ const sendOtpToMobile = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `OTP sent successfully to ${e164}`,
-      phone: Number(ten),
-      otp // ⚠️ return only in dev/testing
+      phone: Number(ten)
     });
   } catch (error) {
     console.error("sendOtpToMobile error:", error);
@@ -1772,10 +1770,10 @@ const sendOtpToMobile = async (req, res) => {
 
 const verifyOtpForMobile = async (req, res) => {
   try {
-    const { phone, otp } = req.body;
+    const { bookingId, phone, otp } = req.body;
 
-    if (!phone || !otp) {
-      return res.status(200).json({ success: false, message: "Phone and OTP are required" });
+    if (!bookingId || !phone || !otp) {
+      return res.status(200).json({ success: false, message: "Booking ID, phone and OTP are required" });
     }
 
     const ten = normalize10(phone);
@@ -1789,6 +1787,8 @@ const verifyOtpForMobile = async (req, res) => {
     if (!customer) {
       return res.status(200).json({ success: false, message: "User not found" });
     }
+    const assigned = await booking.exists({ _id: bookingId, user_id: customer._id, dealer_id: req.auth.id });
+    if (!assigned) return res.status(404).json({ success: false, message: "Booking not found" });
 
     // Optional expiry check
     // if (customer.otpExpiry && customer.otpExpiry < new Date()) {
@@ -2025,7 +2025,7 @@ const updatePickupStatus = async (req, res) => {
     }
 
     // Fetch Booking
-    const bookingData = await booking.findById(bookingId);
+    const bookingData = await booking.findOne({ _id: bookingId, dealer_id: req.auth.id });
     if (!bookingData) {
       return res.status(200).json({ success: false, message: "Booking not found" });
     }
@@ -2295,7 +2295,7 @@ async function cancelBooking(req, res) {
     }
 
     // Find the booking
-    const bookingData = await booking.findById(bookingId);
+    const bookingData = await booking.findOne({ _id: bookingId, user_id: req.user_id });
     if (!bookingData) {
       return res.status(404).json({
         status: 404,
@@ -2312,8 +2312,8 @@ async function cancelBooking(req, res) {
     }
 
     // Update booking status to cancelled
-    const updatedBooking = await booking.findByIdAndUpdate(
-      bookingId,
+    const updatedBooking = await booking.findOneAndUpdate(
+      { _id: bookingId, user_id: req.user_id },
       { $set: { status: "cancelled" } },
       { new: true }
     );
@@ -2345,7 +2345,6 @@ async function cancelBooking(req, res) {
     return res.status(500).json({
       status: 500,
       message: "Internal Server Error",
-      error: error.message
     });
   }
 }
@@ -2359,7 +2358,7 @@ async function getBookingTimerStatus(req, res) {
     }
 
     const bookingData = await booking
-      .findById(bookingId)
+      .findOne({ _id: bookingId, user_id: req.user_id })
       .select("_id bookingId status dealerResponseStatus timerExpiresAt")
       .lean();
 
@@ -2404,7 +2403,7 @@ async function getBookingTimerStatus(req, res) {
 const serviceComplete = async (req, res) => {
   try {
     const { bookingId } = req.params;
-    const { user_id } = req.body;
+    const user_id = req.auth?.id;
 
     if (!bookingId || !user_id) {
       return res.status(400).json({
@@ -2486,7 +2485,8 @@ const serviceComplete = async (req, res) => {
 const selectPaymentMethod = async (req, res) => {
   try {
     const { bookingId } = req.params;
-    const { user_id, payment_method } = req.body;
+    const { payment_method } = req.body;
+    const user_id = req.auth?.id;
 
     if (!bookingId || !user_id || !payment_method) {
       return res.status(400).json({
@@ -2782,7 +2782,8 @@ const confirmCashReceived = async (req, res) => {
 // POST /bookings/verify-delivery-otp  { bookingId, otp, user_id }
 const verifyDeliveryOtp = async (req, res) => {
   try {
-    const { bookingId, otp, user_id } = req.body;
+    const { bookingId, otp } = req.body;
+    const user_id = req.auth.id;
 
     if (!bookingId || !otp || !user_id) {
       return res.status(400).json({
@@ -3032,4 +3033,3 @@ module.exports = {
   verifyDeliveryOtp,
   regenerateDeliveryOtp,
 }
-

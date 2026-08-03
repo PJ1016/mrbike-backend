@@ -1,6 +1,9 @@
 var express = require("express")
 var path = require("path")
 const { createS3Upload } = require("../utils/s3Upload")
+const { requireAdmin } = require("../middlewares/requireAdmin")
+const { verifyDealerToken } = require("../middlewares/dealerAuth")
+const { requireCustomer, requireOwnCustomerBody } = require("../middlewares/customerAuth")
 
 var {
   servicelist,
@@ -45,11 +48,11 @@ const additionalServiceUpload = createS3Upload("additional-options")
 router.get("/servicelist", servicelist)
 router.get("/edit-service/:id", getServiceById)
 
-router.put("/update-service/:id", dealerServiceUpload.single("images"), updateServiceById)
+router.put("/update-service/:id", verifyDealerToken, dealerServiceUpload.single("images"), updateServiceById)
 
-router.put("/updateservice", dealerServiceUpload.fields([{ name: "service_image", maxCount: 1 }]), updateService)
+router.put("/updateservice", verifyDealerToken, dealerServiceUpload.fields([{ name: "service_image", maxCount: 1 }]), updateService)
 
-router.delete("/deleteService", deleteService)
+router.delete("/deleteService", verifyDealerToken, deleteService)
 router.get("/service/:id", singleService)
 
 /* =====================================================
@@ -60,32 +63,32 @@ router.get("/dealer/:dealer_id", getServicesByDealer)
 /* =====================================================
    PICK & DROP
 ===================================================== */
-router.post("/PicknDrop", PicknDrop)
+router.post("/PicknDrop", requireCustomer, requireOwnCustomerBody("user_id"), PicknDrop)
 
 /* =====================================================
    BASE SERVICE ROUTES (Admin Only)
 ===================================================== */
-router.post("/admin/base-services", baseServiceUpload.single("image"), createBaseService)
+router.post("/admin/base-services", requireAdmin, baseServiceUpload.single("image"), createBaseService)
 
-router.get("/admin/base-services", listBaseServices)
+router.get("/admin/base-services", requireAdmin, listBaseServices)
 
-router.get("/admin/base-services/:id", getBaseServiceById)
+router.get("/admin/base-services/:id", requireAdmin, getBaseServiceById)
 
-router.put("/admin/base-services/:id", baseServiceUpload.single("image"), updateBaseService)
+router.put("/admin/base-services/:id", requireAdmin, baseServiceUpload.single("image"), updateBaseService)
 
-router.delete("/admin/base-services/:id", deleteBaseService)
+router.delete("/admin/base-services/:id", requireAdmin, deleteBaseService)
 
 /* =====================================================
    ADMIN SERVICE ROUTES (Refactored)
 ===================================================== */
-router.post("/adminservices/create", adminServiceUpload.single("image"), addAdminService)
+router.post("/adminservices/create", requireAdmin, adminServiceUpload.single("image"), addAdminService)
 
-router.get("/adminservices", listAdminServices)
-router.get("/admin/services/:id", getAdminServiceById)
+router.get("/adminservices", requireAdmin, listAdminServices)
+router.get("/admin/services/:id", requireAdmin, getAdminServiceById)
 
-router.put("/admin/services/:id", adminServiceUpload.single("image"), updateAdminService)
+router.put("/admin/services/:id", requireAdmin, adminServiceUpload.single("image"), updateAdminService)
 
-router.delete("/admin/services/:id", deleteAdminService)
+router.delete("/admin/services/:id", requireAdmin, deleteAdminService)
 
 /* =====================================================
    ADDITIONAL SERVICE ROUTES

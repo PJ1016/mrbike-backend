@@ -3,8 +3,8 @@ var path = require("path")
 const Vendor = require("../models/dealerModel")
 const { createS3Upload, deleteS3Object } = require("../utils/s3Upload")
 const { requireAdmin } = require("../middlewares/requireAdmin")
-const { verifyDealerToken, requireActiveDealer, requireOwnDealer } = require("../middlewares/dealerAuth")
 const { requireAdminOrOwnDealer } = require("../middlewares/sharedAuth")
+const { verifyDealerToken, requireActiveDealer, requireOwnDealer, requireOwnDealerBody } = require("../middlewares/dealerAuth")
 const { getDealerStatus } = require("../helper/dealerStatus")
 const {
   buildDealerUpdate,
@@ -50,13 +50,13 @@ const router = express.Router()
 
 // Dealer Services
 router.get("/services", getDealerServices)
-router.post("/services", saveDealerServices)
+router.post("/services", verifyDealerToken, requireOwnDealerBody("dealerId"), saveDealerServices)
 
 // Get all dealers offering a specific base service (used by mobile home screen categories)
 router.get("/by-service/:baseServiceId", getDealersByService)
 
 // Process dealer files
-router.post("/process", processDealer)
+router.post("/process", requireAdmin, processDealer)
 
 const upload = createS3Upload("dealer-documents")
 
@@ -531,9 +531,9 @@ router.get("/dealersWithVerifyFalse", requireAdmin, getAllDealersWithVerifyFalse
 router.get("/activity-history/:dealerId", requireAdmin, getDealerActivityHistory)
 
 router.delete("/deleteDealer", requireAdmin, deleteDealer)
-router.post("/update_status", editDealerStatus)
+router.post("/update_status", requireAdmin, editDealerStatus)
 
-router.post("/processTransaction/:id", WalletAdd)
+router.post("/processTransaction/:id", requireAdmin, WalletAdd)
 
 //  Payout of cashfree ---- NOT IN Use
 router.post("/AddAmout/:id", requireAdmin, addAmount)
@@ -562,15 +562,15 @@ router.get("/wallets/summary", requireAdmin, getDealerWalletsSummary)
 // ── Existing wallet routes (preserved for backward compatibility) ─────────────
 router.get("/pending", requireAdmin, getPendingWallets)
 router.put("/updatepending/:wallet_id", requireAdmin, updateWalletStatus)
-router.post("/withdrawal", createWithdrawalRequest)
-router.post("/deposit", createDeposit)
-router.put("/updateDocStatus", updateDealerDocStatus)
-router.put("/updateVerification", updateDealerVerfication)
+router.post("/withdrawal", verifyDealerToken, requireOwnDealerBody("dealer_id"), createWithdrawalRequest)
+router.post("/deposit", verifyDealerToken, requireOwnDealerBody("dealer_id"), createDeposit)
+router.put("/updateDocStatus", requireAdmin, updateDealerDocStatus)
+router.put("/updateVerification", requireAdmin, updateDealerVerfication)
 
 router.post("/vendor/:dealerId/online", requireActiveDealer, requireOwnDealer("dealerId"), setDealerOnline)
 
 router.get("/vendor/active", getActiveDealers)
 
-router.post("/register-token", registerDealerToken)
+router.post("/register-token", verifyDealerToken, requireOwnDealerBody("dealer_id"), registerDealerToken)
 
 module.exports = router

@@ -19,8 +19,9 @@ const getActiveAdminIds = async () => {
 
 const createTicket = async (req, res) => {
   try {
-    const { user_id } = req.params
-    const { subject, message, user_type, sender_id, sender_type } = req.body
+    const user_id = req.user_id
+    const { subject, message } = req.body
+    const user_type = "user"
 
     if (!user_id) {
       return res.status(400).json({ success: false, message: "User ID is required" })
@@ -41,13 +42,13 @@ const createTicket = async (req, res) => {
       })
     }
 
-    const msgSenderId = sender_id || user_id
+    const msgSenderId = user_id
     if (!mongoose.Types.ObjectId.isValid(msgSenderId)) {
       return res.status(400).json({ success: false, message: "Invalid sender_id" })
     }
 
     // sender_type falls back to user_type if not valid
-    const msgSenderType = allowed.includes(sender_type) ? sender_type : user_type
+    const msgSenderType = user_type
 
     const created = await Ticket.create({
       user_id,
@@ -104,7 +105,9 @@ const normalizeRole = (val) => {
 const replyToTicket = async (req, res) => {
   try {
     const { ticket_id } = req.params
-    const { message, sender_id, sender_type } = req.body
+    const { message } = req.body
+    const sender_id = req.auth.id
+    const sender_type = req.auth.role === "customer" ? "user" : req.auth.role
 
     if (!ticket_id || !message || !sender_id || !sender_type) {
       return res
@@ -169,7 +172,7 @@ const replyToTicket = async (req, res) => {
 
 const getMyTickets = async (req, res) => {
   try {
-    const { user_id } = req.params
+    const user_id = req.auth?.role === "admin" ? req.params.user_id : req.user_id
 
     if (!user_id) {
       return res.status(400).json({ success: false, message: "User ID is required" })

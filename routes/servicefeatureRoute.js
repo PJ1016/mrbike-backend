@@ -2,6 +2,7 @@ var express = require("express")
 var multer = require("multer")
 var fs = require("fs-extra")
 const router = express.Router()
+const { requireAdmin } = require("../middlewares/requireAdmin")
 var { addfeature, getfeature, deletefeature, editfeature, getAllfeature } = require("../controller/service_features")
 
 // Store data
@@ -27,10 +28,10 @@ const upload = multer({
   storage: storage,
 })
 
-router.post("/addfeature", upload.single("images"), addfeature)
+router.post("/addfeature", requireAdmin, upload.single("images"), addfeature)
 router.get("/getfeature/:id", getfeature)
 router.get("/getallfeature", getAllfeature)
-router.delete("/deletefeature", deletefeature)
-router.put("/updatefeature/:id", editfeature)
+router.delete("/deletefeature", requireAdmin, deletefeature)
+router.put("/updatefeature/:id", requireAdmin, editfeature)
 
 module.exports = router

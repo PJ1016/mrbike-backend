@@ -1,20 +1,24 @@
 const express = require('express');
 const router = express.Router();
+const { requireAdmin } = require("../middlewares/requireAdmin");
+const { requireCustomer, requireOwnCustomerParam } = require("../middlewares/customerAuth");
+const { requireBookingParticipant } = require("../middlewares/bookingAuth");
+const { verifyDealerToken, requireOwnDealerBody } = require("../middlewares/dealerAuth");
 const { getAllPayments,getBillByBookingId,getUserBillsSimple,getUserBillDetails,getAllBills, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, createOrderForAdd } = require("../controller/payment");
 
-router.post("/initiate", initiatePayment);
-router.post("/create-checkout", createCheckoutUrl);
-router.post('/create-checkout-session', createCheckoutSession);
-router.post('/link', createPaymentLink);
-router.post("/createOrderForAdd", createOrderForAdd);
-router.get("/all-payments", getAllPayments);
-router.get("/single-payment-detail/:id", getPaymentById);
+router.post("/initiate", requireBookingParticipant(req => req.body.booking_id), initiatePayment);
+router.post("/create-checkout", requireAdmin, createCheckoutUrl);
+router.post('/create-checkout-session', requireAdmin, createCheckoutSession);
+router.post('/link', requireAdmin, createPaymentLink);
+router.post("/createOrderForAdd", verifyDealerToken, requireOwnDealerBody("dealer_id"), createOrderForAdd);
+router.get("/all-payments", requireAdmin, getAllPayments);
+router.get("/single-payment-detail/:id", requireAdmin, getPaymentById);
 router.get("/webhook", paymentWebhook);
 router.post("/webhook", paymentWebhook);
-router.get('/bills/booking/:booking_id', getBillByBookingId);
-router.get('/bills/all', getAllBills);
-router.get('/user/:user_id/bills/simple', getUserBillsSimple);
-router.get('/user/:user_id/bills/:bill_id', getUserBillDetails);
+router.get('/bills/booking/:booking_id', requireBookingParticipant(req => req.params.booking_id), getBillByBookingId);
+router.get('/bills/all', requireAdmin, getAllBills);
+router.get('/user/:user_id/bills/simple', requireCustomer, requireOwnCustomerParam("user_id"), getUserBillsSimple);
+router.get('/user/:user_id/bills/:bill_id', requireCustomer, requireOwnCustomerParam("user_id"), getUserBillDetails);
 
 module.exports = router;
 

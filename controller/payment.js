@@ -32,13 +32,13 @@ const CASHFREE_BASE_URL =
 // Initiate Payment
 const initiatePayment = async (req, res) => {
     try {
-        const { booking_id, dealer_id, user_id, customer_email, customer_phone, payment_by = "user" } = req.body;
+        const { booking_id, customer_email, customer_phone, payment_by = "user" } = req.body;
         const payment_type = "ONLINE";
 
-        if (!booking_id || !dealer_id || !user_id) {
+        if (!booking_id) {
             return res.status(400).json({
                 success: false,
-                message: "Missing required fields (booking_id, dealer_id, user_id)",
+                message: "Missing required field (booking_id)",
             });
         }
 
@@ -46,6 +46,8 @@ const initiatePayment = async (req, res) => {
         if (!bookingForCharge) {
             return res.status(404).json({ success: false, message: "Booking not found" });
         }
+        const dealer_id = bookingForCharge.dealer_id;
+        const user_id = bookingForCharge.user_id;
 
         // Server always charges Booking.customerTotal - Booking.discountAmount
         // (the `amountDue` virtual) — never a client-supplied amount.
@@ -119,7 +121,6 @@ const initiatePayment = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Payment initiation failed",
-            error: error.response?.data || error.message,
         });
     }
 };
@@ -357,7 +358,6 @@ const getBillByBookingId = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to fetch bill",
-            error: error.message
         });
     }
 };
@@ -410,8 +410,7 @@ const getAllBills = async (req, res) => {
         console.error("Get All Bills Error:", error);
         res.status(500).json({
             success: false,
-            message: "Failed to fetch bills",
-            error: error.message
+            message: "Failed to fetch bills"
         });
     }
 };
@@ -521,7 +520,6 @@ const getPaymentById = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to fetch payment",
-            error: error.message,
         });
     }
 };
@@ -585,7 +583,6 @@ const getAllPayments = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to fetch payments",
-            error: error.message,
         });
     }
 };
@@ -735,8 +732,7 @@ const createCheckoutUrl = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Cashfree authentication failed - check your credentials",
-            error: error.response?.data || error.message,
+            message: "Payment provider request failed",
         });
     }
 };
@@ -853,8 +849,7 @@ const createCheckoutSession = async (req, res) => {
 
         res.status(500).json({
             success: false,
-            message: "Failed to create checkout session",
-            error: error.response?.data || error.message
+            message: "Failed to create checkout session"
         });
     }
 };
@@ -977,7 +972,6 @@ const createPaymentLink = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Server error while creating payment link",
-            error: error.message,
         });
     }
 };
@@ -985,7 +979,7 @@ const createPaymentLink = async (req, res) => {
 // Get All Bills for User (Simplified)
 const getUserBillsSimple = async (req, res) => {
     try {
-        const { user_id } = req.params;
+        const user_id = req.user_id;
 
         // Get all bookings for this user
         const userBookings = await Booking.find({ user_id: user_id })
@@ -1038,8 +1032,7 @@ const getUserBillsSimple = async (req, res) => {
         console.error("Get User Bills Simple Error:", error);
         res.status(500).json({
             success: false,
-            message: "Failed to fetch user bills",
-            error: error.message
+            message: "Failed to fetch user bills"
         });
     }
 };
@@ -1047,7 +1040,8 @@ const getUserBillsSimple = async (req, res) => {
 // Get Bill Details for User (with download format)
 const getUserBillDetails = async (req, res) => {
     try {
-        const { user_id, bill_id } = req.params;
+        const { bill_id } = req.params;
+        const user_id = req.user_id;
 
         // Verify the bill belongs to the user
         const bill = await Bill.findById(bill_id)
@@ -1113,7 +1107,6 @@ const getUserBillDetails = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to fetch bill details",
-            error: error.message
         });
     }
 };
@@ -1247,7 +1240,6 @@ const createOrderForAdd = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to create wallet top-up order",
-            error: error.response?.data || error.message,
         });
     }
 };

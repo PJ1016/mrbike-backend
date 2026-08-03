@@ -571,7 +571,6 @@ const verifyOtp = async (req, res) => {
 async function getAllAdmin(req, res) {
   try {
     const token = req.headers.token
-    console.log("Received token:", token)
 
     const admins = await admin.find(req.query).sort({ _id: -1 })
 

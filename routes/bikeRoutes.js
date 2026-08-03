@@ -21,6 +21,7 @@ var {
   getBikeDetailsByCompany,
 } = require("../controller/bikeController")
 const router = express.Router()
+const { requireAdmin } = require("../middlewares/requireAdmin")
 
 // set storage
 const storage = multer.diskStorage({
@@ -46,16 +47,16 @@ const upload = multer({
 })
 
 /* POST users listing. */
-router.post("/addBike", upload.single("images"), addBike)
-router.get("/bikeList", bikeList)
-router.put("/editBike/:id", editBike)
-router.delete("/deleteBike/:id", deleteBike) // updated parameter name to :id for clarity
-router.delete("/deleteBikeModel/:id", deleteBikeModel)
-router.delete("/deleteBikeCompany/:id", deleteBikeCompany)
+router.post("/addBike", requireAdmin, upload.single("images"), addBike)
+router.get("/bikeList", requireAdmin, bikeList)
+router.put("/editBike/:id", requireAdmin, editBike)
+router.delete("/deleteBike/:id", requireAdmin, deleteBike) // updated parameter name to :id for clarity
+router.delete("/deleteBikeModel/:id", requireAdmin, deleteBikeModel)
+router.delete("/deleteBikeCompany/:id", requireAdmin, deleteBikeCompany)
 router.get("/getBike/:id", getBike)
-router.post("/add-bike-company", addBikeCompany)
-router.post("/add-bike-model", addBikeModel)
-router.post("/add-bike-variant", addBikeVariant)
+router.post("/add-bike-company", requireAdmin, addBikeCompany)
+router.post("/add-bike-model", requireAdmin, addBikeModel)
+router.post("/add-bike-variant", requireAdmin, addBikeVariant)
 router.get("/get-bike-companies", getBikeCompanies)
 router.get("/get-bike-models/:company_id", getBikeModels)
 router.get("/get-bike-variants/:model_id", getBikeVariants)

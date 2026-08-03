@@ -375,7 +375,10 @@ async function getcustomer(req, res) {
         .json({ success: false, message: "Invalid user_id" });
     }
 
-    const customer = await customers.findById(user_id).lean();
+    const customer = await customers
+      .findById(user_id)
+      .select("-password -passwords -otp -device_token -ftoken")
+      .lean();
 
     if (!customer) {
       return res
@@ -417,7 +420,10 @@ async function getcustomersData(req, res) {
         .json({ success: false, message: "Invalid user_id" });
     }
 
-    const customer = await customers.findById(user_id).lean();
+    const customer = await customers
+      .findById(user_id)
+      .select("-password -passwords -otp -device_token -ftoken")
+      .lean();
 
     if (!customer) {
       return res
@@ -841,6 +847,7 @@ async function getCustomerById(req, res) {
 
     const customerDoc = await customers
       .findById(id)
+      .select("-password -passwords -otp -device_token -ftoken")
       .populate({ path: "referredBy", select: "first_name last_name referralCode" });
 
     if (!customerDoc) {

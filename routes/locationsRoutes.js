@@ -9,6 +9,7 @@ var { addlocations,
     currentlocation,
     currentaddress } =  require('../controller/locations');
 const router = express.Router();
+const { requireAdmin } = require("../middlewares/requireAdmin");
 
 const storage = multer.diskStorage({
     destination: (req, file, callback) => {
@@ -23,10 +24,10 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* POST users listing. */
-router.post('/addlocations',upload.fields([{ name: 'image', maxCount: 1}]),addlocations);
+router.post('/addlocations',requireAdmin,upload.fields([{ name: 'image', maxCount: 1}]),addlocations);
 router.get('/locationslist',locationslist);
-router.delete('/deletelocations',deletelocations);
-router.put('/editlocations',upload.fields([{ name: 'image', maxCount: 1}]),editlocations);
+router.delete('/deletelocations',requireAdmin,deletelocations);
+router.put('/editlocations',requireAdmin,upload.fields([{ name: 'image', maxCount: 1}]),editlocations);
 router.get('/currentlocation',currentlocation);
 router.post('/currentaddress',currentaddress);
 

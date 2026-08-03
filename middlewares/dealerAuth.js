@@ -21,7 +21,7 @@ async function loadDealerFromToken(req, res) {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET);
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
   } catch (err) {
     res.status(401).json({ success: false, message: "Authentication failed" });
     return null;
@@ -102,4 +102,15 @@ function requireOwnDealer(paramName = "id") {
   };
 }
 
-module.exports = { verifyDealerToken, requireActiveDealer, requireOwnDealer };
+function requireOwnDealerBody(fieldName = "dealer_id") {
+  return function (req, res, next) {
+    const targetId = req.body[fieldName];
+    if (targetId != null && String(targetId) !== String(req.dealer_id)) {
+      return res.status(403).json({ success: false, message: "You can only manage your own dealer account" });
+    }
+    req.body[fieldName] = String(req.dealer_id);
+    return next();
+  };
+}
+
+module.exports = { verifyDealerToken, requireActiveDealer, requireOwnDealer, requireOwnDealerBody };

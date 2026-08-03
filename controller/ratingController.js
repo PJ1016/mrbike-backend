@@ -7,6 +7,7 @@ const Tracking = require("../models/Tracking");
 const customers = require("../models/customer_model");
 const Review = require("../models/rating_model");
 const { Notification } = require("../helper/pushNotification");
+const mongoose = require("mongoose");
 
 async function addreview(req, res) {
 
@@ -14,9 +15,19 @@ async function addreview(req, res) {
   console.log(req.body);
 
   try {
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
-    const user_type = data.user_type;
+    const user_id = req.user_id;
+    const numericRating = Number(rating);
+    if (!mongoose.Types.ObjectId.isValid(dealer_id) || !Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) {
+      return res.status(400).json({ status: 400, message: "Valid dealer_id and rating from 1 to 5 are required" });
+    }
+    const hasCompletedBooking = await booking.exists({
+      user_id,
+      dealer_id,
+      status: { $in: ["completed", "delivered", "cash received", "Payment"] },
+    });
+    if (!hasCompletedBooking) {
+      return res.status(403).json({ status: 403, message: "A completed booking is required before rating this dealer" });
+    }
     // if (user_id == null || user_type != 1 && user_type != 3) {
     //   var response = {
     //     status: 401,
@@ -28,7 +39,7 @@ async function addreview(req, res) {
       const sendData = {
         user_id,
         dealer_id,
-        rating,
+        rating: numericRating,
         comment,
         review,
         reason
@@ -68,10 +79,6 @@ async function addreview(req, res) {
 
 async function getallreview(req, res) {
   try {
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
-    const user_type = data.user_type;
-    const type = data.type;
     // if (user_id == null || user_type != 1 && user_type != 2 && user_type != 3) {
     //   var response = {
     //     status: 401,
