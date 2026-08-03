@@ -206,6 +206,10 @@
 
 
 const Banner = require("../models/banner_model");
+const {
+  syncLegacyBanner,
+  deleteSyncedLegacyBanner,
+} = require("../services/legacyBannerSyncService");
 const BaseService = require("../models/baseService");
 const jwt_decode = require("jwt-decode");
 const mongoose = require("mongoose");
@@ -409,11 +413,16 @@ async function editbanner(req, res) {
       status = statusOverride;
     }
 
+   const nextBannerImage = req.file?.location ||
+     (banner_image
+       ? (/^https?:\/\//i.test(banner_image) || banner_image.includes("uploads/")
+         ? banner_image
+         : `uploads/banners/${banner_image}`)
+       : bannerRes.banner_image);
+
    const updateData = {
   name,
-  banner_image: banner_image?.includes("uploads/")
-    ? banner_image
-    : `uploads/banners/${banner_image}`,
+  banner_image: nextBannerImage,
   from_date: fromDate,
   expiry_date: expiryDate,
   status,
@@ -429,6 +438,7 @@ async function editbanner(req, res) {
 
 
     const updatedBanner = await Banner.findByIdAndUpdate(banner_id, { $set: updateData }, { new: true });
+    await syncLegacyBanner(updatedBanner);
 
     return res.status(200).send({
       status: 200,
@@ -501,6 +511,7 @@ async function addbanner(req, res) {
     };
 
     const bannerResponse = await Banner.create(bannerData);
+    await syncLegacyBanner(bannerResponse);
     return res.status(200).send({
       status: 200,
       message: "Banner added successfully",
@@ -543,6 +554,7 @@ async function deletebanner(req, res) {
     }
 
     await Banner.findByIdAndDelete(banner_id);
+    await deleteSyncedLegacyBanner(banner_id);
     return res.status(200).send({ status: 200, message: "Banner deleted successfully" });
   } catch (error) {
     console.log("error", error);
