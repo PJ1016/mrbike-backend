@@ -127,6 +127,18 @@ async function dealerReviews(req, res) {
   return res.json({ success: true, data: { summary: summary || await recomputeSummaries(dealerId), reviews } });
 }
 
+async function aggregateRating(req, res) {
+  const { entity = "global", id } = req.query;
+  if (!["global", "dealer", "service"].includes(entity) || (entity !== "global" && !objectId(id))) return res.status(400).json({ success: false, message: "entity must be global, dealer, or service with a valid id" });
+  let pipeline = [{ $match: { moderationStatus: "published", isArchived: { $ne: true } } }];
+  if (entity === "dealer") pipeline[0].$match.dealer_id = new mongoose.Types.ObjectId(id);
+  if (entity === "service") pipeline.push({ $lookup: { from: "bookings", localField: "booking_id", foreignField: "_id", as: "booking" } }, { $unwind: "$booking" }, { $match: { "booking.services": new mongoose.Types.ObjectId(id) } });
+  pipeline.push({ $group: { _id: null, ratingValue: { $avg: "$rating" }, reviewCount: { $sum: 1 }, bestRating: { $max: "$rating" }, worstRating: { $min: "$rating" } } });
+  const [value] = await Review.aggregate(pipeline);
+  const data = { ratingValue: Number((value?.ratingValue || 0).toFixed(2)), reviewCount: value?.reviewCount || 0, bestRating: value?.bestRating || 5, worstRating: value?.worstRating || 1 };
+  return res.json({ success: true, data, schema: { "@context": "https://schema.org", "@type": "AggregateRating", ...data } });
+}
+
 async function reply(req, res) {
   const review = await Review.findById(req.params.id);
   if (!review) return res.status(404).json({ success: false, message: "Review not found" });
@@ -184,4 +196,4 @@ async function exportCsv(req, res) {
   res.set({ "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="reviews-${new Date().toISOString().slice(0,10)}.csv"` }); return res.send(csv);
 }
 
-module.exports = { addreview, updateReview, eligibility, getallreview, dealerReviews, reply, adminList, analytics, moderate, removeSpam, exportCsv, recomputeSummaries, eligible };
+module.exports = { addreview, updateReview, eligibility, getallreview, dealerReviews, aggregateRating, reply, adminList, analytics, moderate, removeSpam, exportCsv, recomputeSummaries, eligible };
