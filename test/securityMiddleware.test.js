@@ -19,6 +19,10 @@ assert.strictEqual(validate({ query: { limit: "101" } }).statusCode, 400);
 assert.strictEqual(validate({ params: { bookingId: "not-an-object-id" } }).statusCode, 400);
 assert.strictEqual(validate({ body: { email: "invalid" } }).statusCode, 400);
 assert.strictEqual(validate({ body: { otp: 1234, amount: "12.50", startDate: "2026-08-03" } }).next, true);
+assert.strictEqual(validate({ query: { user_type: "4" } }).next, true);
+assert.strictEqual(validate({ body: { user_type: 2 } }).next, true);
+assert.strictEqual(validate({ query: { user_type: "customer" } }).next, true);
+assert.strictEqual(validate({ query: { user_type: "5" } }).statusCode, 400);
 assert.strictEqual(validate({ url: "/bikedoctor/userAuth/otpVerify", method: "POST", body: { phone: "9876543210" } }).statusCode, 400);
 
 assert.strictEqual(selectLimiter({ path: "/bikedoctor/userAuth/otpVerify" }), limiters.otpVerify);

@@ -47,6 +47,7 @@ const ROLE_VALUES = [
   "user", "dealer", "admin", "customer", "system", "Telecaller", "Manager",
   "Admin", "Subadmin", "Executive", "Vendor", "System",
 ];
+const USER_TYPE_VALUES = [...ROLE_VALUES, "1", "2", "3", "4", 1, 2, 3, 4];
 
 const fieldSchema = (key) => {
   if (key === "_id" || /(?:^|_)(user|dealer|booking|service|payment|ticket|bike|admin)_?id$/i.test(key) || /(?:user|dealer|booking|service|payment|ticket|bike|admin)Id$/.test(key)) return objectId;
@@ -58,7 +59,11 @@ const fieldSchema = (key) => {
   if (/^(page|limit|pageSize)$/i.test(key)) return pagination(key.toLowerCase() === "page" ? 1000000 : 100);
   if (/(^|_)(date|startDate|endDate|fromDate|toDate|scheduledAt|expiresAt|createdAt|updatedAt)$/i.test(key)) return isoDate;
   if (key === "status") return Joi.string().valid(...STATUS_VALUES);
-  if (/^(role|user_type|receiverType)$/i.test(key)) return Joi.string().valid(...ROLE_VALUES);
+  if (/^(role|receiverType)$/i.test(key)) return Joi.string().valid(...ROLE_VALUES);
+  // Legacy booking APIs use numeric user types (2 = dealer, 4 = customer),
+  // while newer APIs use role names. Query parameters arrive as strings;
+  // body fields may still be numbers, so accept both representations.
+  if (/^user_type$/i.test(key)) return Joi.any().valid(...USER_TYPE_VALUES);
   if (/^gender$/i.test(key)) return Joi.string().valid("male", "female", "other", "Male", "Female", "Other");
   return null;
 };
