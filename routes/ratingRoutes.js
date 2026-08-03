@@ -18,7 +18,7 @@ router.get("/dealer/:dealerId/public", controller.getallreview);
 // Customer booking lifecycle.
 router.get("/booking/:bookingId/eligibility", requireCustomer, controller.eligibility);
 router.post("/add", reviewSubmitLimit, requireCustomer, upload.array("images", 5), controller.addreview);
-router.put("/:id", requireCustomer, controller.updateReview);
+router.put("/:id", requireCustomer, upload.array("images", 5), controller.updateReview);
 
 // Dealer dashboard/profile. A dealer can only access their own dealer id.
 router.get("/dealer/:dealerId", ownDealer, controller.dealerReviews);
