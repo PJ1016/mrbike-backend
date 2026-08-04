@@ -28,9 +28,9 @@ Create a `.env` file in the root of the `service` directory. Use the following t
 ```env
 # Server Configuration
 PORT=8001
-BASE_URL="http://localhost:8001/"
-BACKEND_URL="http://localhost:8001"
-FRONTEND_URL="http://localhost:3000"
+BASE_URL="https://api.mrbikedoctor.com/"
+BACKEND_URL="https://api.mrbikedoctor.com"
+FRONTEND_URL="https://mrbikedoctor.com"
 
 # Database
 DATABASE_URL="mongodb://your_mongodb_uri"

@@ -28,7 +28,7 @@ User Books Service → Dealer Accepts → Dealer Generates QR Code → User Scan
 
 | Environment | Base URL |
 |-------------|----------|
-| Development | `http://localhost:8001/bikedoctor` |
+| Production | `https://api.mrbikedoctor.com/bikedoctor` |
 | Production | `https://yourdomain.com/bikedoctor` |
 
 ### Required Headers
@@ -977,7 +977,7 @@ CASHFREE_ENV=sandbox
 CASHFREE_APP_ID=your_app_id
 CASHFREE_SECRET_KEY=your_secret_key
 CASHFREE_API_VERSION=2023-08-01
-CASHFREE_BASE_URL=https://sandbox.cashfree.com/pg
+CASHFREE_BASE_URL=https://api.cashfree.com/pg
 CASHFREE_QR_EXPIRY_MINUTES=30
 \`\`\`
 
@@ -987,7 +987,7 @@ CASHFREE_QR_EXPIRY_MINUTES=30
 
 ### Step 1: Create a Test Booking
 \`\`\`bash
-curl -X POST http://localhost:8001/bikedoctor/booking/create \
+curl -X POST https://api.mrbikedoctor.com/bikedoctor/booking/create \
   -H "Content-Type: application/json" \
   -H "token: <user_token>" \
   -d '{
@@ -1001,7 +1001,7 @@ curl -X POST http://localhost:8001/bikedoctor/booking/create \
 
 ### Step 2: Generate QR Code (as Dealer)
 \`\`\`bash
-curl -X POST http://localhost:8001/bikedoctor/cashfree/generate-qr \
+curl -X POST https://api.mrbikedoctor.com/bikedoctor/cashfree/generate-qr \
   -H "Content-Type: application/json" \
   -H "token: <dealer_token>" \
   -d '{
@@ -1014,7 +1014,7 @@ curl -X POST http://localhost:8001/bikedoctor/cashfree/generate-qr \
 
 ### Step 3: Check Payment Status
 \`\`\`bash
-curl -X GET http://localhost:8001/bikedoctor/cashfree/status/BD_64f8f6a7b8c9_1705312800000 \
+curl -X GET https://api.mrbikedoctor.com/bikedoctor/cashfree/status/BD_64f8f6a7b8c9_1705312800000 \
   -H "token: <dealer_token>"
 \`\`\`
 

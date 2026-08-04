@@ -2,6 +2,7 @@ const express = require("express")
 const router = express.Router()
 const { requireAdmin } = require("../middlewares/requireAdmin")
 const { requireBookingParticipant, requirePaymentParticipant, requireActorRole } = require("../middlewares/bookingAuth")
+const cashfreeWebhookSecurity = require("../middlewares/cashfreeWebhookSecurity")
 const {
   generateUPIQRCode,
   checkPaymentStatus,
@@ -27,7 +28,7 @@ router.get("/status/:order_id", requirePaymentParticipant(req => ({ orderId: req
 
 // Cashfree Webhook (Called by Cashfree)
 // POST /bikedoctor/cashfree/webhook
-router.post("/webhook", cashfreeWebhook)
+router.post("/webhook", cashfreeWebhookSecurity, cashfreeWebhook)
 
 // Get payment details by booking ID
 // GET /bikedoctor/cashfree/booking/:booking_id

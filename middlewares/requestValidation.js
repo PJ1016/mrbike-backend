@@ -103,6 +103,10 @@ const requiredRules = [
 ];
 
 module.exports = function validateRequest(req, res, next) {
+  // Cashfree webhook bodies are authenticated against their exact raw bytes
+  // at the route boundary; do not inspect parsed webhook fields beforehand.
+  if (/\/webhook\/?$/i.test(req.originalUrl.split("?")[0])) return next();
+
   const errors = [];
   validateFields(req.params, "params", errors);
   validateFields(req.query, "query", errors);

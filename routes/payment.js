@@ -4,6 +4,7 @@ const { requireAdmin } = require("../middlewares/requireAdmin");
 const { requireCustomer, requireOwnCustomerParam } = require("../middlewares/customerAuth");
 const { requireBookingParticipant } = require("../middlewares/bookingAuth");
 const { verifyDealerToken, requireOwnDealerBody } = require("../middlewares/dealerAuth");
+const cashfreeWebhookSecurity = require("../middlewares/cashfreeWebhookSecurity");
 const { getAllPayments,getBillByBookingId,getUserBillsSimple,getUserBillDetails,getAllBills, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, createOrderForAdd } = require("../controller/payment");
 
 router.post("/initiate", requireBookingParticipant(req => req.body.booking_id), initiatePayment);
@@ -13,8 +14,7 @@ router.post('/link', requireAdmin, createPaymentLink);
 router.post("/createOrderForAdd", verifyDealerToken, requireOwnDealerBody("dealer_id"), createOrderForAdd);
 router.get("/all-payments", requireAdmin, getAllPayments);
 router.get("/single-payment-detail/:id", requireAdmin, getPaymentById);
-router.get("/webhook", paymentWebhook);
-router.post("/webhook", paymentWebhook);
+router.post("/webhook", cashfreeWebhookSecurity, paymentWebhook);
 router.get('/bills/booking/:booking_id', requireBookingParticipant(req => req.params.booking_id), getBillByBookingId);
 router.get('/bills/all', requireAdmin, getAllBills);
 router.get('/user/:user_id/bills/simple', requireCustomer, requireOwnCustomerParam("user_id"), getUserBillsSimple);

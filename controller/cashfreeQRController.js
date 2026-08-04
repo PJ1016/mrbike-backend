@@ -109,8 +109,7 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
 }
 
 // Cashfree API Configuration
-const getCashfreeBaseUrl = () =>
-  process.env.CASHFREE_ENV === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
+const getCashfreeBaseUrl = () => "https://api.cashfree.com/pg";
 
 const getCashfreeHeaders = () => ({
   "x-client-id": process.env.CASHFREE_APP_ID,
@@ -270,8 +269,7 @@ const generateUPIQRCode = async (req, res) => {
       // no UPI VPA is ever hardcoded here; the customer completes payment on
       // Cashfree's own page, which is the only way a payment stays trackable
       // via the order-status/webhook flow below.
-      const cashfreePaymentLink =
-        `https://payments${process.env.CASHFREE_ENV === "production" ? "" : "-test"}.cashfree.com/order/#${paymentSessionId}`
+      const cashfreePaymentLink = `https://payments.cashfree.com/order/#${paymentSessionId}`
 
       upiLink = cashfreePaymentLink
 
@@ -450,9 +448,9 @@ const checkPaymentStatus = async (req, res) => {
  * Cashfree Webhook Handler
  * Called by Cashfree when payment status changes
  *
- * SECURITY: Uses Orders API verification instead of webhook secret (Cashfree PG v3 standard)
- * - Webhook secrets are no longer provided by Cashfree
- * - Server-to-server verification via Orders API is the recommended approach
+ * SECURITY: Route middleware verifies Cashfree's signature, timestamp and
+ * idempotency key before this handler runs. Orders API verification remains
+ * as defense in depth and as the authoritative payment-status check.
  */
 const cashfreeWebhook = async (req, res) => {
   try {

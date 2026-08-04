@@ -717,18 +717,18 @@ function prepareTransferRequest(dealerId, orderAmount) {
     }
   };
 
-  const apiUrl = `https://sandbox.cashfree.com/pg/easy-split/vendors/${dealerId}/transfer`;
+  const apiUrl = `https://api.cashfree.com/pg/easy-split/vendors/${dealerId}/transfer`;
 
   const timestamp = Date.now();
-  const tokenData = `${process.env.APP_ID}:${timestamp}:${process.env.SECRET_KEY}`;
-  const token = crypto.createHmac('sha256', process.env.SECRET_KEY).update(tokenData).digest('base64');
+  const tokenData = `${process.env.CASHFREE_APP_ID}:${timestamp}:${process.env.CASHFREE_SECRET_KEY}`;
+  const token = crypto.createHmac('sha256', process.env.CASHFREE_SECRET_KEY).update(tokenData).digest('base64');
 
   const headers = {
     'accept': 'application/json',
     'content-type': 'application/json',
     'x-api-version': '2023-08-01',
-    'X-Client-Id': process.env.APP_ID,
-    'X-Client-Secret': process.env.SECRET_KEY,
+    'X-Client-Id': process.env.CASHFREE_APP_ID,
+    'X-Client-Secret': process.env.CASHFREE_SECRET_KEY,
     'X-Timestamp': timestamp
   };
 

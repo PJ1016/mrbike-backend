@@ -139,8 +139,6 @@
 //    CORS (HTTP + WebSocket)
 //    ============================== */
 // const ALLOWED_ORIGINS = [
-//   "http://localhost:3000",
-//   "http://localhost:5173",
 //   "https://dr-bike-frontend.vercel.app/",
 //   "https://admin.mrbikedoctor.cloud",
 // ];
@@ -280,6 +278,8 @@ const cors = require("cors");
 const serveIndex = require("serve-index");
 const { Server } = require("socket.io");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
+const validateProductionEnv = require("./config/validateProductionEnv");
+validateProductionEnv();
 
 const apiRouter = require("./routes/index");
 const db = require("./models/index");
@@ -348,7 +348,15 @@ io.on("connection", (socket) => {
    Middlewares
    ============================== */
 app.use(morgan("dev"));
-app.use(bodyParser.json({ limit: "50mb" }));
+app.use(bodyParser.json({
+  limit: "50mb",
+  verify: (req, _res, buffer) => {
+    const requestPath = req.originalUrl.split("?")[0];
+    if (/\/webhook\/?$/i.test(requestPath)) {
+      req.rawBody = Buffer.from(buffer);
+    }
+  },
+}));
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 

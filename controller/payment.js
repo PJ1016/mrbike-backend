@@ -24,10 +24,7 @@ const API_KEY_SECRET = process.env.API_KEY_SECRET_RAZO;
 const Customer = require("../models/customer_model");
 const Bill = require("../models/billSchema");
 
-const CASHFREE_BASE_URL =
-    process.env.CASHFREE_ENV === "production"
-        ? "https://api.cashfree.com/pg/orders"
-        : "https://sandbox.cashfree.com/pg/orders";
+const CASHFREE_BASE_URL = "https://api.cashfree.com/pg/orders";
 
 // Initiate Payment
 const initiatePayment = async (req, res) => {
@@ -128,8 +125,6 @@ const initiatePayment = async (req, res) => {
 
 const paymentWebhook = async (req, res) => {
     try {
-        const signature = req.headers['x-webhook-signature'];
-        const timestamp = req.headers['x-webhook-timestamp'];
         const body = req.body;
 
         console.log('🔔 Webhook received:', JSON.stringify(body, null, 2));
@@ -647,9 +642,8 @@ const createCheckoutUrl = async (req, res) => {
 
         const orderId = `ORD_${Date.now()}`;
         // const returnUrl = `https://dr-bike-backend.onrender.com/payment-success?order_id={order_id}`;
-        const returnUrl = `http://localhost:8001/payment-success?order_id={order_id}`;
-        // const notifyUrl = `https://dr-bike-backend.onrender.com/api/payments/webhook`;
-        const notifyUrl = `http://localhost:8001/api/payments/webhook`;
+        const returnUrl = `${process.env.FRONTEND_URL}/payment-success?order_id={order_id}`;
+        const notifyUrl = `${process.env.BACKEND_URL}/bikedoctor/payment/webhook`;
 
         const payload = {
             order_id: orderId,
@@ -707,7 +701,7 @@ const createCheckoutUrl = async (req, res) => {
         if (data.payment_link) {
             checkoutUrl = data.payment_link;
         } else if (data.payment_session_id) {
-            checkoutUrl = `https://sandbox.cashfree.com/order/#${data.payment_session_id}`;
+            checkoutUrl = `https://payments.cashfree.com/order/#${data.payment_session_id}`;
         } else {
             checkoutUrl = null;
         }
@@ -791,8 +785,8 @@ const createCheckoutSession = async (req, res) => {
                 customer_phone: customer_phone || "9999999999",
             },
             order_meta: {
-                return_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback?order_id={order_id}&order_token={order_token}`,
-                notify_url: `${process.env.BACKEND_URL || 'http://localhost:8001'}/api/payments/webhook`,
+                return_url: `${process.env.FRONTEND_URL}/payment/callback?order_id={order_id}&order_token={order_token}`,
+                notify_url: `${process.env.BACKEND_URL}/bikedoctor/payment/webhook`,
             },
             order_note: `Payment for booking ${booking_id}`
         };
@@ -826,7 +820,7 @@ const createCheckoutSession = async (req, res) => {
 
         // Construct the checkout URL
         const checkoutUrl = cashfreeData.payment_link ||
-            `https://${process.env.CASHFREE_ENV === 'production' ? 'payments.cashfree.com' : 'sandbox.cashfree.com'}/pg/orders/${orderId}/payments`;
+            `https://payments.cashfree.com/pg/orders/${orderId}/payments`;
 
         // Success response
         res.status(200).json({
@@ -913,7 +907,7 @@ const createPaymentLink = async (req, res) => {
             link_purpose: "Bike Doctor Service Payment",
             link_notes: { booking_id, user_id, dealer_id },
             link_meta: {
-                return_url: "http://localhost:8001/payment-success",
+                return_url: `${process.env.FRONTEND_URL}/payment-success`,
             },
         };
 
@@ -922,7 +916,7 @@ const createPaymentLink = async (req, res) => {
         try {
             // 💳 Try creating Cashfree payment link
             const response = await axios.post(
-                "https://sandbox.cashfree.com/pg/links",
+                "https://api.cashfree.com/pg/links",
                 payload,
                 {
                     headers: {
@@ -1113,14 +1107,11 @@ const getUserBillDetails = async (req, res) => {
 
 // ─── Dealer Wallet Top-Up ────────────────────────────────────────────────────
 
-const CASHFREE_ORDERS_URL =
-    process.env.CASHFREE_ENV === "production"
-        ? "https://api.cashfree.com/pg/orders"
-        : "https://sandbox.cashfree.com/pg/orders";
+const CASHFREE_ORDERS_URL = "https://api.cashfree.com/pg/orders";
 
 const cashfreeHeaders = () => ({
-    "x-client-id": process.env.CASHFREE_APP_ID || process.env.APP_ID,
-    "x-client-secret": process.env.CASHFREE_SECRET_KEY || process.env.SECRET_KEY,
+    "x-client-id": process.env.CASHFREE_APP_ID,
+    "x-client-secret": process.env.CASHFREE_SECRET_KEY,
     "x-api-version": "2023-08-01",
     "Content-Type": "application/json",
 });
@@ -1250,9 +1241,7 @@ module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserB
 // const Payment = require("../models/Payment");
 // const Booking = require("../models/Booking");
 
-// const CASHFREE_BASE_URL = process.env.CASHFREE_ENV === "production"
-//     ? "https://api.cashfree.com/pg"
-//     : "https://sandbox.cashfree.com/pg";
+// const CASHFREE_BASE_URL = "https://api.cashfree.com/pg";
 
 // class CashfreePaymentService {
 //     constructor() {
@@ -1346,8 +1335,8 @@ module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserB
 // //                 customer_phone: customer_phone || "9999999999",
 // //             },
 // //             order_meta: {
-// //                 return_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback?order_id={order_id}`,
-// //                 notify_url: `${process.env.BACKEND_URL || 'http://localhost:8001'}/api/payments/webhook`,
+// //                 return_url: `${process.env.FRONTEND_URL}/payment/callback?order_id={order_id}`,
+// //                 notify_url: `${process.env.BACKEND_URL}/bikedoctor/payment/webhook`,
 // //             },
 // //             order_note: `Payment for booking ${booking_id}`
 // //         };
@@ -1388,7 +1377,7 @@ module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserB
 
 // //         // Construct checkout URL
 // //         const checkoutUrl = cashfreeResponse.payment_session_id
-// //             ? `https://${process.env.CASHFREE_ENV === 'production' ? 'payments.cashfree.com' : 'sandbox.cashfree.com'}/order/#${cashfreeResponse.payment_session_id}`
+// //             ? `https://payments.cashfree.com/order/#${cashfreeResponse.payment_session_id}`
 // //             : cashfreeResponse.payment_link;
 
 // //         res.status(200).json({
@@ -1484,7 +1473,7 @@ module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserB
 
 //         if (existingPendingPayment) {
 //             const checkoutUrl = existingPendingPayment.metadata?.session_id
-//                 ? `https://${process.env.CASHFREE_ENV === 'production' ? 'payments.cashfree.com' : 'sandbox.cashfree.com'}/order/#${existingPendingPayment.metadata.session_id}`
+//                 ? `https://payments.cashfree.com/order/#${existingPendingPayment.metadata.session_id}`
 //                 : null;
 
 //             return res.status(400).json({
@@ -1537,8 +1526,8 @@ module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserB
 //                 customer_phone: customer_phone || "9999999999",
 //             },
 //             order_meta: {
-//                 return_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback?order_id={order_id}`,
-//                 notify_url: `${process.env.BACKEND_URL || 'http://localhost:8001'}/api/payments/webhook`,
+//                 return_url: `${process.env.FRONTEND_URL}/payment/callback?order_id={order_id}`,
+//                 notify_url: `${process.env.BACKEND_URL}/bikedoctor/payment/webhook`,
 //             },
 //             order_note: `Payment for booking ${booking_id}`
 //         };
@@ -1580,7 +1569,7 @@ module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserB
 
 //         // Construct checkout URL
 //         const checkoutUrl = cashfreeResponse.payment_session_id
-//             ? `https://${process.env.CASHFREE_ENV === 'production' ? 'payments.cashfree.com' : 'sandbox.cashfree.com'}/order/#${cashfreeResponse.payment_session_id}`
+//             ? `https://payments.cashfree.com/order/#${cashfreeResponse.payment_session_id}`
 //             : cashfreeResponse.payment_link;
 
 //         res.status(200).json({

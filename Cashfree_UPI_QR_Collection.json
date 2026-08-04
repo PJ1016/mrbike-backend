@@ -2,13 +2,13 @@
   "info": {
     "_postman_id": "cashfree-upi-qr-collection",
     "name": "Cashfree UPI QR Payment Collection",
-    "description": "Cashfree UPI QR Code Payment Gateway APIs for BikeDoctor\n\nFlow:\n1. Dealer generates QR code after booking\n2. User scans QR with any UPI app\n3. Payment completed via webhook\n\nBase URL: http://localhost:8001\nPrefix: /bikedoctor/cashfree",
+    "description": "Cashfree UPI QR Code Payment Gateway APIs for BikeDoctor\n\nFlow:\n1. Dealer generates QR code after booking\n2. User scans QR with any UPI app\n3. Payment completed via webhook\n\nBase URL: https://api.mrbikedoctor.com\nPrefix: /bikedoctor/cashfree",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8001",
+      "value": "https://api.mrbikedoctor.com",
       "type": "string"
     },
     {
