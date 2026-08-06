@@ -233,7 +233,15 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         status: "generated",
     });
 
-    await bill.save();
+    try {
+        await bill.save();
+    } catch (error) {
+        if (error?.code === 11000) {
+            const concurrentBill = await Bill.findOne({ booking_id: bookingId });
+            if (concurrentBill) return concurrentBill;
+        }
+        throw error;
+    }
     console.log(`✅ Invoice generated: ${billNumber} for booking: ${booking._id}`);
 
     // Promo usage is NOT touched here. Per the final business rule, a promo

@@ -49,5 +49,16 @@ const walletSchema = new mongoose.Schema({
 });
 
 walletSchema.plugin(AutoIncrement, { id: "wallet_seq", inc_field: "id" });
+walletSchema.index(
+    { booking_id: 1, transaction_type: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            booking_id: { $type: "objectId" },
+            transaction_type: { $in: ["settlement_online", "settlement_cash"] },
+        },
+        name: "one_wallet_settlement_per_booking_method",
+    },
+);
 
 module.exports = mongoose.model("Wallet", walletSchema);

@@ -287,6 +287,7 @@ const errorMiddleware = require("./middlewares/error");
 const bookingExpiryJob = require("./helper/bookingExpiryJob");
 const campaignSchedulerJob = require("./helper/campaignSchedulerJob");
 const reviewReminderJob = require("./helper/reviewReminderJob");
+const paymentReconciliationJob = require("./helper/paymentReconciliationJob");
 const validateRequest = require("./middlewares/requestValidation");
 const sensitiveRateLimit = require("./middlewares/rateLimits");
 
@@ -420,6 +421,7 @@ db.mongoose
     bookingExpiryJob.start(io);
     campaignSchedulerJob.start();
     reviewReminderJob.start();
+    paymentReconciliationJob.start();
   })
   .catch((err) => console.log("MongoDB error:", err));
 

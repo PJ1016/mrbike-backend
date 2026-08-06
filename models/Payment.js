@@ -3,7 +3,7 @@ const mongoose = require("mongoose")
 const paymentSchema = new mongoose.Schema(
   {
     cf_order_id: {
-      type: Number,
+      type: String,
       required: false,
       unique: true,
       sparse: true, // Allow null values for unique field
@@ -78,6 +78,18 @@ const paymentSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    gateway_status: {
+      type: String,
+      default: null,
+    },
+    verified_amount: {
+      type: Number,
+      default: null,
+    },
+    verified_timestamp: {
+      type: Date,
+      default: null,
+    },
     refund_amount: {
       type: Number,
       default: 0,
@@ -110,5 +122,21 @@ paymentSchema.index({ user_id: 1 })
 paymentSchema.index({ order_status: 1 })
 paymentSchema.index({ payment_type: 1 }) // Added index for payment_type
 paymentSchema.index({ create_date: -1 })
+paymentSchema.index(
+  { booking_id: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { booking_id: { $type: "objectId" }, order_status: "SUCCESS" },
+    name: "one_successful_payment_per_booking",
+  },
+)
+paymentSchema.index(
+  { booking_id: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { booking_id: { $type: "objectId" }, order_status: "PENDING" },
+    name: "one_pending_payment_per_booking",
+  },
+)
 
 module.exports = mongoose.model("Payment", paymentSchema)

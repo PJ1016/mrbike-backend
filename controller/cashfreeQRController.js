@@ -7,7 +7,15 @@ const Dealer = require("../models/dealerModel")
 const { generateBill } = require("./payment")
 const { settleBookingWallet } = require("../helper/walletSettlement")
 const { sendBookingNotification } = require("../helper/pushNotification")
-const { cancelPendingPaymentSessions } = require("../helper/paymentSession")
+const {
+  acquirePaymentOrderLock,
+  releasePaymentOrderLock,
+  cancelPendingPaymentSessions,
+} = require("../helper/paymentSession")
+const {
+  enqueuePaymentReconciliation,
+  completeReconciliationTask,
+} = require("../services/paymentReconciliationService")
 
 const genDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000)
 
@@ -26,6 +34,7 @@ const normalizeQrCode = (value) => {
 // SUCCESS — mirrors confirmCashReceived so both payment methods land in the
 // same place: invoice generated, wallet settled, delivery OTP issued.
 const advanceBookingAfterOnlinePayment = async (payment, io) => {
+  await enqueuePaymentReconciliation(payment)
   const currentBooking = await Booking.findById(payment.booking_id)
   if (!currentBooking) return
 
@@ -55,6 +64,7 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
   currentBooking.paymentStatus    = "completed"
   currentBooking.paymentDate      = new Date()
   await currentBooking.save()
+  await completeReconciliationTask(payment, "BOOKING_SYNC")
 
   console.log(`[CASHFREE] Booking ${payment.booking_id} → ready_for_delivery | OTP: ${freshOtp}`)
 
@@ -65,6 +75,7 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
       transaction_id: payment.transaction_id || payment.cf_order_id || null,
       _id: payment._id,
     })
+    await completeReconciliationTask(payment, "INVOICE")
   } catch (billErr) {
     console.error("[CASHFREE] Bill generation failed:", billErr.message)
   }
@@ -74,6 +85,7 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
     if (settlement) {
       console.log(`[CASHFREE] Wallet settled: ₹${settlement.txnAmount} credited (commission ${settlement.commissionRate}%)`)
     }
+    await completeReconciliationTask(payment, "WALLET")
   } catch (settlErr) {
     console.error("[CASHFREE] Wallet settlement failed:", settlErr.message)
   }
@@ -96,6 +108,7 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
         bookingId: currentBooking._id,
       })
     }
+    await completeReconciliationTask(payment, "NOTIFICATION")
   } catch (notifyErr) {
     console.error("[CASHFREE] User FCM error:", notifyErr.message)
   }
@@ -118,12 +131,31 @@ const getCashfreeHeaders = () => ({
   "Content-Type": "application/json",
 });
 
+const getVerifiedPaymentDetails = async (orderId, fallback = {}) => {
+  try {
+    const response = await axios.get(
+      `${getCashfreeBaseUrl()}/orders/${encodeURIComponent(orderId)}/payments`,
+      { headers: getCashfreeHeaders() },
+    )
+    const payments = Array.isArray(response.data) ? response.data : response.data?.data || []
+    return payments.find((item) => item.payment_status === "SUCCESS") || payments[0] || fallback
+  } catch (error) {
+    console.error("[CASHFREE] Unable to fetch verified payment details", {
+      orderId,
+      message: error.response?.data?.message || error.message,
+    })
+    return fallback
+  }
+}
+
 /**
  * Generate UPI QR Code for Payment
  * Called by Dealer App after booking is confirmed
  * Flow: Dealer generates QR -> User scans with any UPI app -> Payment completed
  */
 const generateUPIQRCode = async (req, res) => {
+  let paymentOrderLockToken = null
+  let lockedBookingId = null
   try {
     // `amount` is intentionally NOT read from req.body — the server is the
     // only authority on what a booking costs. See services/pricingEngine.js.
@@ -167,6 +199,9 @@ const generateUPIQRCode = async (req, res) => {
         message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
       })
     }
+
+    lockedBookingId = booking_id
+    paymentOrderLockToken = await acquirePaymentOrderLock(booking_id)
 
     // Check if payment already exists and is successful
     const existingPayment = await Payment.findOne({
@@ -345,11 +380,23 @@ const generateUPIQRCode = async (req, res) => {
     })
   } catch (error) {
     console.error("Generate UPI QR Error:", error.response?.data || error.message)
-    
+
+    if (error.code === "PAYMENT_ORDER_LOCKED" || error.code === "CASHFREE_ORDER_ALREADY_PAID") {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+      })
+    }
     res.status(500).json({
       success: false,
       message: "Failed to generate UPI QR Code",
     })
+  } finally {
+    if (paymentOrderLockToken && lockedBookingId) {
+      await releasePaymentOrderLock(lockedBookingId, paymentOrderLockToken).catch((lockError) => {
+        console.error("[CASHFREE] Failed to release payment order lock", { message: lockError.message })
+      })
+    }
   }
 }
 
@@ -377,6 +424,9 @@ const checkPaymentStatus = async (req, res) => {
     const payment = await Payment.findOne({ orderId: order_id })
 
     if (payment) {
+      const verifiedPayment = orderData.order_status === "PAID"
+        ? await getVerifiedPaymentDetails(order_id)
+        : null
       let mappedStatus = "PENDING"
       switch (orderData.order_status) {
         case "PAID":
@@ -387,6 +437,8 @@ const checkPaymentStatus = async (req, res) => {
           mappedStatus = "FAILED"
           break
         case "CANCELLED":
+        case "TERMINATED":
+        case "TERMINATION_REQUESTED":
           mappedStatus = "CANCELLED"
           break
         default:
@@ -401,6 +453,13 @@ const checkPaymentStatus = async (req, res) => {
         const wasSupersededByDealerSwitch = payment.order_status === "CANCELLED"
 
         payment.order_status = mappedStatus
+        payment.cf_payment_id = verifiedPayment?.cf_payment_id?.toString() || payment.cf_payment_id
+        payment.transaction_id = verifiedPayment?.cf_payment_id?.toString() || payment.transaction_id
+        payment.utr_number = verifiedPayment?.bank_reference || payment.utr_number
+        payment.payment_method = verifiedPayment?.payment_group || payment.payment_method
+        payment.gateway_status = verifiedPayment?.payment_status || orderData.order_status
+        payment.verified_amount = Number(orderData.order_amount)
+        payment.verified_timestamp = new Date()
         payment.metadata = {
           ...payment.metadata,
           last_status_check: new Date(),
@@ -482,9 +541,10 @@ const cashfreeWebhook = async (req, res) => {
 
     // Use verified status from API, not webhook payload (security)
     const orderStatus = verifiedOrderData.order_status
-    const paymentMethodGroup = data.payment?.payment_group || "upi"
-    const transactionId = data.payment?.cf_payment_id
-    const utr = data.payment?.payment_group === "upi" ? data.payment?.bank_reference : null
+    const verifiedPayment = await getVerifiedPaymentDetails(orderId, data.payment || {})
+    const paymentMethodGroup = verifiedPayment.payment_group || "upi"
+    const transactionId = verifiedPayment.cf_payment_id
+    const utr = verifiedPayment.payment_group === "upi" ? verifiedPayment.bank_reference : null
 
     console.log(`Webhook: order_id=${orderId}, verified_status=${orderStatus}, event=${eventType}`)
 
@@ -507,6 +567,8 @@ const cashfreeWebhook = async (req, res) => {
         mappedStatus = "FAILED"
         break
       case "CANCELLED":
+      case "TERMINATED":
+      case "TERMINATION_REQUESTED":
         mappedStatus = "CANCELLED"
         break
       case "ACTIVE":
@@ -522,7 +584,12 @@ const cashfreeWebhook = async (req, res) => {
     // Update payment record
     payment.order_status = mappedStatus
     payment.payment_method = paymentMethodGroup
+    payment.cf_payment_id = transactionId?.toString() || null
     payment.transaction_id = transactionId || utr
+    payment.utr_number = utr
+    payment.gateway_status = verifiedPayment.payment_status || orderStatus
+    payment.verified_amount = Number(verifiedOrderData.order_amount)
+    payment.verified_timestamp = new Date()
     payment.metadata = {
       ...payment.metadata,
       webhook_received_at: new Date(),

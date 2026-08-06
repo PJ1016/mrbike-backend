@@ -23,11 +23,22 @@ const API_KEY_ID = process.env.API_KEY_ID_RAZO;
 const API_KEY_SECRET = process.env.API_KEY_SECRET_RAZO;
 const Customer = require("../models/customer_model");
 const Bill = require("../models/billSchema");
+const {
+    acquirePaymentOrderLock,
+    releasePaymentOrderLock,
+    cancelPendingPaymentSessions,
+} = require("../helper/paymentSession");
+const {
+    enqueuePaymentReconciliation,
+    completeReconciliationTask,
+} = require("../services/paymentReconciliationService");
 
 const CASHFREE_BASE_URL = "https://api.cashfree.com/pg/orders";
 
 // Initiate Payment
 const initiatePayment = async (req, res) => {
+    let paymentOrderLockToken = null;
+    let lockedBookingId = null;
     try {
         const { booking_id, customer_email, customer_phone, payment_by = "user" } = req.body;
         const payment_type = "ONLINE";
@@ -55,6 +66,10 @@ const initiatePayment = async (req, res) => {
                 message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
             });
         }
+
+        lockedBookingId = booking_id;
+        paymentOrderLockToken = await acquirePaymentOrderLock(booking_id);
+        await cancelPendingPaymentSessions(booking_id);
 
         const orderId = `ORD_${Date.now()}`;
 
@@ -115,10 +130,19 @@ const initiatePayment = async (req, res) => {
         });
     } catch (error) {
         console.error("Payment initiation error:", error.response?.data || error.message);
+        if (error.code === "PAYMENT_ORDER_LOCKED" || error.code === "CASHFREE_ORDER_ALREADY_PAID") {
+            return res.status(409).json({ success: false, message: error.message });
+        }
         res.status(500).json({
             success: false,
             message: "Payment initiation failed",
         });
+    } finally {
+        if (paymentOrderLockToken && lockedBookingId) {
+            await releasePaymentOrderLock(lockedBookingId, paymentOrderLockToken).catch((lockError) => {
+                console.error("[CASHFREE] Failed to release payment order lock", { message: lockError.message });
+            });
+        }
     }
 };
 
@@ -132,9 +156,10 @@ const paymentWebhook = async (req, res) => {
         // Extract data from Cashfree webhook
         const orderId = body.data?.order?.order_id;
         const orderStatus = body.data?.order?.order_status;
-        const paymentMethod = body.data?.order?.payment_method;
-        const transactionId = body.data?.order?.payment_utr;
-        const paymentTime = body.data?.order?.payment_time;
+        const webhookPayment = body.data?.payment || {};
+        const paymentMethod = webhookPayment.payment_group || webhookPayment.payment_method || body.data?.order?.payment_method;
+        const transactionId = webhookPayment.cf_payment_id || body.data?.order?.payment_utr;
+        const paymentTime = webhookPayment.payment_time || body.data?.order?.payment_time;
 
         if (!orderId) {
             console.log('❌ Missing orderId in webhook');
@@ -161,6 +186,8 @@ const paymentWebhook = async (req, res) => {
                 mappedStatus = "FAILED";
                 break;
             case "CANCELLED":
+            case "TERMINATED":
+            case "TERMINATION_REQUESTED":
                 mappedStatus = "CANCELLED";
                 break;
             default:
@@ -172,13 +199,22 @@ const paymentWebhook = async (req, res) => {
         // Update payment
         payment.order_status = mappedStatus;
         payment.payment_method = paymentMethod || null;
+        payment.cf_payment_id = webhookPayment.cf_payment_id?.toString() || payment.cf_payment_id;
         payment.transaction_id = transactionId || null;
+        payment.utr_number = webhookPayment.bank_reference || payment.utr_number;
+        payment.gateway_status = webhookPayment.payment_status || orderStatus;
+        payment.verified_amount = Number(body.data?.order?.order_amount ?? payment.orderAmount);
+        payment.verified_timestamp = new Date();
         payment.metadata = payment.metadata || {};
         payment.metadata.webhook_data = body.data;
         payment.metadata.last_webhook_received = new Date();
 
         await payment.save();
         console.log(`✅ Payment updated in database: ${orderId} -> ${mappedStatus}`);
+
+        if (mappedStatus === "SUCCESS" && payment.booking_id) {
+            await enqueuePaymentReconciliation(payment);
+        }
 
         // Wallet top-up: credit dealer wallet, skip booking/bill logic
         if (mappedStatus === "SUCCESS" && payment.payment_type === "WALLET_TOPUP") {
@@ -209,9 +245,11 @@ const paymentWebhook = async (req, res) => {
                         paymentDate: new Date(paymentTime || Date.now()),
                     },
                 });
+                await completeReconciliationTask(payment, "BOOKING_SYNC");
                 console.log(`[WEBHOOK-ONLINE] Booking ${payment.booking_id} → ready_for_delivery`);
 
                 await generateBill(payment);
+                await completeReconciliationTask(payment, "INVOICE");
 
                 try {
                     const settlement = await settleBookingWallet(payment.booking_id, "ONLINE");
@@ -220,6 +258,7 @@ const paymentWebhook = async (req, res) => {
                     } else {
                         console.log(`[WEBHOOK-ONLINE] Wallet already settled for: ${payment.booking_id}`);
                     }
+                    await completeReconciliationTask(payment, "WALLET");
                 } catch (settlementErr) {
                     console.error(`[WEBHOOK-ONLINE] Wallet settlement failed:`, settlementErr.message);
                 }
@@ -261,6 +300,8 @@ const paymentWebhook = async (req, res) => {
                     console.error(`[WEBHOOK-ONLINE] User notify error:`, notifyErr.message);
                 }
 
+                await completeReconciliationTask(payment, "NOTIFICATION");
+
                 console.log(`[WEBHOOK-ONLINE] Done: orderId=${orderId}`);
                 return res.status(200).send("Webhook processed successfully");
             }
@@ -269,6 +310,7 @@ const paymentWebhook = async (req, res) => {
         // ✅ NEW: Generate Bill if payment is successful
         if (mappedStatus === "SUCCESS") {
             await generateBill(payment);
+            await completeReconciliationTask(payment, "INVOICE");
         }
 
         // Update booking if payment successful
@@ -287,6 +329,7 @@ const paymentWebhook = async (req, res) => {
                     ...statusUpdate
                 },
             });
+            await completeReconciliationTask(payment, "BOOKING_SYNC");
             console.log(`✅ Booking updated: ${payment.booking_id}`);
 
             // Automatic wallet settlement — credit dealer net of commission
@@ -297,6 +340,7 @@ const paymentWebhook = async (req, res) => {
                 } else {
                     console.log(`ℹ️ Wallet already settled for booking: ${payment.booking_id}`);
                 }
+                await completeReconciliationTask(payment, "WALLET");
             } catch (settlementErr) {
                 console.error(`❌ Wallet settlement failed for booking ${payment.booking_id}:`, settlementErr.message);
             }
@@ -583,6 +627,8 @@ const getAllPayments = async (req, res) => {
 };
 
 const createCheckoutUrl = async (req, res) => {
+    let paymentOrderLockToken = null;
+    let lockedBookingId = null;
     try {
         console.log("Cashfree Credentials Check:", {
             hasAppId: !!process.env.CASHFREE_APP_ID,
@@ -627,6 +673,9 @@ const createCheckoutUrl = async (req, res) => {
                 message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
             });
         }
+        lockedBookingId = booking_id;
+        paymentOrderLockToken = await acquirePaymentOrderLock(booking_id);
+        await cancelPendingPaymentSessions(booking_id);
 
         // Check if credentials exist
         if (!process.env.CASHFREE_APP_ID || !process.env.CASHFREE_SECRET_KEY) {
@@ -724,14 +773,20 @@ const createCheckoutUrl = async (req, res) => {
             data: error.response?.data
         });
 
-        return res.status(500).json({
+        return res.status(error.code === "PAYMENT_ORDER_LOCKED" ? 409 : 500).json({
             success: false,
-            message: "Payment provider request failed",
+            message: error.code === "PAYMENT_ORDER_LOCKED" ? error.message : "Payment provider request failed",
         });
+    } finally {
+        if (paymentOrderLockToken && lockedBookingId) {
+            await releasePaymentOrderLock(lockedBookingId, paymentOrderLockToken).catch(() => {});
+        }
     }
 };
 
 const createCheckoutSession = async (req, res) => {
+    let paymentOrderLockToken = null;
+    let lockedBookingId = null;
     try {
         const {
             user_id,
@@ -770,6 +825,9 @@ const createCheckoutSession = async (req, res) => {
                 message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
             });
         }
+        lockedBookingId = booking_id;
+        paymentOrderLockToken = await acquirePaymentOrderLock(booking_id);
+        await cancelPendingPaymentSessions(booking_id);
 
         const orderId = `ORD_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -841,14 +899,20 @@ const createCheckoutSession = async (req, res) => {
     } catch (error) {
         console.error("Checkout session creation error:", error.response?.data || error.message);
 
-        res.status(500).json({
+        res.status(error.code === "PAYMENT_ORDER_LOCKED" ? 409 : 500).json({
             success: false,
-            message: "Failed to create checkout session"
+            message: error.code === "PAYMENT_ORDER_LOCKED" ? error.message : "Failed to create checkout session"
         });
+    } finally {
+        if (paymentOrderLockToken && lockedBookingId) {
+            await releasePaymentOrderLock(lockedBookingId, paymentOrderLockToken).catch(() => {});
+        }
     }
 };
 
 const createPaymentLink = async (req, res) => {
+    let paymentOrderLockToken = null;
+    let lockedBookingId = null;
     try {
         const {
             orderCurrency = "INR",
@@ -883,6 +947,9 @@ const createPaymentLink = async (req, res) => {
                 message: "Booking has no amount due — pricing snapshot missing or already fully discounted",
             });
         }
+        lockedBookingId = booking_id;
+        paymentOrderLockToken = await acquirePaymentOrderLock(booking_id);
+        await cancelPendingPaymentSessions(booking_id);
 
         // 🧠 Update booking immediately — mark payment initiated. Pricing
         // fields are never touched here; they were fixed at booking creation.
@@ -963,10 +1030,14 @@ const createPaymentLink = async (req, res) => {
         });
     } catch (error) {
         console.error("❌ Payment Link Error:", error);
-        return res.status(500).json({
+        return res.status(error.code === "PAYMENT_ORDER_LOCKED" ? 409 : 500).json({
             success: false,
-            message: "Server error while creating payment link",
+            message: error.code === "PAYMENT_ORDER_LOCKED" ? error.message : "Server error while creating payment link",
         });
+    } finally {
+        if (paymentOrderLockToken && lockedBookingId) {
+            await releasePaymentOrderLock(lockedBookingId, paymentOrderLockToken).catch(() => {});
+        }
     }
 };
 

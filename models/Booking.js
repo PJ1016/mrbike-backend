@@ -226,6 +226,8 @@ const bookingSchema = new mongoose.Schema(
     },
     payment_status:      { type: String, enum: ["pending", "completed", "failed"], default: "pending" },
     payment_verified:    { type: Boolean, default: false },
+    paymentOrderLockToken: { type: String, default: null, select: false },
+    paymentOrderLockUntil: { type: Date, default: null, select: false },
 
     otp_verified:        { type: Boolean, default: false },
     delivered_at:        { type: Date, default: null },

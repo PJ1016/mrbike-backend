@@ -65,6 +65,39 @@ async function createIndexes() {
       { expireAfterSeconds: 0, name: 'cashfree_webhook_event_expiry_ttl' },
     )
     console.log('✓ Cashfree webhook security indexes created')
+
+    await mongoose.connection.db.collection('payments').createIndex(
+      { booking_id: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { booking_id: { $type: 'objectId' }, order_status: 'SUCCESS' },
+        name: 'one_successful_payment_per_booking',
+      },
+    )
+    await mongoose.connection.db.collection('payments').createIndex(
+      { booking_id: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { booking_id: { $type: 'objectId' }, order_status: 'PENDING' },
+        name: 'one_pending_payment_per_booking',
+      },
+    )
+    await mongoose.connection.db.collection('wallets').createIndex(
+      { booking_id: 1, transaction_type: 1 },
+      {
+        unique: true,
+        partialFilterExpression: {
+          booking_id: { $type: 'objectId' },
+          transaction_type: { $in: ['settlement_online', 'settlement_cash'] },
+        },
+        name: 'one_wallet_settlement_per_booking_method',
+      },
+    )
+    await mongoose.connection.db.collection('paymentreconciliationtasks').createIndex(
+      { dedupeKey: 1 },
+      { unique: true, name: 'payment_reconciliation_dedupe_unique' },
+    )
+    console.log('✓ Payment lifecycle integrity indexes created')
     
     console.log('🚀 All performance indexes created successfully!')
     

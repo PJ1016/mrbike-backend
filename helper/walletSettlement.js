@@ -1,6 +1,7 @@
 const Vendor = require("../models/dealerModel");
 const Wallet = require("../models/Wallet_modal");
 const Booking = require("../models/Booking");
+const mongoose = require("mongoose");
 
 /**
  * Settle dealer wallet for a completed booking.
@@ -22,14 +23,21 @@ const Booking = require("../models/Booking");
  * @param {'ONLINE'|'CASH'} paymentMethod
  * @returns {object|null} settlement summary, or null if already settled
  */
-async function settleBookingWallet(bookingId, paymentMethod) {
-  const bookingDoc = await Booking.findById(bookingId);
-  if (!bookingDoc) throw new Error(`Booking not found: ${bookingId}`);
+async function settleBookingWalletInternal(bookingId, paymentMethod, session) {
+  // Atomic claim replaces the old read-then-write walletSettled check. Within
+  // a transaction it rolls back together with the dealer and ledger writes.
+  const bookingDoc = await Booking.findOneAndUpdate(
+    { _id: bookingId, walletSettled: { $ne: true } },
+    { $set: { walletSettled: true } },
+    { new: true, session },
+  );
+  if (!bookingDoc) {
+    const exists = await Booking.exists({ _id: bookingId }).session(session || null);
+    if (!exists) throw new Error(`Booking not found: ${bookingId}`);
+    return null;
+  }
 
-  // Idempotency guard — prevents duplicate settlement
-  if (bookingDoc.walletSettled) return null;
-
-  const dealer = await Vendor.findById(bookingDoc.dealer_id);
+  const dealer = await Vendor.findById(bookingDoc.dealer_id).session(session || null);
   if (!dealer) throw new Error(`Dealer not found for booking: ${bookingId}`);
 
   // Use the immutable pricing snapshot taken at booking creation
@@ -88,9 +96,9 @@ async function settleBookingWallet(bookingId, paymentMethod) {
   // Zero-amount transactions are skipped but booking is still marked settled
   if (txnAmount > 0) {
     dealer.wallet = newBalance;
-    await dealer.save();
+    await dealer.save({ session });
 
-    await Wallet.create({
+    await Wallet.create([{
       orderId: bookingDoc.bookingId || bookingDoc._id.toString(),
       dealer_id: dealer._id,
       booking_id: bookingDoc._id,
@@ -101,11 +109,8 @@ async function settleBookingWallet(bookingId, paymentMethod) {
       pre_balance: preBalance,
       order_status: "APPROVED",
       transaction_type: paymentMethod === "ONLINE" ? "settlement_online" : "settlement_cash",
-    });
+    }], { session });
   }
-
-  // Mark booking as settled so this function never runs again for the same booking
-  await Booking.findByIdAndUpdate(bookingId, { walletSettled: true });
 
   return {
     paymentMethod,
@@ -120,6 +125,36 @@ async function settleBookingWallet(bookingId, paymentMethod) {
     preBalance,
     newBalance,
   };
+}
+
+function transactionsUnsupported(error) {
+  return /Transaction numbers are only allowed|replica set|mongos/i.test(error?.message || "");
+}
+
+async function settleBookingWallet(bookingId, paymentMethod, options = {}) {
+  if (options.session) {
+    return settleBookingWalletInternal(bookingId, paymentMethod, options.session);
+  }
+
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      result = await settleBookingWalletInternal(bookingId, paymentMethod, session);
+    });
+    return result;
+  } catch (error) {
+    if (!transactionsUnsupported(error)) throw error;
+    console.warn("[WALLET] MongoDB transactions unavailable; using atomic idempotency fallback");
+    try {
+      return await settleBookingWalletInternal(bookingId, paymentMethod, null);
+    } catch (fallbackError) {
+      await Booking.updateOne({ _id: bookingId }, { $set: { walletSettled: false } });
+      throw fallbackError;
+    }
+  } finally {
+    await session.endSession();
+  }
 }
 
 module.exports = { settleBookingWallet };
