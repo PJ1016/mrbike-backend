@@ -45,7 +45,7 @@ token: <jwt_token>  (for authenticated routes)
 
 #### Step 1: Send OTP for Registration
 \`\`\`http
-POST /bikedoctor/user/send-otp
+POST /bikedoctor/userAuth/userLogin
 \`\`\`
 **Request Body:**
 \`\`\`json
@@ -57,42 +57,41 @@ POST /bikedoctor/user/send-otp
 \`\`\`json
 {
   "success": true,
-  "message": "OTP sent successfully",
-  "otp": "123456"
+  "message": "OTP sent to your mobile.",
+  "user": {
+    "phone": "9876543210",
+    "isVerified": false
+  }
 }
 \`\`\`
 
 #### Step 2: Verify OTP & Complete Registration
 \`\`\`http
-POST /bikedoctor/user/verify-otp
+POST /bikedoctor/userAuth/otpVerify
 \`\`\`
 **Request Body:**
 \`\`\`json
 {
   "phone": "9876543210",
   "otp": "123456",
-  "name": "John Doe",
-  "email": "john@example.com"
+  "ftoken": "optional_fcm_token",
+  "device_token": "optional_device_token"
 }
 \`\`\`
 **Response:**
 \`\`\`json
 {
   "success": true,
-  "message": "User registered successfully",
+  "message": "OTP verified successfully",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "_id": "64f8a1b2c3d4e5f6a7b8c9d0",
-    "name": "John Doe",
-    "phone": "9876543210",
-    "email": "john@example.com"
-  }
+  "user_id": "64f8a1b2c3d4e5f6a7b8c9d0",
+  "isProfile": false
 }
 \`\`\`
 
 #### Step 3: User Login (Existing User)
 \`\`\`http
-POST /bikedoctor/user/login
+POST /bikedoctor/userAuth/userLogin
 \`\`\`
 **Request Body:**
 \`\`\`json
@@ -104,13 +103,17 @@ POST /bikedoctor/user/login
 \`\`\`json
 {
   "success": true,
-  "message": "OTP sent successfully"
+  "message": "OTP sent to your mobile.",
+  "user": {
+    "phone": "9876543210",
+    "isVerified": false
+  }
 }
 \`\`\`
 
 #### Step 4: Verify Login OTP
 \`\`\`http
-POST /bikedoctor/user/verify-login-otp
+POST /bikedoctor/userAuth/otpVerify
 \`\`\`
 **Request Body:**
 \`\`\`json
@@ -123,13 +126,10 @@ POST /bikedoctor/user/verify-login-otp
 \`\`\`json
 {
   "success": true,
-  "message": "Login successful",
+  "message": "OTP verified successfully",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "_id": "64f8a1b2c3d4e5f6a7b8c9d0",
-    "name": "John Doe",
-    "phone": "9876543210"
-  }
+  "user_id": "64f8a1b2c3d4e5f6a7b8c9d0",
+  "isProfile": false
 }
 \`\`\`
 
@@ -523,7 +523,7 @@ Headers: token: <jwt_token>
 
 #### 5.1 Dealer Login
 \`\`\`http
-POST /bikedoctor/dealer-auth/login
+POST /bikedoctor/dealerAuth/signin
 \`\`\`
 **Request Body:**
 \`\`\`json
@@ -534,7 +534,7 @@ POST /bikedoctor/dealer-auth/login
 
 #### 5.2 Verify Dealer OTP
 \`\`\`http
-POST /bikedoctor/dealer-auth/verify-otp
+POST /bikedoctor/dealerAuth/verifyotp
 \`\`\`
 **Request Body:**
 \`\`\`json
@@ -549,13 +549,17 @@ POST /bikedoctor/dealer-auth/verify-otp
   "success": true,
   "message": "Login successful",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "dealer": {
-    "_id": "64f8d4e5f6a7b8c9d0e1f2a3",
-    "shopName": "Bike Care Center",
-    "ownerName": "Raj Sharma"
+  "data": {
+    "dealer_id": "64f8d4e5f6a7b8c9d0e1f2a3"
   }
 }
 \`\`\`
+
+#### Legacy Dealer OTP
+\`\`\`http
+POST /bikedoctor/dealerAuth/sendotp
+\`\`\`
+This endpoint is deprecated for production authentication and returns a controlled deprecation response.
 
 ---
 

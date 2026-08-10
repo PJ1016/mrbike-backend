@@ -58,7 +58,7 @@ RAZORPAY_KEY_SECRET="your_razorpay_secret"
 # Third-party Services
 TWILIO_ACCOUNT_SID="your_twilio_sid"
 TWILIO_AUTH_TOKEN="your_twilio_token"
-TWILIO_PHONE_NUMBER="your_twilio_number"
+TWILIO_VERIFY_SERVICE_SID="your_twilio_verify_service_sid"
 MAPKEY="your_google_maps_key"
 
 # AWS S3 Storage
@@ -94,5 +94,5 @@ AWS_S3_BUCKET="your_bucket_name"
 - **Booking Management**: Real-time service booking and tracking via Socket.io.
 - **Payment Integration**: Support for Cashfree and Razorpay.
 - **AI Integration**: Powered by Google Gemini for intelligent bike diagnostics or automation.
-- **Notifications**: Push notifications via Firebase and SMS via Twilio.
+- **Notifications**: Push notifications via Firebase and SMS via Twilio Verify where applicable.
 - **Storage**: Image uploads managed via AWS S3.

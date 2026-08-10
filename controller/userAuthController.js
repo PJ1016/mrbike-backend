@@ -10,9 +10,6 @@ function getTwilioClient() {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken  = process.env.TWILIO_AUTH_TOKEN;
     const verifySid  = process.env.TWILIO_VERIFY_SERVICE_SID;
-    console.log("[Twilio] ACCOUNT_SID :", accountSid  || "MISSING");
-    console.log("[Twilio] VERIFY_SID  :", verifySid   || "MISSING");
-    console.log("[Twilio] AUTH_TOKEN  :", authToken ? authToken.slice(0, 8) + "..." : "MISSING");
     if (!verifySid) throw new Error("[Twilio] TWILIO_VERIFY_SERVICE_SID is undefined — check .env on server");
     if (!accountSid) throw new Error("[Twilio] TWILIO_ACCOUNT_SID is undefined — check .env on server");
     return twilio(accountSid, authToken);
@@ -53,11 +50,7 @@ async function userLogin(req, res) {
         }
 
         const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
-        console.log("[userAuth/userLogin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
-        console.log("[userAuth/userLogin] VERIFY_SID:", verifySid);
-
         const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
-        console.log("Twilio TO:", phoneNumber);
 
         const twilioClient = getTwilioClient();
         const sendResult = await twilioClient.verify.v2
@@ -117,11 +110,7 @@ async function otpVerify(req, res) {
         }
 
         const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
-        console.log("[userAuth/otpVerify] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
-        console.log("[userAuth/otpVerify] VERIFY_SID:", verifySid);
-
         const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
-        console.log("Twilio TO:", phoneNumber);
 
         const twilioClient = getTwilioClient();
         const verificationCheck = await twilioClient.verify.v2
@@ -178,7 +167,6 @@ async function resendOtp(req, res) {
         }
 
         const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
-        console.log("Twilio TO:", phoneNumber);
 
         const twilioClient = getTwilioClient();
         await twilioClient.verify.v2

@@ -1,7 +1,6 @@
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "../.env") });
 var validation = require("../helper/validation");
-const otpAuth = require("../helper/otpAuth");
 const Vendor = require("../models/dealerModel");
 const Admin = require("../models/admin_model");
 const { getDealerStatus } = require("../helper/dealerStatus");
@@ -19,61 +18,16 @@ function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken  = process.env.TWILIO_AUTH_TOKEN;
   const verifySid  = process.env.TWILIO_VERIFY_SERVICE_SID;
-  console.log("[Twilio] ACCOUNT_SID :", accountSid  || "MISSING");
-  console.log("[Twilio] VERIFY_SID  :", verifySid   || "MISSING");
-  console.log("[Twilio] AUTH_TOKEN  :", authToken ? authToken.slice(0, 8) + "..." : "MISSING");
   if (!verifySid) throw new Error("[Twilio] TWILIO_VERIFY_SERVICE_SID is undefined — check .env on server");
   if (!accountSid) throw new Error("[Twilio] TWILIO_ACCOUNT_SID is undefined — check .env on server");
   return twilio(accountSid, authToken);
 }
 
 async function sendOtp(req, res) {
-  try {
-    const { phone } = req.body;
-
-    if (phone != "" || phone === null) {
-      var userResm = await Vendor.findOne({ phone });
-
-      if (userResm) {
-        const data = await otpAuth.otp(phone);
-
-        Vendor.findByIdAndUpdate(
-          { _id: userResm._id },
-          { otp: data.otp },
-          { new: true },
-          async (err, docs) => {
-            if (err) {
-              return res.status(201).send({
-                status: 201,
-                message: err,
-              });
-            } else {
-              return res.status(200).json({
-                status: 200,
-                message: "OTP send successfully",
-              });
-            }
-          },
-        );
-      } else {
-        return res.status(201).send({
-          status: 201,
-          message: "Dealer not exist",
-        });
-      }
-    } else {
-      return res.status(201).send({
-        status: 201,
-        message: "Phone No can not be empty value!",
-      });
-    }
-  } catch (error) {
-    console.log("error", error);
-    return res.status(201).send({
-      status: 201,
-      message: "Operation was not successful",
-    });
-  }
+  return res.status(410).json({
+    success: false,
+    message: "This endpoint is deprecated. Use /bikedoctor/dealerAuth/signin for production OTP.",
+  });
 }
 
 // async function usersignin(req, res) {
@@ -183,11 +137,7 @@ async function usersignin(req, res) {
     }
 
     const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
-    console.log("[dealerAuth/signin] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
-    console.log("[dealerAuth/signin] VERIFY_SID:", verifySid);
-
     const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
-    console.log("Twilio TO:", phoneNumber);
 
     const twilioClient = getTwilioClient();
     const sendResult = await twilioClient.verify.v2
@@ -250,11 +200,7 @@ async function verifyOTP(req, res) {
 
     if (!isTestAccountLogin) {
       const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
-      console.log("[dealerAuth/verifyotp] ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID);
-      console.log("[dealerAuth/verifyotp] VERIFY_SID:", verifySid);
-
       const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
-      console.log("Twilio TO:", phoneNumber);
 
       const twilioClient = getTwilioClient();
       const verificationCheck = await twilioClient.verify.v2

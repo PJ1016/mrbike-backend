@@ -131,7 +131,7 @@
           }
         },
         {
-          "name": "Send OTP",
+          "name": "Send OTP (Deprecated)",
           "request": {
             "method": "POST",
             "header": [
@@ -564,7 +564,16 @@
               "host": ["{{baseUrl}}"],
               "path": ["bikedoctor", "dealerAuth", "sendotp"]
             }
-          }
+          },
+          "response": [
+            {
+              "name": "Deprecated Response",
+              "originalRequest": {},
+              "status": "Gone",
+              "code": 410,
+              "body": "{\n  \"success\": false,\n  \"message\": \"This endpoint is deprecated. Use /bikedoctor/dealerAuth/signin for production OTP.\"\n}"
+            }
+          ]
         },
         {
           "name": "Verify OTP",
