@@ -11,10 +11,12 @@ const {
     markTicketRead
 } = require("../controller/ticketController");
 const { requireAdmin } = require("../middlewares/requireAdmin");
-const { requireCustomer, requireOwnCustomerParam } = require("../middlewares/customerAuth");
 const { requireOwnTicketList, requireTicketParticipant } = require("../middlewares/ticketAuth");
 
-router.post("/create/:user_id", requireCustomer, requireOwnCustomerParam("user_id"), createTicket);
+// requireOwnTicketList checks req.params.user_id against the authenticated
+// actor (customer or dealer) and sets req.auth/req.user_id — the same
+// ownership check a ticket-create needs, so it's reused here as well.
+router.post("/create/:user_id", requireOwnTicketList, createTicket);
 router.post("/reply/:ticket_id", requireTicketParticipant("ticket_id"), replyToTicket);
 router.get("/my-tickets/:user_id", requireOwnTicketList, getMyTickets);
 router.get("/user-dealer", requireAdmin, getAllUserAndDealerTickets);

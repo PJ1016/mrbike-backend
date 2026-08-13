@@ -17,11 +17,16 @@ const getActiveAdminIds = async () => {
   return admins.map((a) => a._id)
 }
 
+// req.auth.role comes from authenticateActor ("customer"/"dealer"), while
+// Ticket.user_type/sender_type use "user"/"dealer" (see models/ticket_model.js
+// ROLES) — map between the two instead of hardcoding "user" for everyone.
+const ROLE_TO_TICKET_TYPE = { customer: "user", dealer: "dealer" }
+
 const createTicket = async (req, res) => {
   try {
     const user_id = req.user_id
     const { subject, message } = req.body
-    const user_type = "user"
+    const user_type = ROLE_TO_TICKET_TYPE[req.auth?.role] || "user"
 
     if (!user_id) {
       return res.status(400).json({ success: false, message: "User ID is required" })

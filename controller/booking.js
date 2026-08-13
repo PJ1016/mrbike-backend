@@ -1154,7 +1154,13 @@ async function updateBooking(req, res) {
       return res.status(400).json({ success: false, message: "Booking ID is required" });
     }
 
-    const existingBooking = await booking.findOne({ _id: bookingId, user_id: req.user_id });
+    // Scoped to whichever participant is authenticated (requireBookingParticipant
+    // already verified this actor owns/participates in this booking).
+    const ownerFilter =
+      req.auth?.role === "dealer" ? { _id: bookingId, dealer_id: req.user_id } :
+      req.auth?.role === "admin" ? { _id: bookingId } :
+      { _id: bookingId, user_id: req.user_id };
+    const existingBooking = await booking.findOne(ownerFilter);
     if (!existingBooking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
@@ -2365,8 +2371,14 @@ async function getBookingTimerStatus(req, res) {
       return res.status(400).json({ success: false, message: "Invalid booking ID" });
     }
 
+    // Scoped to whichever participant is authenticated (requireBookingParticipant
+    // already verified this actor owns/participates in this booking).
+    const ownerFilter =
+      req.auth?.role === "dealer" ? { _id: bookingId, dealer_id: req.user_id } :
+      req.auth?.role === "admin" ? { _id: bookingId } :
+      { _id: bookingId, user_id: req.user_id };
     const bookingData = await booking
-      .findOne({ _id: bookingId, user_id: req.user_id })
+      .findOne(ownerFilter)
       .select("_id bookingId status dealerResponseStatus timerExpiresAt")
       .lean();
 

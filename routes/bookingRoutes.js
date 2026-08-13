@@ -60,7 +60,7 @@ router.delete('/deletebooking', requireAdmin, deletebooking)
 router.put('/updatebooking/:id', requireBookingParticipant(req => req.params.id), updateBookings)
 router.post('/createBooking', requireCustomer, createBooking)
 router.get('/getBookingDetails/:id', requireBookingParticipant(req => req.params.id), getBookingDetails)
-router.post('/updateBooking', requireCustomer, requireBookingParticipant(req => req.body.bookingId), updateBooking)
+router.post('/updateBooking', requireBookingParticipant(req => req.body.bookingId), updateBooking)
 router.post('/updateBookingStatus/:bookingId/status', requireBookingParticipant(req => req.params.bookingId), updateBookingStatus)
 router.post('/sendBookingOTP', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), sendBookingOTP)
 router.post('/sendBookingMobile', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), sendOtpToMobile)
@@ -72,7 +72,7 @@ router.get('/getNotes/:bookingId', requireBookingParticipant(req => req.params.b
 router.put('/updateNote', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), updateNoteInBooking);
 router.post('/deleteNote', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), deleteNoteFromBooking);
 router.post('/cancelBooking/:bookingId', requireCustomer, requireOwnedBooking("bookingId"), cancelBooking);
-router.get('/getBookingTimerStatus/:bookingId', requireCustomer, requireOwnedBooking("bookingId"), getBookingTimerStatus);
+router.get('/getBookingTimerStatus/:bookingId', requireBookingParticipant(req => req.params.bookingId), getBookingTimerStatus);
 router.post('/:bookingId/service-complete', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), serviceComplete);
 router.post('/:bookingId/select-payment-method', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), selectPaymentMethod);
 router.post('/:bookingId/confirm-cash-received', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), confirmCashReceived);
