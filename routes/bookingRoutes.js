@@ -59,7 +59,7 @@ router.get('/getbooking/:id', requireBookingParticipant(req => req.params.id), g
 router.delete('/deletebooking', requireAdmin, deletebooking)
 router.put('/updatebooking/:id', requireBookingParticipant(req => req.params.id), updateBookings)
 router.post('/createBooking', requireCustomer, createBooking)
-router.get('/getBookingDetails/:id', requireCustomer, requireOwnedBooking("id"), getBookingDetails)
+router.get('/getBookingDetails/:id', requireBookingParticipant(req => req.params.id), getBookingDetails)
 router.post('/updateBooking', requireCustomer, requireBookingParticipant(req => req.body.bookingId), updateBooking)
 router.post('/updateBookingStatus/:bookingId/status', requireBookingParticipant(req => req.params.bookingId), updateBookingStatus)
 router.post('/sendBookingOTP', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), sendBookingOTP)

@@ -38,6 +38,7 @@ const STATUS_VALUES = [
   "picked-up", "in-progress", "ready-for-delivery", "delivered", "success",
   "confirmed", "awaiting", "accepted", "awaiting_payment", "payment_selected",
   "user_cancelled", "cash received", "Payment", "upcoming", "verified", "requested",
+  "arriving", "arrived",
   "Open", "In Progress", "Closed", "ALL", "PROCESSED", "NONE",
   "PENDING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "ACTIVE", "PAID",
   "IN_PROGRESS", "COMPLETED", "APPROVED", "REJECTED", "Draft", "Pending",

@@ -1050,8 +1050,14 @@ async function getBookingDetails(req, res) {
     console.log("Booking ID received:", bookingId);
     console.log("Is valid ObjectId:", mongoose.Types.ObjectId.isValid(bookingId));
 
-    // Try to find the booking
-    const bookingData = await booking.findOne({ _id: bookingId, user_id: req.user_id })
+    // Try to find the booking, scoped to whichever participant is authenticated
+    // (requireBookingParticipant already verified this actor owns/participates
+    // in this booking — this filter just mirrors that ownership for the query).
+    const ownerFilter =
+      req.auth?.role === "dealer" ? { _id: bookingId, dealer_id: req.user_id } :
+      req.auth?.role === "admin" ? { _id: bookingId } :
+      { _id: bookingId, user_id: req.user_id };
+    const bookingData = await booking.findOne(ownerFilter)
       .populate("user_id", "first_name last_name phone email image address city")
       .populate("dealer_id", "shopName fullAddress address city locality shopImages phone averageRating ratingCount status dealerStatus")
       .populate("reviewId", "rating createdAt")
