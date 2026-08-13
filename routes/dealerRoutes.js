@@ -50,7 +50,8 @@ const router = express.Router()
 
 // Dealer Services
 router.get("/services", getDealerServices)
-router.post("/services", verifyDealerToken, requireOwnDealerBody("dealerId"), saveDealerServices)
+router.post("/services", requireAdmin, saveDealerServices)
+router.post("/admin/services", requireAdmin, saveDealerServices)
 
 // Get all dealers offering a specific base service (used by mobile home screen categories)
 router.get("/by-service/:baseServiceId", getDealersByService)
