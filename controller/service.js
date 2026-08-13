@@ -793,7 +793,9 @@ async function getDealerServices(req, res) {
           modelName: modelName,
           variantId: currentVariantId,
           cc: bike.cc,
-          price: bike.price
+          price: bike.price,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
         });
       });
     });
