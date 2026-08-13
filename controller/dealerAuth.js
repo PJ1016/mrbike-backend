@@ -13,6 +13,7 @@ const mongoose = require("mongoose");
 const { sendemails } = require("../helper/helper");
 const twilio = require("twilio");
 const { isDealerTestPhone, isDealerTestOtpValid } = require("../helper/playStoreTestAccounts");
+const { reserveOtpRequest, finalizeSuccessfulOtpRequest, releaseOtpReservation, getNormalizedPhone } = require("../helper/otpRateLimiter");
 
 function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -137,15 +138,30 @@ async function usersignin(req, res) {
     }
 
     const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID;
-    const phoneNumber = phone.trim().startsWith("+") ? phone.trim() : `+91${phone.trim()}`;
+    const phoneNumber = getNormalizedPhone(phone);
+
+    const reservation = await reserveOtpRequest(phoneNumber);
+    if (!reservation.allowed) {
+      return res.status(429).json({
+        success: false,
+        message: "OTP request limit reached. Please try again after 6 hours.",
+        lockedUntil: reservation.lockedUntil || undefined,
+      });
+    }
 
     const twilioClient = getTwilioClient();
-    const sendResult = await twilioClient.verify.v2
-      .services(verifySid)
-      .verifications
-      .create({ to: phoneNumber, channel: "sms" });
+    try {
+      const sendResult = await twilioClient.verify.v2
+        .services(verifySid)
+        .verifications
+        .create({ to: phoneNumber, channel: "sms" });
 
-    console.log("[dealerAuth/signin] Twilio send status:", sendResult.status, "| SID:", sendResult.sid);
+      console.log("[dealerAuth/signin] Twilio send status:", sendResult.status, "| SID:", sendResult.sid);
+      await finalizeSuccessfulOtpRequest(phoneNumber);
+    } catch (twilioError) {
+      await releaseOtpReservation(phoneNumber);
+      throw twilioError;
+    }
 
     return res.status(dealer.isNew ? 201 : 200).json({
       success: true,
