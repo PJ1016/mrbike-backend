@@ -1569,8 +1569,10 @@ const createDeposit = async (req, res) => {
 
 async function registerDealerToken(req, res) {
   try {
-    const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
-    const dealer_id = data.user_id;
+    // verifyDealerToken (route middleware) already authenticated the caller
+    // via the Authorization: Bearer header and set req.dealer_id — reuse that
+    // instead of re-parsing a separate, non-standard `token` header here.
+    const dealer_id = req.dealer_id;
 
     if (!dealer_id) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
