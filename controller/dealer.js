@@ -1512,11 +1512,17 @@ const createDeposit = async (req, res) => {
     const data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
     const { user_id, user_type } = data;
 
-    if (user_type === 2) {
-      return res.status(200).json({ status: false, message: "Dealers cannot initiate deposits directly" });
-    }
-
     const { dealer_id, amount, note } = req.body;
+
+    // Dealer-authenticated callers should use the existing Cashfree wallet
+    // top-up flow instead of the admin/manual deposit flow. This keeps the
+    // production gateway path in one place and avoids duplicating wallet
+    // credit logic in the frontend.
+    if (user_type === 2) {
+      const { createOrderForAdd } = require("./payment");
+      req.body = { dealer_id: dealer_id || user_id, amount, note };
+      return createOrderForAdd(req, res);
+    }
 
     if (!dealer_id || !amount) {
       return res.status(200).json({ status: false, message: "dealer_id and amount are required" });

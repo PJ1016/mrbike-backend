@@ -174,6 +174,12 @@ const paymentWebhook = async (req, res) => {
         }
 
         console.log(`✅ Payment found: ${orderId}, Current status: ${payment.order_status}`);
+        console.log("[WALLET_TOPUP] webhook payment snapshot", {
+            orderId,
+            paymentType: payment.payment_type,
+            dealerId: payment.dealer_id?.toString?.() || payment.dealer_id,
+            bookingId: payment.booking_id?.toString?.() || payment.booking_id || null,
+        });
 
         // Map Cashfree status
         let mappedStatus;
@@ -218,6 +224,11 @@ const paymentWebhook = async (req, res) => {
 
         // Wallet top-up: credit dealer wallet, skip booking/bill logic
         if (mappedStatus === "SUCCESS" && payment.payment_type === "WALLET_TOPUP") {
+            console.log("[WALLET_TOPUP] success payment eligible for wallet credit", {
+                orderId,
+                dealerId: payment.dealer_id?.toString?.() || payment.dealer_id,
+                amount: payment.orderAmount,
+            });
             await creditDealerWalletOnTopup(payment);
             console.log(`🎉 Wallet top-up webhook done: orderId=${orderId}`);
             return res.status(200).send("Webhook processed successfully");
@@ -1190,6 +1201,13 @@ const cashfreeHeaders = () => ({
 // Idempotent wallet credit — called by webhook when WALLET_TOPUP payment succeeds.
 // Guards against duplicate credits using Wallet.orderId uniqueness.
 async function creditDealerWalletOnTopup(payment) {
+    console.log("[WALLET_TOPUP] creditDealerWalletOnTopup invoked", {
+        orderId: payment.orderId,
+        dealerId: payment.dealer_id?.toString?.() || payment.dealer_id,
+        paymentType: payment.payment_type,
+        amount: payment.orderAmount,
+    });
+
     const existing = await Wallet.findOne({ orderId: payment.orderId, order_status: "APPROVED" });
     if (existing) {
         console.log(`Wallet already credited for order: ${payment.orderId}`);
