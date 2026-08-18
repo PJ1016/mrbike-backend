@@ -989,29 +989,53 @@ async function createBooking(req, res) {
     console.log(`[BOOKING-CREATED] Booking created with timer: ${newBooking._id}`);
 
     // ── Notify dealer: socket + FCM ──────────────────────────────────────────
+    //
+    // Eligibility is re-read here rather than reusing the `dealer` document
+    // loaded at the top of createBooking. That earlier read gated whether the
+    // booking may be created at all; this one closes the logout race — a dealer
+    // who logs out between the eligibility check and this point must not be
+    // delivered the booking. Logout writes `online: false` and nulls
+    // `device_token`/`ftoken` in a single atomic update (controller/dealerAuth.js
+    // logout), so this re-read either sees the whole pre-logout state or the
+    // whole post-logout state, never a half-applied mix.
     try {
-      const dealer = await Vendor.findById(dealer_id).select("device_token").lean();
+      const dealerNow = await Vendor.findById(dealer_id)
+        .select(
+          "device_token ftoken online isBlocked isActive isDoc status registrationStatus dealerStatus"
+        )
+        .lean();
 
-      // Socket: push booking:new to dealer's personal room
-      const io = req.app.get("io");
-      if (io) {
-        io.to(`dealer:${dealer_id}`).emit("booking:new", {
-          bookingId: newBooking._id,
-          timerExpiresAt: newBooking.timerExpiresAt,
-        });
-      }
+      const stillEligible = isDealerBookable(dealerNow);
 
-      // FCM: push notification to dealer app
-      if (dealer?.device_token) {
-        sendBookingNotification({
-          token: dealer.device_token,
-          title: "New Booking Request",
-          body: "You have received a new booking request.",
-          data: { type: "new_booking", bookingId: newBooking._id.toString() },
-          receiverId: dealer_id,
-          receiverType: "dealer",
-          bookingId: newBooking._id,
-        });
+      if (!stillEligible) {
+        // The booking row stays as created; it simply is not delivered to this
+        // dealer and the existing 60s expiry job releases it back to the
+        // customer exactly as it does for an unanswered request.
+        console.log(
+          `[BOOKING-CREATED] dealer ${dealer_id} is no longer eligible (offline/logged out) — skipping socket + FCM delivery`
+        );
+      } else {
+        // Socket: push booking:new to dealer's personal room
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`dealer:${dealer_id}`).emit("booking:new", {
+            bookingId: newBooking._id,
+            timerExpiresAt: newBooking.timerExpiresAt,
+          });
+        }
+
+        // FCM: push notification to dealer app
+        if (dealerNow?.device_token) {
+          sendBookingNotification({
+            token: dealerNow.device_token,
+            title: "New Booking Request",
+            body: "You have received a new booking request.",
+            data: { type: "new_booking", bookingId: newBooking._id.toString() },
+            receiverId: dealer_id,
+            receiverType: "dealer",
+            bookingId: newBooking._id,
+          });
+        }
       }
     } catch (notifyErr) {
       console.error("[BOOKING-CREATED] Dealer notification error:", notifyErr.message);

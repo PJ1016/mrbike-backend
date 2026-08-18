@@ -50,6 +50,59 @@ async function loadDealerFromToken(req, res) {
   return dealer;
 }
 
+// Logout-only authentication.
+//
+// Logout can only ever REMOVE access (force offline, drop the device/FCM
+// registration, evict socket rooms), so it must succeed in the two cases the
+// stricter middleware above deliberately rejects:
+//
+//   * expired token — a dealer who opens the app after their 2h token lapsed
+//     and taps "Log out" must still be forced offline server-side. Rejecting
+//     with 401 would leave them `online: true` with a live device_token and
+//     they would keep receiving bookings/pushes on a device that has already
+//     wiped its local session.
+//   * blocked dealer — a blocked account must still be able to end its session.
+//
+// The JWT signature is still verified, so this is not an auth bypass: only a
+// token this server actually issued for this dealer is accepted.
+async function verifyDealerTokenForLogout(req, res, next) {
+  try {
+    const token = extractToken(req);
+    if (!token) {
+      return res.status(401).json({ success: false, message: "Token not provided" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET, {
+        algorithms: ["HS256"],
+        ignoreExpiration: true,
+      });
+    } catch (err) {
+      return res.status(401).json({ success: false, message: "Authentication failed" });
+    }
+
+    const dealerId = decoded.user_id || decoded.id;
+    if (!dealerId) {
+      return res.status(401).json({ success: false, message: "Authentication failed" });
+    }
+
+    const dealer = await Vendor.findById(dealerId);
+    if (!dealer) {
+      // Nothing left to clean up server-side. Idempotent success so the app
+      // still completes its own local teardown and lands on Login.
+      return res.status(200).json({ success: true, message: "Logged out" });
+    }
+
+    req.dealer = dealer;
+    req.dealer_id = dealer._id;
+    return next();
+  } catch (err) {
+    console.error("verifyDealerTokenForLogout error:", err);
+    return res.status(500).json({ success: false, message: "Authorization check failed" });
+  }
+}
+
 // Any authenticated, non-blocked dealer — including dealers still mid-onboarding
 // (registrationStatus Draft/Pending). Use for the dealer's own registration steps.
 async function verifyDealerToken(req, res, next) {
@@ -113,4 +166,4 @@ function requireOwnDealerBody(fieldName = "dealer_id") {
   };
 }
 
-module.exports = { verifyDealerToken, requireActiveDealer, requireOwnDealer, requireOwnDealerBody };
+module.exports = { verifyDealerToken, verifyDealerTokenForLogout, requireActiveDealer, requireOwnDealer, requireOwnDealerBody };

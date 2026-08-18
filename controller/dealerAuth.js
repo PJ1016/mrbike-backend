@@ -387,7 +387,46 @@ async function changePassword(req, res) {
 
 async function logout(req, res) {
   try {
-    // res.clearCookie('refreshToken')
+    const dealerId = String(req.dealer._id);
+    console.log(`[DEALER_LOGOUT] dealerId=${dealerId}`);
+
+    // `online` is the dealer-controlled availability flag used by customer
+    // discovery and booking eligibility.  Logout must never alter approval,
+    // verification, account status, or any dealer business data.
+    //
+    // The device/FCM registration is cleared in the SAME atomic write as the
+    // availability flip, so there is no window where the dealer is already
+    // offline but a booking push can still be addressed to the device that
+    // just logged out.  These fields are re-registered on the next login by
+    // POST /bikedoctor/dealer/register-token (see registerDealerToken), which
+    // the app calls right after verifyOTP — so clearing them here only ends
+    // THIS device's session, it does not disable notifications for the dealer
+    // permanently and does not touch any other dealer's registration.
+    //
+    // `activeSince`/`lastSeen` mirror what setDealerOnline(active:false) writes,
+    // so a logout and a manual "go offline" leave identical availability state.
+    await Vendor.findByIdAndUpdate(dealerId, {
+      $set: {
+        online: false,
+        activeSince: null,
+        lastSeen: new Date(),
+        device_token: null,
+        ftoken: null,
+      },
+    });
+    console.log(
+      `[DEALER_LOGOUT] dealerId=${dealerId} availability=offline, device/FCM registration cleared`
+    );
+
+    // A still-connected app must stop receiving dealer-only events after
+    // logout. This does not disconnect unrelated customer/admin sockets.
+    // Re-joining is blocked by the `booking:joinDealer` eligibility check in
+    // server.js, which refuses rooms for a dealer that is not currently online.
+    const io = req.app.get("io");
+    if (io) {
+      io.in(`dealer:${dealerId}`).socketsLeave(`dealer:${dealerId}`);
+    }
+
     res
       .status(200)
       .cookie("token", null, { expires: new Date(Date.now()), httpOnly: true })
@@ -412,9 +451,9 @@ async function logout(req, res) {
         message: "Logged out",
       });
   } catch (error) {
-    console.log("error", error);
-    return res.status(201).send({
-      status: 201,
+    console.error("[DEALER_LOGOUT] failed", error);
+    return res.status(500).send({
+      status: 500,
       message: "Operation was not successful",
     });
   }

@@ -290,6 +290,11 @@ const reviewReminderJob = require("./helper/reviewReminderJob");
 const paymentReconciliationJob = require("./helper/paymentReconciliationJob");
 const validateRequest = require("./middlewares/requestValidation");
 const sensitiveRateLimit = require("./middlewares/rateLimits");
+// Used by the booking:joinDealer socket handler to refuse dealer rooms for a
+// dealer that is offline / logged out.
+const mongoose = require("mongoose");
+const Vendor = require("./models/dealerModel");
+const { isDealerBookable } = require("./helper/dealerStatus");
 
 const app = express();
 const server = http.createServer(app);
@@ -329,9 +334,31 @@ io.on("connection", (socket) => {
     if (ticketId) socket.leave(String(ticketId));
   });
 
-  // Dealer joins their personal room to receive new booking alerts
-  socket.on("booking:joinDealer", ({ dealerId }) => {
-    if (dealerId) socket.join(`dealer:${dealerId}`);
+  // Dealer joins their personal room to receive new booking alerts.
+  //
+  // Membership is gated on the dealer being currently bookable (approved,
+  // active, not blocked, and `online: true`). Logout forces `online: false`
+  // and evicts the existing sockets, so a client that reconnects immediately
+  // after logout — or one that never noticed the logout — cannot re-subscribe
+  // itself to booking events. The dealer re-joins normally once they manually
+  // activate from the Home screen after the next login.
+  socket.on("booking:joinDealer", async (payload) => {
+    const dealerId = payload?.dealerId;
+    if (!dealerId) return;
+    try {
+      if (!mongoose.Types.ObjectId.isValid(String(dealerId))) return;
+      const dealer = await Vendor.findById(dealerId)
+        .select("online isBlocked isActive isDoc status registrationStatus dealerStatus")
+        .lean();
+      if (!isDealerBookable(dealer)) {
+        console.log(`[SOCKET] booking:joinDealer refused for ${dealerId} — dealer offline/ineligible`);
+        socket.emit("booking:joinDealerDenied", { dealerId, reason: "offline" });
+        return;
+      }
+      socket.join(`dealer:${dealerId}`);
+    } catch (err) {
+      console.error("[SOCKET] booking:joinDealer error:", err.message);
+    }
   });
 
   // User joins their booking room to receive accept/reject/expired events

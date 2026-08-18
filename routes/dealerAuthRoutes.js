@@ -1,7 +1,7 @@
 
 var router = require('express').Router();
 const { createS3Upload } = require("../utils/s3Upload");
-const { verifyDealerToken, requireOwnDealer } = require("../middlewares/dealerAuth");
+const { verifyDealerToken, verifyDealerTokenForLogout, requireOwnDealer } = require("../middlewares/dealerAuth");
 const { requireAdmin } = require("../middlewares/requireAdmin");
 
 var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getVerificationStatus, submitReVerification, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
@@ -13,7 +13,10 @@ const upload = createS3Upload("vendors");
 router.post('/signin', usersignin);
 router.post('/sendotp', sendOtp);
 router.post('/verifyotp', verifyOTP);
-router.post('/logout', logout);
+// Logout uses the permissive logout-only guard so an expired token or a
+// blocked account can still force the dealer offline and drop their device
+// registration server-side — see verifyDealerTokenForLogout.
+router.post('/logout', verifyDealerTokenForLogout, logout);
 router.post('/changepassword', verifyDealerToken, changePassword);
 
 // getProgress verifies its own Bearer token internally — left as-is.

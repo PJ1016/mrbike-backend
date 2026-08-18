@@ -200,9 +200,50 @@ async function Notification(deviceToken, messageBody, dealer_id) {
   }
 }
 
+// Defence-in-depth gate for NEW-BOOKING pushes addressed to a dealer.
+//
+// The caller (controller/booking.js createBooking) already re-checks
+// eligibility before reaching here. This second check exists so that no
+// future call site can push a `new_booking` alert to a dealer who has logged
+// out / gone offline in the meantime.
+//
+// Deliberately scoped to `type === "new_booking"` + `receiverType === "dealer"`
+// ONLY. Every other dealer notification — account blocked, payment selected,
+// wallet, cash confirmation on an ALREADY-ACCEPTED booking — and every
+// customer notification passes through untouched, so existing behaviour for
+// logged-in/active dealers is unchanged.
+async function isNewBookingPushAllowed({ data, receiverId, receiverType }) {
+  if (receiverType !== "dealer" || data?.type !== "new_booking" || !receiverId) {
+    return true;
+  }
+  try {
+    // Required lazily: pushNotification.js is loaded by jobs and controllers
+    // alike, and a top-level model require here would create a cycle.
+    const Vendor = require("../models/dealerModel");
+    const { isDealerBookable } = require("./dealerStatus");
+    const dealer = await Vendor.findById(receiverId)
+      .select("online isBlocked isActive isDoc status registrationStatus dealerStatus")
+      .lean();
+    if (!isDealerBookable(dealer)) {
+      console.log(`[FCM-BLOCKED] new_booking → dealer:${receiverId} | dealer offline or logged out`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    // A lookup failure must not silently suppress a legitimate booking alert
+    // for an active dealer — the call-site check remains the primary gate.
+    console.error(`[FCM-GATE-ERROR] new_booking → dealer:${receiverId} | ${err.message}`);
+    return true;
+  }
+}
+
 // Structured booking notification — title, body, data, receiverType all explicit.
 // FCM data payload requires all values to be strings.
 async function sendBookingNotification({ token, title, body, data, receiverId, receiverType, bookingId }) {
+  if (!(await isNewBookingPushAllowed({ data, receiverId, receiverType }))) {
+    return;
+  }
+
   const notificationEntry = new NotificationModel({
     title,
     body,

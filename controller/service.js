@@ -10,6 +10,7 @@ const BikeModel = require("../models/bikeModel")
 const BikeCompany = require("../models/bikeCompanyModel")
 const { cache, CacheKeys } = require("../utils/cache")
 const Dealer = require("../models/dealerModel");
+const { isDealerBookable } = require("../helper/dealerStatus");
 
 async function servicelist(req, res) {
   try {
@@ -1551,19 +1552,22 @@ async function getDealersByService(req, res) {
     // Fetch those dealers (active, not blocked)
     const dealers = await Dealer.find({
       _id: { $in: dealerIds },
+      online: true,
       isBlocked: { $ne: true },
     })
       .select(
-        "shopName shopContact permanentAddress city latitude longitude pickupCharges rating shopImages image"
+        "shopName shopContact permanentAddress city latitude longitude pickupCharges rating shopImages image online dealerStatus registrationStatus status isActive isBlocked"
       )
       .lean();
 
+    const availableDealers = dealers.filter(isDealerBookable);
+
     return res.status(200).json({
       status: true,
-      message: dealers.length
+      message: availableDealers.length
         ? "Dealers fetched successfully"
         : "No active dealers found for this service",
-      data: dealers,
+      data: availableDealers,
     });
   } catch (error) {
     console.error("Error in getDealersByService:", error);
