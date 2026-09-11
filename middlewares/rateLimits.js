@@ -18,18 +18,25 @@ const limiters = {
   login: buildLimiter("LOGIN", 10, 15),
   payment: buildLimiter("PAYMENT", 60, 15),
   referral: buildLimiter("REFERRAL", 30, 15),
-  support: buildLimiter("SUPPORT", 30, 15),
+  support: buildLimiter("SUPPORT", 60, 15),
 };
+
+// Reads are polled by the dashboards (support inbox every 25s, an open ticket
+// every 5s), so they can't share the write budget that exists to stop ticket
+// and referral spam. Only a body-carrying method is throttled in those two
+// categories; auth and payment stay limited on every method.
+const isRead = (method) => method === "GET" || method === "HEAD";
 
 function selectLimiter(req) {
   const path = req.path.toLowerCase();
+  const method = (req.method || "").toUpperCase();
   if (/otpverify|verify-otp|verifyotp|verify-delivery-otp/.test(path)) return limiters.otpVerify;
   if (/send-otp|sendotp|resendotp|regenerate-delivery-otp/.test(path)) return limiters.otpSend;
   if (/reset.*password|forgot.*password|change[-_]?password|changepassword/.test(path)) return limiters.passwordReset;
   if (/login|signin/.test(path)) return limiters.login;
   if (/payment|cashfree|invoice|checkout|\bbills?\b/.test(path)) return limiters.payment;
-  if (/referral/.test(path)) return limiters.referral;
-  if (/ticket|support/.test(path)) return limiters.support;
+  if (/referral/.test(path)) return isRead(method) ? null : limiters.referral;
+  if (/ticket|support/.test(path)) return isRead(method) ? null : limiters.support;
   return null;
 }
 

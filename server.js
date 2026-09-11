@@ -299,6 +299,12 @@ const { isDealerBookable } = require("./helper/dealerStatus");
 const app = express();
 const server = http.createServer(app);
 
+// The API sits behind nginx, so without this every request arrives with the
+// proxy's address as req.ip and express-rate-limit counts all clients into a
+// single bucket. Hop count is configurable for environments with a CDN in
+// front of nginx.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1));
+
 /* ==============================
    CORS - Allow All Origins for Development
    ============================== */
