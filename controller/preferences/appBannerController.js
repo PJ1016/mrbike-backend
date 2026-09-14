@@ -29,6 +29,12 @@ function endOfDayUTC(dateInput) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
 }
 
+// Multipart bodies deliver booleans as the strings "true"/"false".
+function parseBool(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return value === true || value === "true";
+}
+
 function bannerLocationFields(body) {
   const locationType = body.locationType === "specific" ? "specific" : "all";
   const latitude = body.latitude === "" || body.latitude == null ? null : Number(body.latitude);
@@ -104,6 +110,7 @@ const createAppBanner = async (req, res) => {
       scheduleStart: scheduleStart ? new Date(scheduleStart) : null,
       scheduleEnd: scheduleEnd ? endOfDayUTC(scheduleEnd) : null,
       ...location,
+      imageOnly: parseBool(req.body.imageOnly),
       isActive: isActive !== undefined ? isActive === "true" || isActive === true : true,
     });
 
@@ -134,6 +141,7 @@ const updateAppBanner = async (req, res) => {
     if (scheduleStart !== undefined) banner.scheduleStart = scheduleStart ? new Date(scheduleStart) : null;
     if (scheduleEnd !== undefined) banner.scheduleEnd = scheduleEnd ? endOfDayUTC(scheduleEnd) : null;
     if (isActive !== undefined) banner.isActive = isActive === "true" || isActive === true;
+    if (req.body.imageOnly !== undefined) banner.imageOnly = parseBool(req.body.imageOnly, banner.imageOnly);
     if (req.body.locationType !== undefined) {
       const location = bannerLocationFields(req.body);
       if (location.error) return res.status(400).json({ success: false, message: location.error });

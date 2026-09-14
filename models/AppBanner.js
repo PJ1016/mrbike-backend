@@ -9,6 +9,11 @@ const appBannerSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     description: { type: String, default: "", trim: true },
     linkUrl: { type: String, default: "" },
+    // True when the uploaded artwork is already a finished creative (offer
+    // text, logo, price baked in). The apps then render the image alone —
+    // no gradient, no title/description/button painted over or under it —
+    // so a ready-made poster is not covered by the app's own chrome.
+    imageOnly: { type: Boolean, default: false },
     displayOrder: { type: Number, default: 0 },
     scheduleStart: { type: Date, default: null },
     scheduleEnd: { type: Date, default: null },
