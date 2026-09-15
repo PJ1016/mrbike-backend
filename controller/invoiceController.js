@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const Booking = require("../models/Booking");
 const Bill = require("../models/billSchema");
-const { getOrCreateInvoice, buildInvoiceResponse } = require("../services/invoiceService");
+const { getOrCreateInvoice, backfillBikeRegistration, buildInvoiceResponse } = require("../services/invoiceService");
 
 const BILL_STATUS_VALUES = ["paid", "pending", "cancelled"];
 
@@ -89,12 +89,16 @@ const getInvoice = async (req, res) => {
             bill = await getOrCreateInvoice(bookingId, {
                 payment_method: booking.payment_method || "N/A",
             });
+        } else {
+            // Older bills stored the bike registration as "N/A"; repair them
+            // from the booking's bike the first time they are opened.
+            await backfillBikeRegistration(bill);
         }
 
         return res.status(200).json({
             success: true,
             message: "Invoice fetched successfully",
-            data: buildInvoiceResponse(bill),
+            data: buildInvoiceResponse(bill, { role: req.auth?.role }),
         });
     } catch (error) {
         console.error("Get Invoice Error:", error);

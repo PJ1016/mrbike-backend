@@ -61,7 +61,7 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         .populate("user_id", "first_name last_name email phone")
         .populate({
             path: "userBike_id",
-            select: "model registration_number vin bike_cc variant_id",
+            select: "model plate_number registration_number vin bike_cc variant_id",
             populate: {
                 path: "variant_id",
                 model: "BikeVariant",
@@ -207,7 +207,10 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         dealer_details: resolveDealerDetails(booking.dealer_id),
         bike_details: {
             model: booking.userBike_id?.model || "N/A",
-            registration: booking.userBike_id?.registration_number || "N/A",
+            // UserBike stores the plate as `plate_number`; `registration_number`
+            // is only kept as a fallback for any legacy document that carried it.
+            registration:
+                booking.userBike_id?.plate_number || booking.userBike_id?.registration_number || "N/A",
             vin: booking.userBike_id?.vin || "N/A",
             company: company?.name || null,
             engine_cc: variant?.engine_cc ?? bikeCC ?? null,
@@ -273,9 +276,36 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     return bill;
 }
 
+const PLACEHOLDER_REGISTRATIONS = new Set(["", "-", "N/A", "NA", "NONE", "NULL", "UNDEFINED"]);
+
+function isMissingRegistration(value) {
+    return !value || PLACEHOLDER_REGISTRATIONS.has(String(value).trim().toUpperCase());
+}
+
+// Every bill created before the plate_number fix above stored "N/A", because
+// invoice generation read `registration_number` — a field UserBike never had.
+// Repair such a bill in place the first time its invoice is opened, so the
+// already-issued invoices show the real plate instead of N/A forever.
+async function backfillBikeRegistration(bill) {
+    if (!bill || !isMissingRegistration(bill.bike_details?.registration)) return bill;
+
+    const booking = await Booking.findById(bill.booking_id)
+        .select("userBike_id")
+        .populate("userBike_id", "plate_number registration_number")
+        .lean();
+
+    const plate = booking?.userBike_id?.plate_number || booking?.userBike_id?.registration_number;
+    if (isMissingRegistration(plate)) return bill;
+
+    await Bill.updateOne({ _id: bill._id }, { $set: { "bike_details.registration": plate } });
+    if (bill.bike_details) bill.bike_details.registration = plate;
+    return bill;
+}
+
 // Pure mapping, no DB access — the single shape all three frontends
-// (User App, Dealer App, Admin Panel) render identically.
-function buildInvoiceResponse(bill) {
+// (User App, Dealer App, Admin Panel) render identically, except that the
+// dealer's net payout is withheld from the customer (see `settlement` below).
+function buildInvoiceResponse(bill, { role } = {}) {
     return {
         invoiceNumber: bill.bill_number,
         bookingId: bill.booking_id,
@@ -297,7 +327,9 @@ function buildInvoiceResponse(bill) {
         bike: {
             company: bill.bike_details?.company || null,
             model: bill.bike_details?.model || null,
-            registrationNumber: bill.bike_details?.registration || null,
+            registrationNumber: isMissingRegistration(bill.bike_details?.registration)
+                ? null
+                : bill.bike_details.registration,
             engineCc: bill.bike_details?.engine_cc ?? null,
         },
         services: (bill.services || []).map((s) => ({
@@ -316,10 +348,14 @@ function buildInvoiceResponse(bill) {
             ? { code: bill.promo_code, name: bill.promo_name || null, amount: bill.discount_amount || 0 }
             : null,
         totalPaid: bill.total_amount,
+        // The customer's copy shows only the platform fee. `dealerPayout` is
+        // settlement data between MR Bike and the dealer, so it is withheld
+        // from the User App entirely rather than merely hidden client-side;
+        // the Dealer App and Admin Panel still receive it.
         settlement: {
             commissionRate: bill.commission_rate,
             commissionAmount: bill.commission_amount,
-            dealerPayout: bill.dealer_earnings,
+            ...(role === "customer" ? {} : { dealerPayout: bill.dealer_earnings }),
         },
     };
 }
@@ -327,5 +363,6 @@ function buildInvoiceResponse(bill) {
 module.exports = {
     generateInvoiceNumber,
     getOrCreateInvoice,
+    backfillBikeRegistration,
     buildInvoiceResponse,
 };
