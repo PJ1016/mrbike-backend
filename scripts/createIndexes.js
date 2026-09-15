@@ -47,7 +47,17 @@ async function createIndexes() {
     // BaseService indexes
     await mongoose.connection.db.collection('baseservices').createIndex({ name: 1 })
     await mongoose.connection.db.collection('baseservices').createIndex({ isActive: 1 })
+    // Service Detail listings filter on isActive + categoryId together
+    // (GET /api/v1/services?categoryId=), which the two single-field indexes
+    // above can't serve as one.
+    await mongoose.connection.db.collection('baseservices').createIndex({ isActive: 1, categoryId: 1 })
     console.log('✓ BaseService indexes created')
+
+    // ServiceDetail indexes — 1:1 with BaseService, so the lookup key is
+    // unique. GET /api/v1/services/:id does exactly one findOne on it.
+    await mongoose.connection.db.collection('servicedetails').createIndex({ baseServiceId: 1 }, { unique: true })
+    await mongoose.connection.db.collection('servicedetails').createIndex({ isPublished: 1 })
+    console.log('✓ ServiceDetail indexes created')
     
     // Vendor/Dealer indexes
     await mongoose.connection.db.collection('vendors').createIndex({ shopName: 1 })

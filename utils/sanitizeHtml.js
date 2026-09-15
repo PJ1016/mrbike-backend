@@ -35,4 +35,11 @@ function sanitizeFaqAnswer(html) {
   });
 }
 
-module.exports = { sanitizeFaqAnswer };
+// The allowlist above is content-type agnostic — it was written for FAQ
+// answers but describes "rich text an admin may author" in general. Exported
+// under a neutral name too so Service Detail bodies can reuse the exact same
+// rules without reading as if they were FAQ answers. Same function, one
+// allowlist to maintain.
+const sanitizeRichText = sanitizeFaqAnswer;
+
+module.exports = { sanitizeFaqAnswer, sanitizeRichText };

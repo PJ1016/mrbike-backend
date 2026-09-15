@@ -4,6 +4,8 @@ const AdminService = require("../../models/adminService")
 const { isDealerBookable } = require("../../helper/dealerStatus")
 const { getRatingsMap, calculateDistanceKm, resolveBikeContext, getCompatibleServiceIds } = require("../helpers/geoAndRatings")
 const { getDealerServiceRadiusKm, isWithinServiceRadius } = require("../../helper/dealerServiceRadius")
+const ServiceDetail = require("../../models/serviceDetail")
+const { computeFromPrice, countProviders, mergeServiceDetail } = require("../helpers/serviceDetail")
 
 function formatImage(url, req) {
   if (url && !url.startsWith("http")) {
@@ -38,7 +40,14 @@ async function listByCategory(req, res) {
       }
     }
 
-    const services = await BaseService.find(filter).populate("categoryId", "name icon").sort({ name: 1 })
+    // Same guard as homeController's SERVICE_CARD_FIELDS: this list must never
+    // start carrying Service Detail content just because a field was added to
+    // BaseService. Detail content lives in `servicedetails` and is read only by
+    // getServiceById below.
+    const services = await BaseService.find(filter)
+      .select("name image description categoryId basePrice duration pickupAvailable warranty")
+      .populate("categoryId", "name icon")
+      .sort({ name: 1 })
 
     return res.status(200).json({
       status: true,
@@ -94,7 +103,12 @@ async function garagesForService(req, res) {
           const prices = (svc.bikes || []).map(b => b.price).filter(p => typeof p === "number")
           price = prices.length ? Math.min(...prices) : null
         }
-        return { dealer: svc.dealer_id, price }
+        // adminServiceId is what POST /pricing/quote takes as `serviceIds`
+        // (it resolves AdminService docs, not BaseService ids). Returning it
+        // here is what lets the provider list hand the booking screen a
+        // priceable id directly, instead of re-querying every dealer's full
+        // service list one call at a time.
+        return { adminServiceId: svc._id, dealer: svc.dealer_id, price }
       })
 
     // Only bookable dealers, and only ones that actually have a price for the
@@ -139,6 +153,13 @@ async function garagesForService(req, res) {
           ratingCount: rating.ratingCount,
           providesPickup: !!e.dealer.providesPickup,
           providesDrop: !!e.dealer.providesDrop,
+          // A bike declared NOT_RIDEABLE/COMPLETELY_DEAD has to be towed, so
+          // the app can only offer garages that actually tow. Exposed here so
+          // that filter is applied against real dealer capability rather than
+          // guessed at client-side.
+          providesTowing: !!e.dealer.providesTowing,
+          towingCharges: e.dealer.towingCharges ?? 0,
+          adminServiceId: e.adminServiceId,
           shopImages: (e.dealer.shopImages || []).map(url => formatImage(url, req)),
         }
       })
@@ -159,4 +180,91 @@ async function garagesForService(req, res) {
   }
 }
 
-module.exports = { listByCategory, garagesForService }
+
+// Dealer fields the eligibility rules actually read — isDealerBookable()
+// (helper/dealerStatus.js) plus the service-radius check. Projected rather
+// than pulling whole dealer documents, because this endpoint only ever counts
+// providers and prices them; it never renders a garage.
+const PROVIDER_DEALER_FIELDS =
+  "isBlocked online dealerStatus registrationStatus status isActive isDoc latitude longitude serviceRadiusKm"
+
+// GET /api/v1/services/:id?lat=&lng=&variant_id=&cc=
+//
+// The Service Detail screen's single read: BaseService merged with its
+// optional ServiceDetail content, plus the two numbers the screen puts next
+// to BOOK NOW — the cheapest available price and how many garages can
+// actually take the booking.
+//
+// Provider eligibility deliberately reuses isDealerBookable() and
+// isWithinServiceRadius() unchanged, so providerCount always agrees with the
+// list GET /api/v1/services/:id/garages returns for the same coordinates.
+// `fromPrice` is indicative only — the payable amount still comes solely from
+// /pricing/quote (services/pricingEngine.js).
+async function getServiceById(req, res) {
+  try {
+    const { id } = req.params
+    const { lat, lng, variant_id, cc } = req.query
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ status: false, message: "Invalid service id" })
+    }
+    if (variant_id && !mongoose.Types.ObjectId.isValid(variant_id)) {
+      return res.status(400).json({ status: false, message: "Invalid variant_id" })
+    }
+
+    const baseService = await BaseService.findOne({ _id: id, isActive: true }).populate("categoryId", "name icon")
+    if (!baseService) {
+      return res.status(404).json({ status: false, message: "Service not found" })
+    }
+
+    // A service with no detail row (every service does, until admins author
+    // content) is not an error — the merge falls back to the base fields.
+    const detail = await ServiceDetail.findOne({ baseServiceId: id }).lean()
+
+    const adminServices = await AdminService.find({ base_service_id: id, isActive: true })
+      .select("dealer_id bikes")
+      .populate("dealer_id", PROVIDER_DEALER_FIELDS)
+      .lean()
+
+    let eligible = adminServices.filter(svc => svc.dealer_id && isDealerBookable(svc.dealer_id))
+
+    // With live coordinates, drop garages whose own radius can't reach the
+    // user — identical to the rule garagesForService applies, so the count
+    // shown here matches the list BOOK NOW opens. Without coordinates there is
+    // nothing to measure against and every bookable garage counts.
+    const latitude = Number.parseFloat(lat)
+    const longitude = Number.parseFloat(lng)
+    const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude)
+    if (hasCoords) {
+      eligible = eligible.filter(svc =>
+        isWithinServiceRadius(
+          calculateDistanceKm(latitude, longitude, svc.dealer_id.latitude, svc.dealer_id.longitude),
+          svc.dealer_id,
+        ),
+      )
+    }
+
+    const ccFilter = cc !== undefined && cc !== "" ? Number.parseInt(cc, 10) : null
+    const priceOptions = { variantId: variant_id || null, cc: Number.isNaN(ccFilter) ? null : ccFilter }
+
+    const service = mergeServiceDetail(baseService, detail, {
+      formatUrl: url => formatImage(url, req),
+    })
+
+    return res.status(200).json({
+      status: true,
+      message: "Service fetched",
+      data: {
+        ...service,
+        fromPrice: computeFromPrice(eligible, priceOptions),
+        providerCount: countProviders(eligible),
+      },
+      meta: { scope: hasCoords ? "area" : "network" },
+    })
+  } catch (error) {
+    console.error("Error fetching service detail:", error)
+    return res.status(500).json({ status: false, message: "Internal Server Error" })
+  }
+}
+
+module.exports = { listByCategory, garagesForService, getServiceById }

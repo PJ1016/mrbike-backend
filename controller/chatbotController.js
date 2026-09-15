@@ -41,7 +41,7 @@ Always be friendly, professional, concise, and use simple language.`;
 async function getAvailableServices() {
   try {
     const services = await AdminService.find()
-      .populate("base_service_id")
+      .populate("base_service_id", "name")
       .limit(50)
       .lean();
     
@@ -253,7 +253,7 @@ async function extractServiceRecommendations(aiResponse, bikeId) {
                 { "base_service_id.name": { $regex: rec.serviceName, $options: "i" } },
                 { description: { $regex: rec.serviceName, $options: "i" } }
               ]
-            }).populate("base_service_id");
+            }).populate("base_service_id", "name");
 
             return {
               ...rec,
@@ -390,11 +390,11 @@ exports.getServiceRecommendations = async (req, res) => {
     let availableServices = [];
     if (dealerId) {
       availableServices = await AdminService.find({ dealer_id: dealerId })
-        .populate("base_service_id")
+        .populate("base_service_id", "name")
         .limit(20);
     } else {
       availableServices = await AdminService.find()
-        .populate("base_service_id")
+        .populate("base_service_id", "name")
         .limit(20);
     }
 

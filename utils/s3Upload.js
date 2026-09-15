@@ -13,11 +13,26 @@ const s3 = new S3Client({
 
 const BUCKET = process.env.AWS_S3_BUCKET;
 
+// Defaults preserve the exact behavior every existing caller already relies
+// on. Note video types are deliberately absent: nothing in this codebase can
+// serve or play a self-hosted video today (the user app ships
+// react-native-youtube-iframe, not a native player), so service videos are
+// YouTube URLs normalized through utils/youtube.js instead.
+const DEFAULT_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".pdf", ".webp"];
+const DEFAULT_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
 /**
  * Creates a multer upload middleware that stores files in S3.
  * @param {string} folder - S3 folder/prefix e.g. "dealer-documents"
+ * @param {object} [options] - optional overrides; omitting them keeps the
+ *   historical behavior byte for byte.
+ * @param {string[]} [options.allowedExtensions] - lowercase extensions incl. dot
+ * @param {number} [options.maxFileSizeBytes]
  */
-function createS3Upload(folder) {
+function createS3Upload(folder, options = {}) {
+  const allowed = options.allowedExtensions || DEFAULT_ALLOWED_EXTENSIONS;
+  const maxFileSizeBytes = options.maxFileSizeBytes || DEFAULT_MAX_FILE_SIZE_BYTES;
+
   return multer({
     storage: multerS3({
       s3,
@@ -30,13 +45,12 @@ function createS3Upload(folder) {
       },
     }),
     fileFilter: (req, file, cb) => {
-      const allowed = [".jpg", ".jpeg", ".png", ".pdf", ".webp"];
       const ext = path.extname(file.originalname).toLowerCase();
       if (allowed.includes(ext)) cb(null, true);
       else cb(new Error(`Invalid file type. Allowed: ${allowed.join(", ")}`), false);
     },
     limits: {
-      fileSize: 50 * 1024 * 1024, // 50MB
+      fileSize: maxFileSizeBytes,
     },
   });
 }
@@ -59,4 +73,4 @@ async function deleteS3Object(location) {
   }
 }
 
-module.exports = { createS3Upload, deleteS3Object };
+module.exports = { createS3Upload, deleteS3Object, DEFAULT_ALLOWED_EXTENSIONS, DEFAULT_MAX_FILE_SIZE_BYTES };

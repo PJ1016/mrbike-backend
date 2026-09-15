@@ -17,6 +17,13 @@ function formatImage(url, req) {
   return url
 }
 
+// Exactly the fields serializeService() below reads. Home responses are the
+// hottest reads in the app, and rich Service Detail content is deliberately
+// kept in the separate `servicedetails` collection — this projection is the
+// belt to that braces, guaranteeing nothing added to BaseService later can
+// silently inflate a home payload.
+const SERVICE_CARD_FIELDS = "name image description categoryId basePrice duration pickupAvailable warranty"
+
 function serializeService(service, req) {
   return {
     serviceId: service._id,
@@ -120,7 +127,7 @@ async function quickServices(req, res) {
     const popularity = await computeServicePopularity(nearbyDealerIds)
 
     const baseServiceIds = Array.from(bestByBaseServiceId.keys())
-    const baseServices = await BaseService.find({ _id: { $in: baseServiceIds }, isActive: true })
+    const baseServices = await BaseService.find({ _id: { $in: baseServiceIds }, isActive: true }).select(SERVICE_CARD_FIELDS)
     const baseServiceById = new Map(baseServices.map(s => [String(s._id), s]))
 
     const ranked = baseServiceIds
@@ -192,7 +199,7 @@ async function recommended(req, res) {
 
     const filter = { isActive: true }
     if (allowedServiceIds) filter._id = { $in: allowedServiceIds }
-    const services = await BaseService.find(filter)
+    const services = await BaseService.find(filter).select(SERVICE_CARD_FIELDS)
 
     const popularity = await computeServicePopularity(nearbyDealerIds)
     const maxCount = Math.max(1, ...Array.from(popularity.values()).map(p => p.count))
@@ -287,7 +294,7 @@ async function mostBooked(req, res) {
       .slice(0, 6)
       .map(([id]) => id)
 
-    const services = await BaseService.find({ _id: { $in: topIds }, isActive: true })
+    const services = await BaseService.find({ _id: { $in: topIds }, isActive: true }).select(SERVICE_CARD_FIELDS)
     const byId = new Map(services.map(s => [String(s._id), s]))
 
     const ranked = topIds
