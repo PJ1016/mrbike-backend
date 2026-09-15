@@ -1353,6 +1353,18 @@ async function uploadDocuments(req, res) {
       updates[`documentVerification.${key}`] = newDV[key];
     });
 
+    // Re-uploading a document the admin rejected/requested puts the dealer
+    // back into the "waiting for admin review" state. Recorded explicitly
+    // because the rejection note below is about to be cleared, and a bare
+    // "pending" status no longer means the dealer is waiting on anyone.
+    const reUploadedAfterAction = uploadedVerificationKeys.some((verificationKey) =>
+      ["rejected", "requested"].includes(currentDV[verificationKey]),
+    );
+    if (reUploadedAfterAction) {
+      updates["reVerification.active"] = true;
+      updates["reVerification.startedAt"] = new Date();
+    }
+
     // A re-upload resolves any outstanding admin request for that document —
     // clear it so only still-active requests remain.
     if (uploadedVerificationKeys.length > 0) {
@@ -1719,7 +1731,7 @@ async function checkApprovalStatus(req, res) {
 async function getVerificationStatus(req, res) {
   try {
     const vendor = await Vendor.findById(req.dealer._id).select(
-      "registrationStatus dealerStatus isBlocked isActive status isDoc documentVerification documentRequests documents bankDetails.passbookImage adminNotes submittedAt approvedAt",
+      "registrationStatus dealerStatus isBlocked isActive status isDoc documentVerification documentRequests reVerification documents bankDetails.passbookImage adminNotes submittedAt approvedAt",
     );
 
     if (!vendor) {
@@ -1753,7 +1765,7 @@ async function submitReVerification(req, res) {
   try {
     const { id } = req.params;
     const vendor = await Vendor.findById(id).select(
-      "documentVerification formProgress shopName ownerName device_token ftoken",
+      "documentVerification documentRequests reVerification registrationStatus formProgress shopName ownerName device_token ftoken",
     );
 
     if (!vendor) {
@@ -2005,9 +2017,29 @@ async function verifyDocument(req, res) {
       updates["completionTimestamps.documents"] = new Date();
     }
 
+    // Open/close the post-approval re-verification cycle. While it is open the
+    // dealer is held on the Document Verification Required / Waiting For Admin
+    // Review screens; once nothing needs their action any more we close it so
+    // a document left at "pending" doesn't keep them locked out of the app.
+    const anyNeedsAction = [
+      "aadharFront",
+      "aadharBack",
+      "pan",
+      "shop",
+      "face",
+      "passbook",
+    ].some((k) => newDV[k] === "rejected" || newDV[k] === "requested");
+
+    if (anyNeedsAction) {
+      updates["reVerification.active"] = true;
+      updates["reVerification.startedAt"] = new Date();
+    } else {
+      updates["reVerification.active"] = false;
+    }
+
     const vendor = await Vendor.findByIdAndUpdate(id, updates, {
       new: true,
-    }).select("documentVerification documentRequests formProgress device_token ftoken");
+    }).select("documentVerification documentRequests reVerification formProgress device_token ftoken");
 
     if (!vendor) {
       return res
@@ -2103,6 +2135,10 @@ async function approveDealer(req, res) {
       "status.adminApproved": true,
       "status.isActive": true,
       "status.isVerified": true,
+      // Approving the dealer closes any open document re-verification cycle —
+      // otherwise documents left at "pending" would keep the dealer stuck on
+      // the Waiting For Admin Review screen after approval.
+      "reVerification.active": false,
     };
     console.log("Update object", updateData);
 

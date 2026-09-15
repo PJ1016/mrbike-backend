@@ -34,9 +34,18 @@ function toPlainMap(mapLike) {
 
 // Builds the per-document list plus an overall rollup status:
 //  - "action_required": at least one document is rejected or requested
-//  - "waiting_for_review": nothing needs dealer action, but at least one is pending admin review
+//  - "waiting_for_review": nothing needs dealer action, but the dealer is
+//    genuinely waiting on admin — either they haven't been approved yet, or a
+//    post-approval re-verification cycle is open (vendor.reVerification.active)
+//    — and at least one document is pending admin review
 //  - "verified": every reviewable document is verified
 //  - "not_submitted": no document has been uploaded/reviewed yet
+//
+// An approved dealer with "pending" documents and no open re-verification
+// cycle is NOT waiting for anything: approveDealer() never flips the
+// per-document statuses, so pending is simply where onboarding left them.
+// Treating that as "waiting_for_review" is what used to strand working
+// dealers on the waiting screen every time the app came to the foreground.
 function buildVerificationStatus(vendor) {
   const dv = toPlainMap(vendor.documentVerification);
   const requests = toPlainMap(vendor.documentRequests);
@@ -60,10 +69,17 @@ function buildVerificationStatus(vendor) {
   const rejectedDocuments = documents.filter((d) => NEEDS_ACTION_STATUSES.includes(d.status));
   const untouchedDocuments = documents.filter((d) => d.status === "none");
 
+  // Only these two states mean "the dealer is actually waiting on an admin".
+  const reVerificationActive = Boolean(vendor.reVerification?.active);
+  const awaitingFirstApproval = vendor.registrationStatus !== "Approved";
+
   let overallStatus;
   if (rejectedDocuments.length > 0) {
     overallStatus = "action_required";
-  } else if (pendingDocuments.length > 0) {
+  } else if (
+    pendingDocuments.length > 0 &&
+    (reVerificationActive || awaitingFirstApproval)
+  ) {
     overallStatus = "waiting_for_review";
   } else if (untouchedDocuments.length === documents.length) {
     overallStatus = "not_submitted";

@@ -12,6 +12,7 @@ const Booking = require("../models/Booking");
 const ReferralSettings = require("../models/ReferralSettings");
 const ReferralTransaction = require("../models/ReferralTransaction");
 const { generateUniqueReferralCode } = require("../utils/referralCodeGenerator");
+const { normalizePlateNumber } = require("../utils/plateNumber");
 
 async function getReferralSettingsSingleton() {
   let settings = await ReferralSettings.findOne({});
@@ -152,11 +153,31 @@ const updateUserBike = async (req, res) => {
     const updateData = Object.fromEntries(
       allowedFields.filter((field) => req.body[field] !== undefined).map((field) => [field, req.body[field]]),
     );
+    if (updateData.plate_number !== undefined) {
+      updateData.plate_number = normalizePlateNumber(updateData.plate_number);
+    }
 
     // Check if the bike exists
     const existingBike = await UserBike.findOne({ _id: id, user_id: req.user_id });
     if (!existingBike) {
       return res.status(404).json({ message: "Bike not found" });
+    }
+
+    // Renaming a plate onto one of the rider's other bikes used to reach the
+    // database unchecked and surface as a bare 500 from the duplicate-key
+    // error. Same normalized comparison addUserBike makes, minus this bike.
+    if (updateData.plate_number) {
+      const ownedBikes = await UserBike.find({ user_id: req.user_id, _id: { $ne: id } })
+        .select("plate_number")
+        .lean();
+      const clash = ownedBikes.some(
+        (bike) => normalizePlateNumber(bike.plate_number) === updateData.plate_number,
+      );
+      if (clash) {
+        return res
+          .status(409)
+          .json({ message: "You have already added a bike with this plate number!" });
+      }
     }
 
     // Update the bike details
@@ -711,7 +732,8 @@ const addUserBike = async (req, res) => {
       });
     }
 
-    const { plate_number, variant_id } = req.body;
+    const { variant_id } = req.body;
+    const plate_number = normalizePlateNumber(req.body.plate_number);
 
     // Check if all required fields are provided
     if (!variant_id || !plate_number) {
@@ -749,14 +771,26 @@ const addUserBike = async (req, res) => {
       });
     }
 
-    // Check if the plate number already exists
-    const existingBike = await UserBike.findOne({ plate_number });
+    // Scoped to this rider's own garage. The check used to run across every
+    // customer, so a plate registered on another account — one getMyBikes can
+    // never show — rejected the rider in front of an empty bike list.
+    //
+    // Compared on normalized values rather than with a {user_id, plate_number}
+    // query: plates stored before normalization are still raw, and "ts05 en
+    // 5464" must not slip past as a second copy of "TS05EN5464". A rider owns
+    // a handful of bikes, so this stays cheap.
+    const ownedBikes = await UserBike.find({ user_id }).select("plate_number").lean();
+    const existingBike = ownedBikes.find(
+      (bike) => normalizePlateNumber(bike.plate_number) === plate_number,
+    );
 
     if (existingBike) {
-      console.warn(`[addUserBike] Plate number ${plate_number} already exists`);
+      console.warn(
+        `[addUserBike] Plate number ${plate_number} is already in user ${user_id}'s garage`,
+      );
       return res.status(200).json({
         status: 200,
-        message: "A bike with this plate number already exists!",
+        message: "You have already added a bike with this plate number!",
         data: [],
       });
     }

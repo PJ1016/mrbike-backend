@@ -245,6 +245,18 @@ const dealerModel = new mongoose.Schema(
       passbook: { type: String, enum: ["none", "pending", "verified", "rejected", "requested"], default: "none" },
     },
 
+    // Post-approval document re-verification cycle. Turned on when an admin
+    // rejects/requests a document from an already-approved dealer (and when
+    // that dealer re-uploads it), turned off once nothing needs dealer action
+    // any more. Without this flag a plain "pending" document — which is the
+    // normal resting state for an approved dealer whose documents were never
+    // individually verified — would read as "waiting_for_review" forever and
+    // keep bouncing the dealer to the waiting screen.
+    reVerification: {
+      active: { type: Boolean, default: false },
+      startedAt: { type: Date },
+    },
+
     // Current admin document request per documentVerification key (Phase 3).
     // Keyed the same way as documentVerification (aadharFront, pan, shop, ...).
     // Holds only the latest request, not a history.
