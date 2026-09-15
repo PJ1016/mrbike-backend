@@ -737,20 +737,31 @@ async function getDealerServices(req, res) {
 
     const ccFilter = cc !== undefined ? parseInt(cc, 10) : null;
 
+    // Bike variant -> model -> company, so every pricing row can carry the
+    // company/model/variant names the admin panel renders.
+    const variantPopulate = {
+      path: "bikes.variant_id",
+      populate: {
+        path: "model_id",
+        select: "model_name",
+        populate: {
+          path: "company_id",
+          select: "name"
+        }
+      }
+    };
+
     // Fetch Base Services
     const baseServices = await adminservices.find({ dealer_id, isActive: true })
       .populate("base_service_id", "name image description")
-      .populate({
-        path: "bikes.variant_id",
-        populate: {
-          path: "model_id",
-          select: "model_name",
-          populate: {
-            path: "company_id",
-            select: "name"
-          }
-        }
-      });
+      .populate(variantPopulate);
+
+    // Fetch Additional Services — the admin panel splits the response by
+    // `type`, so these must be returned here too or a saved additional
+    // service disappears on the next reload.
+    const additionalServices = await additionalService.find({ dealer_id, isActive: true })
+      .populate("base_additional_service_id", "name image description")
+      .populate(variantPopulate);
 
 
     const pricing = [];
@@ -806,7 +817,44 @@ async function getDealerServices(req, res) {
       });
     });
 
-  
+    additionalServices.forEach(doc => {
+      (doc.bikes || []).forEach(bike => {
+        const variant = bike.variant_id;
+        const currentVariantId = variant?._id || bike.variant_id || bike.variantId;
+
+        if (variant_id && String(currentVariantId) !== String(variant_id)) {
+          return;
+        }
+        if (ccFilter !== null && bike.cc !== ccFilter) {
+          return;
+        }
+
+        extractCompany(variant);
+        const companyName = variant?.model_id?.company_id?.name || "";
+        const modelName = variant?.model_id?.model_name || "";
+        const bikeName = variant
+          ? `${companyName} ${modelName} ${variant.variant_name || ""}`.trim()
+          : "Generic Bike";
+
+        pricing.push({
+          type: "additional",
+          serviceId: doc.base_additional_service_id?._id || doc.base_additional_service_id,
+          additionalServiceId: doc._id,
+          serviceName: doc.base_additional_service_id?.name,
+          serviceImage: doc.base_additional_service_id?.image,
+          description:
+            doc.description || doc.base_additional_service_id?.description || "",
+          bikeName: bikeName,
+          companyName: companyName,
+          modelName: modelName,
+          variantId: currentVariantId,
+          cc: bike.cc,
+          price: bike.price,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
+        });
+      });
+    });
 
     return res.status(200).json({
       status: true,
@@ -1484,35 +1532,33 @@ async function saveDealerServices(req, res) {
     );
 
     // Process Additional Services
-    if (typeof additionalService !== 'undefined') {
-      for (const [addSvcId, bikes] of Object.entries(addlMap)) {
-        if (bikes.length === 0) continue;
+    for (const [addSvcId, bikes] of Object.entries(addlMap)) {
+      if (bikes.length === 0) continue;
 
-        const existing = await additionalService.findOne({ 
-          dealer_id: dealerId, 
-          base_additional_service_id: addSvcId 
+      const existing = await additionalService.findOne({
+        dealer_id: dealerId,
+        base_additional_service_id: addSvcId
+      });
+
+      if (existing) {
+        existing.bikes = bikes;
+        existing.isActive = true;
+        await existing.save();
+      } else {
+        await additionalService.create({
+          dealer_id: dealerId,
+          base_additional_service_id: addSvcId,
+          bikes,
+          isActive: true
         });
-
-        if (existing) {
-          existing.bikes = bikes;
-          existing.isActive = true;
-          await existing.save();
-        } else {
-          await additionalService.create({
-            dealer_id: dealerId,
-            base_additional_service_id: addSvcId,
-            bikes,
-            isActive: true
-          });
-        }
       }
-      
-      // Deactivate missing additional services
-      await additionalService.updateMany(
-        { dealer_id: dealerId, base_additional_service_id: { $nin: Object.keys(addlMap) } },
-        { $set: { isActive: false } }
-      );
     }
+
+    // Deactivate missing additional services
+    await additionalService.updateMany(
+      { dealer_id: dealerId, base_additional_service_id: { $nin: Object.keys(addlMap) } },
+      { $set: { isActive: false } }
+    );
 
     return res.status(200).json({ status: true, message: "Dealer services saved successfully" });
   } catch (error) {
