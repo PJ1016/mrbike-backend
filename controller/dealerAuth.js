@@ -4,6 +4,13 @@ var validation = require("../helper/validation");
 const Vendor = require("../models/dealerModel");
 const Admin = require("../models/admin_model");
 const { getDealerStatus } = require("../helper/dealerStatus");
+const {
+  DEFAULT_SERVICE_RADIUS_KM,
+  MIN_SERVICE_RADIUS_KM,
+  MAX_SERVICE_RADIUS_KM,
+  getDealerServiceRadiusKm,
+  parseServiceRadiusKm,
+} = require("../helper/dealerServiceRadius");
 const { buildVerificationStatus } = require("../helper/dealerDocumentStatus");
 const { sendBookingNotification } = require("../helper/pushNotification");
 const { logDealerActivity } = require("../helper/dealerActivityLog");
@@ -695,6 +702,7 @@ async function updateLocationInfo(req, res) {
       latitude,
       longitude,
       isPermanentAddress,
+      serviceRadiusKm,
     } = req.body;
 
     // Validate required fields
@@ -702,6 +710,17 @@ async function updateLocationInfo(req, res) {
       return res.status(400).json({
         success: false,
         message: "City, state, and pincode are required",
+      });
+    }
+
+    // How far around the shop this dealer will accept work. Optional here —
+    // omitting it leaves whatever radius is already stored (the schema default
+    // of 3 km for a new dealer) untouched. See helper/dealerServiceRadius.js.
+    const radius = parseServiceRadiusKm(serviceRadiusKm);
+    if (radius.error) {
+      return res.status(400).json({
+        success: false,
+        message: radius.error,
       });
     }
 
@@ -732,6 +751,10 @@ async function updateLocationInfo(req, res) {
       updatedAt: new Date(),
     };
 
+    if (radius.provided) {
+      updateData.serviceRadiusKm = radius.value;
+    }
+
     // Also maintain legacy address blocks for backward compatibility
     if (isPermanentAddress) {
       updateData.permanentAddress = { address: address || builtAddress, city, state };
@@ -743,7 +766,7 @@ async function updateLocationInfo(req, res) {
       new: true,
       runValidators: true,
     }).select(
-      "shopNumber locality city state shopPincode fullAddress presentAddress permanentAddress latitude longitude formProgress completionTimestamps",
+      "shopNumber locality city state shopPincode fullAddress presentAddress permanentAddress latitude longitude serviceRadiusKm formProgress completionTimestamps",
     );
 
     if (!updatedVendor) {
@@ -767,6 +790,7 @@ async function updateLocationInfo(req, res) {
           latitude: updatedVendor.latitude,
           longitude: updatedVendor.longitude,
         },
+        serviceRadiusKm: getDealerServiceRadiusKm(updatedVendor),
         progress: {
           completed: updatedVendor.formProgress.completedSteps.locationInfo,
           lastUpdated: updatedVendor.completionTimestamps.locationInfo,
@@ -787,6 +811,120 @@ async function updateLocationInfo(req, res) {
     res.status(500).json({
       success: false,
       message: "Error updating location info",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+}
+
+/**
+ * GET/PUT the dealer's own service radius.
+ *
+ * The radius is how far from the shop this garage is willing to serve; a user
+ * outside it never sees the garage or its services in the User App. Lives on
+ * its own endpoint (rather than only inside location-info) so the Dealer App
+ * can offer a standalone "Service Area" setting after onboarding, without
+ * re-submitting the whole address. Admin-side edits go through
+ * PUT /dealer/editDealer, which writes the same field.
+ */
+async function getServiceRadius(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid vendor ID format",
+      });
+    }
+
+    const vendor = await Vendor.findById(id).select("serviceRadiusKm");
+    if (!vendor) {
+      return res.status(404).json({
+        success: false,
+        message: "Vendor not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Service radius fetched successfully",
+      data: {
+        serviceRadiusKm: getDealerServiceRadiusKm(vendor),
+        defaultRadiusKm: DEFAULT_SERVICE_RADIUS_KM,
+        minRadiusKm: MIN_SERVICE_RADIUS_KM,
+        maxRadiusKm: MAX_SERVICE_RADIUS_KM,
+      },
+    });
+  } catch (error) {
+    console.error("Get service radius error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching service radius",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+}
+
+async function updateServiceRadius(req, res) {
+  try {
+    const { id } = req.params;
+    const { serviceRadiusKm } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid vendor ID format",
+      });
+    }
+
+    const radius = parseServiceRadiusKm(serviceRadiusKm);
+    if (radius.error) {
+      return res.status(400).json({ success: false, message: radius.error });
+    }
+    if (!radius.provided) {
+      return res.status(400).json({
+        success: false,
+        message: "serviceRadiusKm is required",
+      });
+    }
+
+    const updatedVendor = await Vendor.findByIdAndUpdate(
+      id,
+      { $set: { serviceRadiusKm: radius.value } },
+      { new: true, runValidators: true },
+    ).select("serviceRadiusKm");
+
+    if (!updatedVendor) {
+      return res.status(404).json({
+        success: false,
+        message: "Vendor not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Service radius updated successfully",
+      data: {
+        serviceRadiusKm: getDealerServiceRadiusKm(updatedVendor),
+        defaultRadiusKm: DEFAULT_SERVICE_RADIUS_KM,
+        minRadiusKm: MIN_SERVICE_RADIUS_KM,
+        maxRadiusKm: MAX_SERVICE_RADIUS_KM,
+      },
+    });
+  } catch (error) {
+    console.error("Service radius update error:", error);
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: Object.values(error.errors).map((e) => e.message),
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error updating service radius",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
@@ -2184,6 +2322,8 @@ module.exports = {
   updateProgress,
   updateBasicInfo,
   updateLocationInfo,
+  getServiceRadius,
+  updateServiceRadius,
   updateShopDetails,
   uploadDocuments,
   uploadLiveVerification,

@@ -1,4 +1,10 @@
 const validation = require('./validation');
+const {
+  MIN_SERVICE_RADIUS_KM,
+  MAX_SERVICE_RADIUS_KM,
+} = require('./dealerServiceRadius');
+
+const SERVICE_RADIUS_ERROR = `Service radius must be between ${MIN_SERVICE_RADIUS_KM} and ${MAX_SERVICE_RADIUS_KM} km`;
 
 /**
  * Legacy/alternate payload keys normalized to their canonical schema-facing
@@ -15,6 +21,8 @@ const FIELD_ALIASES = {
   dateOfBirth: 'dob',
   fullName: 'ownerName',
   pincode: 'shopPincode',
+  serviceRadius: 'serviceRadiusKm',
+  radiusKm: 'serviceRadiusKm',
 };
 
 const toNumber = (v) => Number.parseFloat(v);
@@ -59,6 +67,10 @@ const TYPES = {
   },
   tax: {
     validate: (v) => (validation.isValidTax(toNumber(v)) ? null : 'Tax must be between 0-18%'),
+    coerce: (v) => toNumber(v),
+  },
+  serviceRadius: {
+    validate: (v) => (validation.isValidServiceRadius(toNumber(v)) ? null : SERVICE_RADIUS_ERROR),
     coerce: (v) => toNumber(v),
   },
   nonNegativeNumber: {
@@ -116,6 +128,9 @@ const FIELD_MAP = {
   tax: 'tax',
   pickupCharges: 'nonNegativeNumber',
   dropCharges: 'nonNegativeNumber',
+  // How far this garage serves. Drives whether a user sees it at all, so it
+  // is editable from the admin panel and from the Dealer App alike.
+  serviceRadiusKm: 'serviceRadius',
   providesPickup: 'boolean',
   providesDrop: 'boolean',
   minWalletAmount: 'nonNegativeNumber',

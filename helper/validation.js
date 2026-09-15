@@ -2,6 +2,10 @@
 /* eslint-disable camelcase */
 var bcrypt = require('bcryptjs');
 var jwt = require('jsonwebtoken');
+const {
+  MIN_SERVICE_RADIUS_KM,
+  MAX_SERVICE_RADIUS_KM,
+} = require('./dealerServiceRadius');
 // import env from '../../env';
 /**
    * Hash Password Method
@@ -199,6 +203,17 @@ const isValidCommission = (value) => !isNaN(value) && value >= 0 && value <= 100
 const isValidTax = (value) => !isNaN(value) && value >= 0 && value <= 18;
 
 /**
+ * isValidServiceRadius helper method
+ * Radius (km) a dealer serves around their shop. Bounds live in
+ * helper/dealerServiceRadius.js so the model, the admin panel and the
+ * dealer app all agree on the same range.
+ * @param {number} value
+ * @returns {Boolean} True or False
+ */
+const isValidServiceRadius = (value) =>
+  !isNaN(value) && value >= MIN_SERVICE_RADIUS_KM && value <= MAX_SERVICE_RADIUS_KM;
+
+/**
  * isValidIFSC helper method
  * @param {string} ifsc
  * @returns {Boolean} True or False
@@ -238,6 +253,7 @@ module.exports = {
   isValidLongitude,
   isValidCommission,
   isValidTax,
+  isValidServiceRadius,
   isValidIFSC,
   isValidBankAccountNumber,
   isValidPAN,

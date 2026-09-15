@@ -11,6 +11,11 @@ const BikeCompany = require("../models/bikeCompanyModel")
 const { cache, CacheKeys } = require("../utils/cache")
 const Dealer = require("../models/dealerModel");
 const { isDealerBookable } = require("../helper/dealerStatus");
+const {
+  getDealerServiceRadiusKm,
+  isWithinServiceRadius,
+} = require("../helper/dealerServiceRadius");
+const { getDistanceFromLatLonInKm } = require("../helper/validation");
 
 async function servicelist(req, res) {
   try {
@@ -1524,6 +1529,7 @@ async function saveDealerServices(req, res) {
 async function getDealersByService(req, res) {
   try {
     const { baseServiceId } = req.params;
+    const { userLat, userLon } = req.query;
 
     if (!baseServiceId || !mongoose.Types.ObjectId.isValid(baseServiceId)) {
       return res.status(400).json({
@@ -1556,11 +1562,41 @@ async function getDealersByService(req, res) {
       isBlocked: { $ne: true },
     })
       .select(
-        "shopName shopContact permanentAddress city latitude longitude pickupCharges rating shopImages image online dealerStatus registrationStatus status isActive isBlocked"
+        "shopName shopContact permanentAddress city latitude longitude pickupCharges rating shopImages image online dealerStatus registrationStatus status isActive isBlocked serviceRadiusKm"
       )
       .lean();
 
-    const availableDealers = dealers.filter(isDealerBookable);
+    let availableDealers = dealers.filter(isDealerBookable);
+
+    // When the caller sends the user's live coordinates, drop every garage
+    // whose own service radius (serviceRadiusKm, default 3 km) doesn't reach
+    // them — the same visibility rule the nearby-garage lookups apply.
+    const latitude = Number.parseFloat(userLat);
+    const longitude = Number.parseFloat(userLon);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      availableDealers = availableDealers
+        .map((dealer) => ({
+          dealer,
+          distanceKm: getDistanceFromLatLonInKm(
+            latitude,
+            longitude,
+            Number(dealer.latitude),
+            Number(dealer.longitude)
+          ),
+        }))
+        .filter((entry) => isWithinServiceRadius(entry.distanceKm, entry.dealer))
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .map((entry) => ({
+          ...entry.dealer,
+          distanceKm: Number(entry.distanceKm.toFixed(2)),
+          serviceRadiusKm: getDealerServiceRadiusKm(entry.dealer),
+        }));
+    } else {
+      availableDealers = availableDealers.map((dealer) => ({
+        ...dealer,
+        serviceRadiusKm: getDealerServiceRadiusKm(dealer),
+      }));
+    }
 
     return res.status(200).json({
       status: true,

@@ -1,6 +1,11 @@
 const mongoose = require("mongoose")
 const AutoIncrement = require("mongoose-sequence")(mongoose)
 const { DEALER_STATUSES, deriveDealerStatus, mergeForStatus } = require("../helper/dealerStatus")
+const {
+  DEFAULT_SERVICE_RADIUS_KM,
+  MIN_SERVICE_RADIUS_KM,
+  MAX_SERVICE_RADIUS_KM,
+} = require("../helper/dealerServiceRadius")
 
 const dealerModel = new mongoose.Schema(
   {
@@ -201,6 +206,18 @@ const dealerModel = new mongoose.Schema(
     providesPickup: { type: Boolean, default: false },
     providesDrop: { type: Boolean, default: false },
     dropCharges: { type: Number, default: 0 },
+
+    // How far from this shop the dealer is willing to serve, in km. A user
+    // only sees this garage (and its services) when their location falls
+    // inside this radius. Settable by the admin (add/edit dealer) and by the
+    // dealer themselves (Dealer App). Defaults to the 3 km that used to be
+    // hard-coded in the nearby-dealer lookups — see helper/dealerServiceRadius.js.
+    serviceRadiusKm: {
+      type: Number,
+      default: DEFAULT_SERVICE_RADIUS_KM,
+      min: MIN_SERVICE_RADIUS_KM,
+      max: MAX_SERVICE_RADIUS_KM,
+    },
 
     // Explicit status object you want to query against
     status: {

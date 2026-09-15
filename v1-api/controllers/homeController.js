@@ -211,13 +211,19 @@ async function recommended(req, res) {
       })
     }
 
+    // Proximity is scored relative to the farthest service actually in scope,
+    // never a fixed 3 km: dealers now set their own service radius, so in an
+    // area served mostly by wide-radius garages a hard 3 km scale would flatten
+    // every proximity score to 0 and stop it ranking anything.
+    const proximityScale = Math.max(DEFAULT_RADIUS_KM, ...minDistanceByService.values())
+
     const ranked = services
       .map(s => {
         const key = String(s._id)
         const pop = popularity.get(key) || { count: 0, source: "dealerCount" }
         const minDistance = minDistanceByService.get(key)
         const popularityScore = pop.count / maxCount
-        const proximityScore = minDistance != null ? Math.max(0, 1 - minDistance / DEFAULT_RADIUS_KM) : 0
+        const proximityScore = minDistance != null ? Math.max(0, 1 - minDistance / proximityScale) : 0
         const score = bikeMatched
           ? 0.5 * popularityScore + 0.3 * proximityScore + 0.2
           : 0.6 * popularityScore + 0.4 * proximityScore

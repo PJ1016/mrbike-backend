@@ -5,6 +5,11 @@ const Vendor = require("../models/dealerModel");
 const jwt = require("jsonwebtoken");
 var validation = require("../helper/validation");
 const { getDealerStatus, isDealerBookable } = require("../helper/dealerStatus");
+const {
+  getDealerServiceRadiusKm,
+  isWithinServiceRadius,
+  serviceRadiusBoundingBoxDegrees,
+} = require("../helper/dealerServiceRadius");
 const Rating = require("../models/rating_model");
 const RatingSummary = require("../models/RatingSummary");
 const Wallet = require("../models/Wallet_modal")
@@ -83,16 +88,23 @@ const dealerWithInRange = async (req, res) => {
       });
     }
 
+    // Coarse pre-filter only. The box is sized off the largest radius any
+    // dealer may configure — not off the default — otherwise a garage that
+    // serves 25 km would be dropped before its own radius is ever consulted.
+    const boxDelta = serviceRadiusBoundingBoxDegrees();
+
     const dealers = (await Vendor.find({
       online: true,
       wallet: { $gt: -500 },
       isBlocked: { $ne: true },
-      latitude: { $gte: latitude - 0.03, $lte: latitude + 0.03 },
-      longitude: { $gte: longitude - 0.03, $lte: longitude + 0.03 },
+      latitude: { $gte: latitude - boxDelta, $lte: latitude + boxDelta },
+      longitude: { $gte: longitude - boxDelta, $lte: longitude + boxDelta },
     })).filter(isDealerBookable); // approved + active + online, not just online
 
-    console.log(`✅ Total Dealers Found: ${dealers}`);
+    console.log(`✅ Total Dealers Found: ${dealers.length}`);
 
+    // Each garage decides its own reach (serviceRadiusKm, default 3 km) — a
+    // user outside it never sees that garage or its services.
     let nearbyDealers = dealers.filter(dealer => {
       const distance = calculateDistance(
         latitude,
@@ -100,7 +112,7 @@ const dealerWithInRange = async (req, res) => {
         dealer.latitude,
         dealer.longitude
       );
-      return distance <= 3;
+      return isWithinServiceRadius(distance, dealer);
     });
 
     // If the user has selected a service + bike variant, only keep dealers who
@@ -175,7 +187,7 @@ const dealerWithInRange2 = async (req, res) => {
 
     console.log(`📍 Searching dealers near lat: ${userLat}, lon: ${userLon} with variant_id: ${variant_id}`);
 
-    // Step 1: Fetch all active dealers within 3km and ensure they are not blocked
+    // Step 1: Fetch all bookable dealers, not blocked
     const dealers = (await Vendor.find({
       online: true,
       wallet: { $gt: -500 },
@@ -184,7 +196,8 @@ const dealerWithInRange2 = async (req, res) => {
 
     console.log(`✅ Total Dealers Found: ${dealers.length}`);
 
-    // Step 2: Filter dealers within 3km radius
+    // Step 2: Keep only dealers whose own service radius reaches this user
+    // (serviceRadiusKm on the dealer, default 3 km).
     const nearbyDealers = dealers.filter((dealer) => {
       const distance = calculateDistance(
         parseFloat(userLat),
@@ -192,7 +205,7 @@ const dealerWithInRange2 = async (req, res) => {
         parseFloat(dealer.latitude),
         parseFloat(dealer.longitude)
       );
-      return distance <= 3;
+      return isWithinServiceRadius(distance, dealer);
     });
 
     console.log(`✅ Nearby Dealers Count: ${nearbyDealers.length}`);
@@ -780,7 +793,7 @@ async function addAmount(req, res) {
 async function getShopDetails(req, res) {
   try {
     const { id } = req.params;
-    const { cc } = req.query; // Get CC from query parameter
+    const { cc, userLat, userLon } = req.query; // Get CC from query parameter
     const dealer_id = id.trim();
 
     if (!dealer_id) {
@@ -793,7 +806,7 @@ async function getShopDetails(req, res) {
 
     // Fetch dealer details
     const dealer = await Vendor.findById(dealer_id)
-      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges dropCharges providesPickup providesDrop minWalletAmount ownerName phone fullAddress registrationStatus tax online isActive isBlocked status dealerStatus averageRating ratingCount");
+      .select("id shopName shopImages shopDescription goDigital expertAdvice ourPromise latitude longitude pickupAndDropDescription pickupAndDrop address services commission pickupCharges dropCharges providesPickup providesDrop minWalletAmount ownerName phone fullAddress registrationStatus tax online isActive isBlocked status dealerStatus averageRating ratingCount serviceRadiusKm");
 
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found!" });
@@ -807,6 +820,38 @@ async function getShopDetails(req, res) {
         success: false,
         message: "This garage is currently unavailable.",
       });
+    }
+
+    // Same rule the nearby-garage lists apply: this garage only serves users
+    // inside its own radius (serviceRadiusKm, default 3 km). Enforced here too
+    // so a deep link or a stale garage id can't open a shop that doesn't
+    // actually serve where the user is standing. Callers that send no
+    // coordinates are unchanged — there is nothing to measure against.
+    const userLatitude = Number.parseFloat(userLat);
+    const userLongitude = Number.parseFloat(userLon);
+    const dealerLatitude = Number(dealer.latitude);
+    const dealerLongitude = Number(dealer.longitude);
+    const bothLocated =
+      Number.isFinite(userLatitude) &&
+      Number.isFinite(userLongitude) &&
+      Number.isFinite(dealerLatitude) &&
+      Number.isFinite(dealerLongitude);
+    // A dealer with no stored coordinates can't be measured against, and
+    // already never surfaces in the nearby lists — don't turn an unmeasurable
+    // garage into a hard 403 here on top of that.
+    if (bothLocated) {
+      const distanceKm = calculateDistance(
+        userLatitude,
+        userLongitude,
+        dealerLatitude,
+        dealerLongitude
+      );
+      if (!isWithinServiceRadius(distanceKm, dealer)) {
+        return res.status(403).json({
+          success: false,
+          message: "This garage does not serve your location.",
+        });
+      }
     }
 
     // Fetch AdminServices that include this dealer in their dealers array
@@ -847,6 +892,7 @@ async function getShopDetails(req, res) {
       message: "Shop details retrieved successfully!",
       data: {
         ...dealer.toObject(),
+        serviceRadiusKm: getDealerServiceRadiusKm(dealer),
         services: adminServices,
         averageRating: summary?.averageRating ?? dealer.averageRating ?? 0,
         ratingCount: summary?.reviewCount ?? dealer.ratingCount ?? 0,

@@ -4,7 +4,7 @@ const { createS3Upload } = require("../utils/s3Upload");
 const { verifyDealerToken, verifyDealerTokenForLogout, requireOwnDealer } = require("../middlewares/dealerAuth");
 const { requireAdmin } = require("../middlewares/requireAdmin");
 
-var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getVerificationStatus, submitReVerification, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
+var { usersignin, verifyOTP, logout, sendOtp, changePassword, getProgress, updateProgress, updateBasicInfo, updateLocationInfo, getServiceRadius, updateServiceRadius, updateShopDetails, uploadDocuments, uploadLiveVerification, updateBankDetails, submitForApproval, checkApprovalStatus, getVerificationStatus, submitReVerification, getPendingRegistrations, getDealerDetails, approveDealer, rejectDealer, verifyDocument } = require("../controller/dealerAuth")
 
 const upload = createS3Upload("vendors");
 
@@ -25,6 +25,12 @@ router.put('/progress/:section', verifyDealerToken, updateProgress);
 // Form Submission Endpoints — dealer can only edit their own registration record
 router.post('/basic-info/:id', verifyDealerToken, requireOwnDealer('id'), updateBasicInfo);
 router.post('/location-info/:id', verifyDealerToken, requireOwnDealer('id'), updateLocationInfo);
+// Standalone service-area setting — how many km around the shop this dealer
+// serves. A user outside it never sees the garage or its services. Also
+// settable inline during onboarding via /location-info/:id above, and by the
+// admin via PUT /dealer/editDealer.
+router.get('/service-radius/:id', verifyDealerToken, requireOwnDealer('id'), getServiceRadius);
+router.put('/service-radius/:id', verifyDealerToken, requireOwnDealer('id'), updateServiceRadius);
 router.post('/shop-details/:id', verifyDealerToken, requireOwnDealer('id'), upload.any(), updateShopDetails);
 router.post('/upload-documents/:id',
   verifyDealerToken, requireOwnDealer('id'),

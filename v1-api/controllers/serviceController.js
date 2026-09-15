@@ -3,6 +3,7 @@ const BaseService = require("../../models/baseService")
 const AdminService = require("../../models/adminService")
 const { isDealerBookable } = require("../../helper/dealerStatus")
 const { getRatingsMap, calculateDistanceKm, resolveBikeContext, getCompatibleServiceIds } = require("../helpers/geoAndRatings")
+const { getDealerServiceRadiusKm, isWithinServiceRadius } = require("../../helper/dealerServiceRadius")
 
 function formatImage(url, req) {
   if (url && !url.startsWith("http")) {
@@ -108,6 +109,14 @@ async function garagesForService(req, res) {
         entries.forEach(e => {
           distanceById.set(String(e.dealer._id), calculateDistanceKm(latitude, longitude, e.dealer.latitude, e.dealer.longitude))
         })
+
+        // A garage only serves users inside its own radius (serviceRadiusKm,
+        // default 3 km), so one that can't reach this user must not appear in
+        // the compare list either. Without live coordinates there is nothing to
+        // measure against, and the full list is returned as before.
+        entries = entries.filter(e =>
+          isWithinServiceRadius(distanceById.get(String(e.dealer._id)), e.dealer),
+        )
       }
     }
 
@@ -124,6 +133,7 @@ async function garagesForService(req, res) {
           latitude: e.dealer.latitude,
           longitude: e.dealer.longitude,
           distanceKm: distanceById.has(String(e.dealer._id)) ? Number(distanceById.get(String(e.dealer._id)).toFixed(2)) : null,
+          serviceRadiusKm: getDealerServiceRadiusKm(e.dealer),
           price: e.price,
           averageRating: rating.averageRating,
           ratingCount: rating.ratingCount,

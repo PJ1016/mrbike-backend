@@ -4,8 +4,17 @@ const AdminService = require("../../models/adminService")
 const Booking = require("../../models/Booking")
 const UserBike = require("../../models/userBikeModel")
 const { isDealerBookable } = require("../../helper/dealerStatus")
+const {
+  DEFAULT_SERVICE_RADIUS_KM,
+  getDealerServiceRadiusKm,
+  isWithinServiceRadius,
+  serviceRadiusBoundingBoxDegrees,
+} = require("../../helper/dealerServiceRadius")
 
-const DEFAULT_RADIUS_KM = 3
+// Kept as the fallback reach of a dealer that never configured one, and as the
+// normalization constant for proximity scoring. The actual visibility cut-off
+// is per-dealer — see helper/dealerServiceRadius.js.
+const DEFAULT_RADIUS_KM = DEFAULT_SERVICE_RADIUS_KM
 
 // Bookings in these statuses never reached a completed/paid service, so they
 // don't count as real demand signal for "most booked"/"popular" ranking.
@@ -29,11 +38,17 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Finds bookable dealers either within a radius of a lat/lng point, or in a
+ * Finds bookable dealers that actually serve a lat/lng point, or that sit in a
  * given city (admin-facing fallback when no live coordinates are available).
  * Mirrors the eligibility rules already used by controller/dealer.js#dealerWithInRange.
+ *
+ * Reach is per-dealer: each garage's own serviceRadiusKm decides whether this
+ * user is inside its service area. Pass radiusKm to additionally cap how far
+ * the caller is willing to look — the effective cut-off is then the smaller of
+ * the two, so a caller can narrow the search but never widen a garage's reach
+ * beyond what the garage itself agreed to.
  */
-async function findNearbyDealers({ lat, lng, city, radiusKm = DEFAULT_RADIUS_KM } = {}) {
+async function findNearbyDealers({ lat, lng, city, radiusKm = null } = {}) {
   const baseFilter = {
     online: true,
     wallet: { $gt: -500 },
@@ -52,17 +67,29 @@ async function findNearbyDealers({ lat, lng, city, radiusKm = DEFAULT_RADIUS_KM 
     throw new Error("INVALID_COORDINATES")
   }
 
+  // Coarse pre-filter sized off the widest radius any dealer may configure, so
+  // a far-reaching garage is never dropped before its own radius is consulted.
+  const boxDelta = serviceRadiusBoundingBoxDegrees()
+
   const dealers = (
     await Vendor.find({
       ...baseFilter,
-      latitude: { $gte: latitude - 0.5, $lte: latitude + 0.5 },
-      longitude: { $gte: longitude - 0.5, $lte: longitude + 0.5 },
+      latitude: { $gte: latitude - boxDelta, $lte: latitude + boxDelta },
+      longitude: { $gte: longitude - boxDelta, $lte: longitude + boxDelta },
     })
   ).filter(isDealerBookable)
 
+  const callerCap = Number(radiusKm)
+  const hasCallerCap = Number.isFinite(callerCap) && callerCap > 0
+
   return dealers
-    .map(dealer => ({ dealer, distanceKm: calculateDistanceKm(latitude, longitude, dealer.latitude, dealer.longitude) }))
-    .filter(entry => entry.distanceKm <= radiusKm)
+    .map(dealer => ({
+      dealer,
+      distanceKm: calculateDistanceKm(latitude, longitude, dealer.latitude, dealer.longitude),
+      serviceRadiusKm: getDealerServiceRadiusKm(dealer),
+    }))
+    .filter(entry => isWithinServiceRadius(entry.distanceKm, entry.dealer))
+    .filter(entry => !hasCallerCap || entry.distanceKm <= callerCap)
     .sort((a, b) => a.distanceKm - b.distanceKm)
 }
 

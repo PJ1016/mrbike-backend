@@ -52,6 +52,12 @@ async function createIndexes() {
     // Vendor/Dealer indexes
     await mongoose.connection.db.collection('vendors').createIndex({ shopName: 1 })
     await mongoose.connection.db.collection('vendors').createIndex({ email: 1 })
+    // Nearby-garage lookups (dealerWithInRange, findNearbyDealers) pre-filter
+    // on online + a lat/lng bounding box before the exact per-dealer
+    // service-radius check runs. That box is sized off the widest radius a
+    // dealer may configure, so it is deliberately generous — this index keeps
+    // it from turning into a collection scan.
+    await mongoose.connection.db.collection('vendors').createIndex({ online: 1, latitude: 1, longitude: 1 })
     console.log('✓ Vendor indexes created')
 
     // Cashfree webhook idempotency and retention indexes. The unique eventId

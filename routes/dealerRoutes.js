@@ -13,6 +13,10 @@ const {
   DOCUMENT_VERIFICATION_KEY_MAP,
   getAtPath,
 } = require("../helper/dealerFieldMap")
+const {
+  DEFAULT_SERVICE_RADIUS_KM,
+  parseServiceRadiusKm,
+} = require("../helper/dealerServiceRadius")
 var {
   dealerList,
   deleteDealer,
@@ -99,6 +103,7 @@ router.post(
         aadharCardNo,
         panCardNo,
         pickupCharges,
+        serviceRadiusKm,
       } = req.body
 
       // Debug log
@@ -120,6 +125,18 @@ router.post(
         return res.status(400).json({
           success: false,
           message: `Tax must be between 0-18%. Received: ${tax}%`,
+        })
+      }
+
+      // Validate service radius — how far this garage will be shown to users.
+      // Optional at creation; a dealer who leaves it blank serves the default
+      // radius until the admin or the dealer changes it.
+      const radius = parseServiceRadiusKm(serviceRadiusKm)
+      if (radius.error) {
+        return res.status(400).json({
+          success: false,
+          message: radius.error,
+          field: "serviceRadiusKm",
         })
       }
 
@@ -232,6 +249,7 @@ router.post(
         commission,
         tax: taxValue,
         pickupCharges: pickupCharges ? Number.parseFloat(pickupCharges) : 0,
+        serviceRadiusKm: radius.provided ? radius.value : DEFAULT_SERVICE_RADIUS_KM,
         documents,
         shopImages: req.files?.shopImages?.map((file) => file.location) || [],
         isVerify: false,
