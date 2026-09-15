@@ -28,6 +28,7 @@ function appBannerFields(legacyBanner) {
     longitude: banner.longitude ?? null,
     radiusKm: Number(banner.radius) > 0 ? Number(banner.radius) : 10,
     legacyBannerId: banner._id,
+    imageOnly: banner.imageOnly === true,
     isActive: banner.status !== "expired",
     isDeleted: false,
   };

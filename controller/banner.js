@@ -215,6 +215,13 @@ const jwt_decode = require("jwt-decode");
 const mongoose = require("mongoose");
 
 // Shared validation for baseServiceId + location fields (used by create & edit)
+// addbanner arrives as multipart (booleans come through as the strings
+// "true"/"false"); editbanner arrives as JSON with a real boolean. Accept both.
+function parseBool(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return value === true || value === "true";
+}
+
 async function validateBannerMappingFields({ baseServiceId, locationType, latitude, longitude, radius }) {
   if (baseServiceId !== undefined && baseServiceId !== null && baseServiceId !== "") {
     if (!mongoose.Types.ObjectId.isValid(baseServiceId)) {
@@ -362,6 +369,7 @@ async function editbanner(req, res) {
     const {
       banner_id, name, banner_image, from_date, expiry_date, status: statusOverride,
       baseServiceId, locationType, placeId, placeName, latitude, longitude, radius, displayOrder,
+      imageOnly,
     } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(banner_id)) {
@@ -434,6 +442,9 @@ async function editbanner(req, res) {
   longitude,
   radius,
   displayOrder,
+  // undefined is stripped from the $set, so a caller that omits the flag
+  // leaves the banner's current value alone.
+  imageOnly: imageOnly !== undefined ? parseBool(imageOnly) : undefined,
 };
 
 
@@ -457,6 +468,7 @@ async function addbanner(req, res) {
     const {
       name, from_date, expiry_date,
       baseServiceId, locationType, placeId, placeName, latitude, longitude, radius, displayOrder,
+      imageOnly,
     } = req.body;
 
     if (!from_date || !expiry_date) {
@@ -508,6 +520,7 @@ async function addbanner(req, res) {
       longitude,
       radius,
       displayOrder,
+      imageOnly: parseBool(imageOnly),
     };
 
     const bannerResponse = await Banner.create(bannerData);

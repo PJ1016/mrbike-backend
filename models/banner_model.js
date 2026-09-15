@@ -58,6 +58,14 @@ const bannerSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  // True when the uploaded artwork is already a finished creative (offer text,
+  // logo, price baked in). Mirrors AppBanner.imageOnly and is carried across by
+  // legacyBannerSyncService, so the apps render the poster on its own instead
+  // of painting their gradient, title and Bike Service button over it.
+  imageOnly: {
+    type: Boolean,
+    default: false,
+  },
 }, {
   timestamps: true,
 });
