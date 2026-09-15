@@ -1164,6 +1164,7 @@ const getUserBillDetails = async (req, res) => {
             subtotal: bill.subtotal,
             pickup_charges: bill.pickup_charges,
             drop_charges: bill.drop_charges,
+            towing_charge: bill.towing_charge || 0,
             tax_amount: bill.tax_amount,
             tax_rate: bill.tax_rate,
             total_amount: bill.total_amount,

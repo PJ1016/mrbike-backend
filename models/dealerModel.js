@@ -206,6 +206,14 @@ const dealerModel = new mongoose.Schema(
     providesPickup: { type: Boolean, default: false },
     providesDrop: { type: Boolean, default: false },
     dropCharges: { type: Number, default: 0 },
+    // Towing — charged when the customer declares their bike as not rideable
+    // or completely dead at booking time. Configured by the admin (and by the
+    // dealer in their own settings) exactly like pickup/drop above, so the
+    // amount is never hardcoded in any frontend. A dealer who does not offer
+    // towing keeps providesTowing false; such bookings start at ₹0 and the
+    // dealer/admin can still add the agreed amount to the booking later.
+    providesTowing: { type: Boolean, default: false },
+    towingCharges: { type: Number, default: 0 },
 
     // How far from this shop the dealer is willing to serve, in km. A user
     // only sees this garage (and its services) when their location falls

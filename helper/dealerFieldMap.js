@@ -128,11 +128,13 @@ const FIELD_MAP = {
   tax: 'tax',
   pickupCharges: 'nonNegativeNumber',
   dropCharges: 'nonNegativeNumber',
+  towingCharges: 'nonNegativeNumber',
   // How far this garage serves. Drives whether a user sees it at all, so it
   // is editable from the admin panel and from the Dealer App alike.
   serviceRadiusKm: 'serviceRadius',
   providesPickup: 'boolean',
   providesDrop: 'boolean',
+  providesTowing: 'boolean',
   minWalletAmount: 'nonNegativeNumber',
   // pre-existing fields already supported by editDealer, kept for backward compatibility
   aadharCardNo: 'string',

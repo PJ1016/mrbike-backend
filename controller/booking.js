@@ -27,6 +27,10 @@ const {
   applyRewardDiscount,
   round2,
   TRANSPORT_OPTIONS,
+  BIKE_CONDITIONS,
+  normalizeBikeCondition,
+  isTowingRequired,
+  resolveTowingCharge,
   PricingError,
 } = require("../services/pricingEngine");
 const { validatePromoCode } = require("../services/promoService");
@@ -266,6 +270,7 @@ const getuserbookings = async (req, res) => {
           grandTotal: grandTotal,
           pickupCharges: bill?.pickup_charges || b.pickupCharges || 0,
           dropCharges: bill?.drop_charges || b.dropCharges || 0,
+          towingCharge: bill?.towing_charge || b.towingCharge || 0,
         };
       });
 
@@ -814,6 +819,8 @@ async function createBooking(req, res) {
       timeSlot,
       pickupAddress,
       promoCode,
+      bikeCondition,
+      towingNote,
     } = req.body;
     // transportOption is optional for backward compatibility with clients
     // that predate this field (see legacy-inference block below).
@@ -833,11 +840,36 @@ async function createBooking(req, res) {
       return res.status(400).json({ success: false, message: "User bike is required" });
     }
 
+    // ── Bike condition / towing requirement ───────────────────────────────────
+    // Absent means RIDEABLE, which is what every pre-feature client sends and
+    // what every pre-feature booking implicitly was. `towingRequired` is derived
+    // here and never read from the request body — a client must not be able to
+    // declare a dead bike and then switch the towing charge off.
+    let resolvedBikeCondition;
+    try {
+      resolvedBikeCondition = normalizeBikeCondition(bikeCondition);
+    } catch (conditionError) {
+      if (conditionError instanceof PricingError) {
+        return res.status(400).json({
+          success: false,
+          message: conditionError.message,
+          code: conditionError.code,
+        });
+      }
+      throw conditionError;
+    }
+    const resolvedTowingRequired = isTowingRequired(resolvedBikeCondition);
+    // The note only describes a towing problem, so it is dropped entirely for
+    // a rideable bike rather than stored against a booking it cannot apply to.
+    const resolvedTowingNote = resolvedTowingRequired
+      ? (typeof towingNote === "string" && towingNote.trim() ? towingNote.trim().slice(0, 500) : null)
+      : null;
+
     // ── Validate Dealer ───────────────────────────────────────────────────────
     // Reload fresh from the DB on every booking attempt — never trust a garage
     // shown in the app that may have gone offline/inactive since it was fetched.
     const dealer = await Vendor.findById(dealer_id)
-      .select("tax commission pickupCharges dropCharges providesPickup providesDrop online isActive isBlocked status registrationStatus dealerStatus")
+      .select("tax commission pickupCharges dropCharges providesPickup providesDrop providesTowing towingCharges online isActive isBlocked status registrationStatus dealerStatus")
       .lean();
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found" });
@@ -930,13 +962,26 @@ async function createBooking(req, res) {
       // is the ONLY place a promo is actually locked onto a booking.
       let promo = null;
       if (promoCode) {
+        // Resolve the same subtotal computePriceBreakdown is about to produce —
+        // towing included — so the promo's minimum-order check is made against
+        // the real amount and not a partial one.
         const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
-        const subtotal = round2(serviceAmount + pickupCharges + dropCharges);
+        const towingCharge = resolveTowingCharge({
+          towingRequired: resolvedTowingRequired,
+          dealer,
+        });
+        const subtotal = round2(serviceAmount + pickupCharges + dropCharges + towingCharge);
         const validated = await validatePromoCode({ code: promoCode, userId: user_id, subtotal });
         promo = validated.promo;
       }
 
-      breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer, promo });
+      breakdown = computePriceBreakdown({
+        serviceAmount,
+        transportOption,
+        dealer,
+        promo,
+        bikeCondition: resolvedBikeCondition,
+      });
     } catch (pricingError) {
       if (pricingError instanceof PricingError) {
         return res.status(400).json({ success: false, message: pricingError.message, code: pricingError.code });
@@ -970,6 +1015,9 @@ async function createBooking(req, res) {
       scheduleDate: scheduleDate || null,
       timeSlot: timeSlot || null,
       pickupAddress: pickupAddress || null,
+      bikeCondition: resolvedBikeCondition,
+      towingRequired: resolvedTowingRequired,
+      towingNote: resolvedTowingNote,
       pickupOtp,
       deliveryOtp,
       status: "pending",
@@ -1136,6 +1184,7 @@ async function getBookingDetails(req, res) {
       grandTotal: grandTotal,
       pickupCharges: billData?.pickup_charges || bookingData.pickupCharges || 0,
       dropCharges: billData?.drop_charges || bookingData.dropCharges || 0,
+      towingCharge: billData?.towing_charge || bookingData.towingCharge || 0,
     };
 
     console.log("Returning booking details with grandTotal:", grandTotal);
@@ -1261,7 +1310,7 @@ async function updateBooking(req, res) {
     if (additionalServicesChanged) {
       const [dealer, bikeData, mainDocs, addlDocs] = await Promise.all([
         Vendor.findById(existingBooking.dealer_id)
-          .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+          .select("tax commission pickupCharges dropCharges providesPickup providesDrop providesTowing towingCharges")
           .lean(),
         UserBike.findById(existingBooking.userBike_id).select("bike_cc"),
         AdminService.find({ _id: { $in: existingBooking.services } }).select("bikes"),
@@ -1283,6 +1332,12 @@ async function updateBooking(req, res) {
           dealer,
           // Preserve any reward/coupon discount already applied to this booking.
           discountAmount: existingBooking.discountAmount,
+          // …and the towing charge already agreed on this booking. Passing the
+          // booking's own value as the override keeps it frozen here: changing
+          // the service list must not silently re-derive towing from the
+          // dealer's current rate, nor drop a charge the dealer already set.
+          bikeCondition: existingBooking.bikeCondition,
+          towingChargeOverride: existingBooking.towingCharge,
         });
       } catch (pricingError) {
         if (pricingError instanceof PricingError) {
@@ -3060,6 +3115,154 @@ const regenerateDeliveryOtp = async (req, res) => {
   }
 };
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /bikedoctor/bookings/:bookingId/towing-charge   { towingCharge }
+//
+// The one sanctioned way to add/revise the towing charge on an existing
+// booking. Only the dealer handling the booking or an admin may call it, and
+// only while the booking is still open for pricing — once the customer has
+// paid or the invoice has been issued, the amount they agreed to is final.
+//
+// This never patches a total: it re-resolves the services and re-runs the
+// FULL pricingEngine breakdown with the new towing amount, so subtotal, tax,
+// customer total, commission and dealer earnings all move together and stay
+// internally consistent. The customer's payable amount (Booking.amountDue,
+// which every payment path charges against) follows automatically.
+async function updateTowingCharge(req, res) {
+  try {
+    const { bookingId } = req.params;
+    const { towingCharge } = req.body;
+
+    if (towingCharge === undefined || towingCharge === null || towingCharge === "") {
+      return res.status(400).json({ success: false, message: "towingCharge is required" });
+    }
+    const amount = Number(towingCharge);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "towingCharge must be a non-negative number",
+      });
+    }
+
+    // requireBookingParticipant already proved this actor belongs to the
+    // booking; scope the query the same way it did.
+    const ownerFilter =
+      req.auth?.role === "admin"
+        ? { _id: bookingId }
+        : { _id: bookingId, dealer_id: req.user_id };
+    const existingBooking = await booking.findOne(ownerFilter);
+    if (!existingBooking) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    if (!existingBooking.towingRequired) {
+      return res.status(400).json({
+        success: false,
+        message: "This booking does not require towing.",
+        code: "TOWING_NOT_REQUIRED",
+      });
+    }
+
+    // Pricing may only move while the customer still owes the money. After
+    // payment/invoice — or on a booking that is over — the agreed total is
+    // what it is.
+    const TERMINAL_STATUSES = ["rejected", "user_cancelled", "cancelled", "expired", "delivered"];
+    const isClosedForPricing =
+      existingBooking.billStatus !== "pending" ||
+      existingBooking.payment_status === "completed" ||
+      existingBooking.billGenerated === true ||
+      TERMINAL_STATUSES.includes(existingBooking.status);
+
+    if (isClosedForPricing) {
+      return res.status(409).json({
+        success: false,
+        message: "Towing charge can no longer be changed — this booking is already billed, paid or closed.",
+        code: "BOOKING_CLOSED_FOR_PRICING",
+      });
+    }
+
+    const [dealer, bikeData, mainDocs, addlDocs] = await Promise.all([
+      Vendor.findById(existingBooking.dealer_id)
+        .select("tax commission pickupCharges dropCharges providesPickup providesDrop providesTowing towingCharges")
+        .lean(),
+      UserBike.findById(existingBooking.userBike_id).select("bike_cc"),
+      AdminService.find({ _id: { $in: existingBooking.services } }).select("bikes"),
+      AdditionalService.find({ _id: { $in: existingBooking.additionalServices } }).select("bikes"),
+    ]);
+
+    if (!dealer) {
+      return res.status(404).json({ success: false, message: "Dealer not found for this booking" });
+    }
+
+    const bikeCC = parseInt(bikeData?.bike_cc || 0);
+    const serviceAmount = resolveServiceAmount({
+      services: mainDocs,
+      additionalServices: addlDocs,
+      bikeCC,
+    });
+
+    let breakdown;
+    try {
+      breakdown = computePriceBreakdown({
+        serviceAmount,
+        transportOption: existingBooking.transportOption,
+        dealer,
+        // Any reward/promo discount already on this booking is preserved as-is.
+        discountAmount: existingBooking.discountAmount,
+        bikeCondition: existingBooking.bikeCondition,
+        towingChargeOverride: amount,
+      });
+    } catch (pricingError) {
+      if (pricingError instanceof PricingError) {
+        return res.status(400).json({
+          success: false,
+          message: pricingError.message,
+          code: pricingError.code,
+        });
+      }
+      throw pricingError;
+    }
+
+    applyBreakdownToBooking(existingBooking, breakdown);
+    existingBooking.towingChargeUpdatedAt = new Date();
+    existingBooking.towingChargeUpdatedByRole = req.auth?.role === "admin" ? "admin" : "dealer";
+    await existingBooking.save();
+
+    console.log(
+      `[TOWING-CHARGE] booking ${existingBooking.bookingId || existingBooking._id} set to ₹${breakdown.towingCharge} by ${existingBooking.towingChargeUpdatedByRole}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Towing charge updated successfully",
+      data: {
+        bookingId: existingBooking._id,
+        bikeCondition: existingBooking.bikeCondition,
+        towingRequired: existingBooking.towingRequired,
+        towingNote: existingBooking.towingNote,
+        towingCharge: existingBooking.towingCharge,
+        serviceAmount: existingBooking.serviceAmount,
+        pickupCharges: existingBooking.pickupCharges,
+        dropCharges: existingBooking.dropCharges,
+        subtotal: existingBooking.subtotal,
+        taxRate: existingBooking.taxRate,
+        taxAmount: existingBooking.taxAmount,
+        discountAmount: existingBooking.discountAmount,
+        customerTotal: existingBooking.customerTotal,
+        amountDue: existingBooking.amountDue,
+        commissionRate: existingBooking.commissionRate,
+        commissionAmount: existingBooking.commissionAmount,
+        dealerEarnings: existingBooking.dealerEarnings,
+      },
+      pricing: breakdown,
+    });
+  } catch (error) {
+    console.error("[updateTowingCharge] Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -3072,6 +3275,7 @@ module.exports = {
   createBooking,
   getBookingDetails,
   updateBooking,
+  updateTowingCharge,
   updateBookingStatus,
   sendBookingOTP,
   verifyBookingOTP,

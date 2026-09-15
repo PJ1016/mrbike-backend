@@ -100,6 +100,20 @@ function requireActorRole(role) {
   };
 }
 
+// Same contract as requireActorRole, for endpoints more than one role may
+// call (e.g. a towing charge the dealer OR an admin can set).
+function requireActorRoleAny(...roles) {
+  return function (req, res, next) {
+    if (!req.auth || !roles.includes(req.auth.role)) {
+      return res.status(403).json({
+        success: false,
+        message: `${roles.join(" or ")} access required`,
+      });
+    }
+    return next();
+  };
+}
+
 function requirePaymentParticipant(getPaymentFilter) {
   return async function (req, res, next) {
     try {
@@ -122,4 +136,4 @@ function requirePaymentParticipant(getPaymentFilter) {
   };
 }
 
-module.exports = { authenticateActor, requireBookingParticipant, requireOwnBookingList, requireActorRole, requirePaymentParticipant };
+module.exports = { authenticateActor, requireBookingParticipant, requireOwnBookingList, requireActorRole, requireActorRoleAny, requirePaymentParticipant };

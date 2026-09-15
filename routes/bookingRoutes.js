@@ -4,7 +4,7 @@ var fs = require('fs-extra');
 const router = express.Router();
 const { requireAdmin } = require("../middlewares/requireAdmin");
 const { requireCustomer, requireOwnedBooking } = require("../middlewares/customerAuth");
-const { requireBookingParticipant, requireOwnBookingList, requireActorRole } = require("../middlewares/bookingAuth");
+const { requireBookingParticipant, requireOwnBookingList, requireActorRole, requireActorRoleAny } = require("../middlewares/bookingAuth");
 const { getNotificationsByReceiverId } = require("../controller/notificationController");
 const { 
     addbooking, 
@@ -15,6 +15,7 @@ const {
     createBooking,
     getBookingDetails,
     updateBooking,
+    updateTowingCharge,
     updateBookingStatus,
     verifyBookingOTP,
     sendBookingOTP,
@@ -61,6 +62,9 @@ router.put('/updatebooking/:id', requireBookingParticipant(req => req.params.id)
 router.post('/createBooking', requireCustomer, createBooking)
 router.get('/getBookingDetails/:id', requireBookingParticipant(req => req.params.id), getBookingDetails)
 router.post('/updateBooking', requireBookingParticipant(req => req.body.bookingId), updateBooking)
+// Towing charge — dealer handling the booking or an admin, pre-payment only.
+// Recomputes the whole pricing breakdown server-side; see controller/booking.js.
+router.post('/:bookingId/towing-charge', requireBookingParticipant(req => req.params.bookingId), requireActorRoleAny("dealer", "admin"), updateTowingCharge)
 router.post('/updateBookingStatus/:bookingId/status', requireBookingParticipant(req => req.params.bookingId), updateBookingStatus)
 router.post('/sendBookingOTP', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), sendBookingOTP)
 router.post('/sendBookingMobile', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), sendOtpToMobile)

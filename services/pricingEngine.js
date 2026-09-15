@@ -2,7 +2,7 @@
  * Pricing Engine — single source of truth for all monetary calculations.
  *
  * Formula:
- *   Subtotal        = Service Amount + Pickup Charges + Drop Charges
+ *   Subtotal        = Service Amount + Pickup Charges + Drop Charges + Towing Charge
  *   Tax             = Subtotal × Dealer.tax %
  *   Customer Total  = Subtotal + Tax
  *   Commission      = Subtotal × Dealer.commission %
@@ -11,8 +11,10 @@
  * Tax is collected from the customer but belongs to platform accounting —
  * it is never part of Dealer Earnings.
  *
- * No values here are ever hardcoded — tax %, commission %, pickupCharges and
- * dropCharges always come from the Dealer document passed in by the caller.
+ * No values here are ever hardcoded — tax %, commission %, pickupCharges,
+ * dropCharges and towingCharges always come from the Dealer document passed
+ * in by the caller (or, for towing, from an explicit dealer/admin override on
+ * an existing booking — see resolveTowingCharge()).
  *
  * Every caller in the backend (booking creation, live quote, bill generation,
  * wallet settlement) MUST route through this module instead of re-deriving
@@ -27,6 +29,30 @@ const TRANSPORT_OPTIONS = Object.freeze({
   DROP_ONLY: "DROP_ONLY",
   PICKUP_AND_DROP: "PICKUP_AND_DROP",
 });
+
+/**
+ * Condition the customer declares for their bike during booking. Only
+ * RIDEABLE can reach the garage under its own power — the other two require
+ * the bike to be towed, which is what drives the towing charge below.
+ *
+ * RIDEABLE is the default for any booking (and every booking created before
+ * this field existed), so legacy bookings read back as "no towing required".
+ */
+const BIKE_CONDITIONS = Object.freeze({
+  RIDEABLE: "RIDEABLE",
+  NOT_RIDEABLE: "NOT_RIDEABLE",
+  COMPLETELY_DEAD: "COMPLETELY_DEAD",
+});
+
+const TOWING_REQUIRED_CONDITIONS = Object.freeze([
+  BIKE_CONDITIONS.NOT_RIDEABLE,
+  BIKE_CONDITIONS.COMPLETELY_DEAD,
+]);
+
+// Upper bound for a manually entered towing charge. Purely a typo guard
+// (a dealer fat-fingering an extra zero); the real authority on what is
+// charged stays the dealer's configured rate.
+const MAX_TOWING_CHARGE = 100000;
 
 class PricingError extends Error {
   constructor(message, code = "PRICING_ERROR") {
@@ -122,6 +148,67 @@ function computeTransportCharges({ transportOption, dealer }) {
 }
 
 /**
+ * Normalise whatever a client sent as `bikeCondition` into a supported value.
+ * Missing/empty means RIDEABLE — that is what every booking created before
+ * this field existed implicitly was, so legacy clients keep working unchanged.
+ * Anything else present but unrecognised is a client bug, not a default.
+ */
+function normalizeBikeCondition(bikeCondition) {
+  if (bikeCondition === undefined || bikeCondition === null || bikeCondition === "") {
+    return BIKE_CONDITIONS.RIDEABLE;
+  }
+  const value = String(bikeCondition).trim().toUpperCase();
+  if (!BIKE_CONDITIONS[value]) {
+    throw new PricingError(
+      `Unsupported bikeCondition: ${bikeCondition}`,
+      "INVALID_BIKE_CONDITION"
+    );
+  }
+  return value;
+}
+
+/**
+ * Towing is required by the declared condition of the bike, never by a
+ * client-supplied boolean — a customer app could otherwise flip the flag off
+ * and dodge the charge. Always derive it here.
+ */
+function isTowingRequired(bikeCondition) {
+  return TOWING_REQUIRED_CONDITIONS.includes(normalizeBikeCondition(bikeCondition));
+}
+
+/**
+ * Resolve the towing charge for a booking.
+ *
+ * - No towing required -> always 0, whatever anyone passes.
+ * - `override` (a dealer/admin editing the charge on an existing booking,
+ *   see controller/booking.js#updateTowingCharge) wins when supplied.
+ * - Otherwise it is the dealer's configured rate, and only when the dealer
+ *   actually offers towing. A dealer who hasn't enabled it starts at 0 and
+ *   can add the real amount later once they have quoted the customer —
+ *   the booking is never blocked over it.
+ */
+function resolveTowingCharge({ towingRequired, dealer, override = null }) {
+  if (!towingRequired) return 0;
+
+  if (override !== null && override !== undefined && override !== "") {
+    const value = Number(override);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new PricingError("Towing charge must be a non-negative number", "INVALID_TOWING_CHARGE");
+    }
+    if (value > MAX_TOWING_CHARGE) {
+      throw new PricingError(
+        `Towing charge cannot exceed ₹${MAX_TOWING_CHARGE}`,
+        "TOWING_CHARGE_TOO_LARGE"
+      );
+    }
+    return round2(value);
+  }
+
+  if (!dealer?.providesTowing) return 0;
+  return round2(Number(dealer?.towingCharges) || 0);
+}
+
+/**
  * Compute the discount a promo code is worth against a given subtotal. Pure —
  * takes an already-fetched PromoCode document/lean object and performs no DB
  * access itself. Usage-limit / per-user-limit checks require querying
@@ -186,12 +273,31 @@ function computePromoDiscountAmount({ promo, subtotal }) {
  * fields onto the returned breakdown so applyBreakdownToBooking() can lock
  * them onto the Booking at creation time.
  */
-function computePriceBreakdown({ serviceAmount, transportOption, dealer, discountAmount = 0, promo = null }) {
+function computePriceBreakdown({
+  serviceAmount,
+  transportOption,
+  dealer,
+  discountAmount = 0,
+  promo = null,
+  bikeCondition = BIKE_CONDITIONS.RIDEABLE,
+  towingChargeOverride = null,
+}) {
   const amount = round2(Number(serviceAmount) || 0);
 
   const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
 
-  const subtotal = round2(amount + pickupCharges + dropCharges);
+  // Towing sits alongside pickup/drop: a transport charge that is part of the
+  // subtotal, so it is taxed and commissioned exactly like they are, and shows
+  // as its own line on the bill rather than being folded into the service.
+  const condition = normalizeBikeCondition(bikeCondition);
+  const towingRequired = isTowingRequired(condition);
+  const towingCharge = resolveTowingCharge({
+    towingRequired,
+    dealer,
+    override: towingChargeOverride,
+  });
+
+  const subtotal = round2(amount + pickupCharges + dropCharges + towingCharge);
 
   const taxRate = Number(dealer?.tax) || 0;
   const taxAmount = round2((subtotal * taxRate) / 100);
@@ -224,6 +330,9 @@ function computePriceBreakdown({ serviceAmount, transportOption, dealer, discoun
     serviceAmount: amount,
     pickupCharges: round2(pickupCharges),
     dropCharges: round2(dropCharges),
+    bikeCondition: condition,
+    towingRequired,
+    towingCharge,
     subtotal,
     taxRate,
     taxAmount,
@@ -254,6 +363,7 @@ const PRICING_SNAPSHOT_FIELDS = Object.freeze([
   "serviceAmount",
   "pickupCharges",
   "dropCharges",
+  "towingCharge",
   "subtotal",
   "taxRate",
   "taxAmount",
@@ -298,6 +408,7 @@ function applyBreakdownToBooking(bookingDoc, breakdown) {
   bookingDoc.serviceAmount = breakdown.serviceAmount;
   bookingDoc.pickupCharges = breakdown.pickupCharges;
   bookingDoc.dropCharges = breakdown.dropCharges;
+  bookingDoc.towingCharge = breakdown.towingCharge;
   bookingDoc.subtotal = breakdown.subtotal;
   bookingDoc.taxRate = breakdown.taxRate;
   bookingDoc.taxAmount = breakdown.taxAmount;
@@ -365,6 +476,9 @@ function applyRewardDiscount(bookingDoc, additionalDiscount) {
 module.exports = {
   PRICING_VERSION,
   TRANSPORT_OPTIONS,
+  BIKE_CONDITIONS,
+  TOWING_REQUIRED_CONDITIONS,
+  MAX_TOWING_CHARGE,
   PricingError,
   PRICING_SNAPSHOT_FIELDS,
   PRICING_WRITE_BYPASS_FLAG,
@@ -372,6 +486,9 @@ module.exports = {
   resolvePriceForCC,
   resolveServiceAmount,
   computeTransportCharges,
+  normalizeBikeCondition,
+  isTowingRequired,
+  resolveTowingCharge,
   computePromoDiscountAmount,
   computePriceBreakdown,
   applyBreakdownToBooking,

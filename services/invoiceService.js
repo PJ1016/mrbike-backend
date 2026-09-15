@@ -144,6 +144,10 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     const hasPricingSnapshot = Boolean(booking.pricingVersion);
 
     let pickupCharge, dropCharge, taxRate, taxAmount, totalAmount, commissionRate, commissionAmount, dealerEarnings;
+    // Towing only ever exists on a booking with a pricing snapshot — bookings
+    // that predate the snapshot also predate towing entirely, so the legacy
+    // branch below leaves this at 0.
+    let towingCharge = 0;
     // Only ever non-zero when hasPricingSnapshot — bookings without a
     // pricing snapshot predate the promo-code feature entirely.
     let discountAmount = 0;
@@ -151,6 +155,7 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     if (hasPricingSnapshot) {
         pickupCharge = Number(booking.pickupCharges);
         dropCharge = Number(booking.dropCharges);
+        towingCharge = Number(booking.towingCharge) || 0;
         subtotal = Number(booking.subtotal);
         taxRate = Number(booking.taxRate);
         taxAmount = Number(booking.taxAmount);
@@ -186,6 +191,9 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     if (dropCharge > 0) {
         services.push({ name: "Drop Charges", price: dropCharge, quantity: 1, total: dropCharge });
     }
+    if (towingCharge > 0) {
+        services.push({ name: "Towing Charges", price: towingCharge, quantity: 1, total: towingCharge });
+    }
 
     const billNumber = await generateInvoiceNumber();
 
@@ -219,6 +227,7 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         subtotal: subtotal,
         pickup_charges: pickupCharge,
         drop_charges: dropCharge,
+        towing_charge: towingCharge,
         tax_amount: taxAmount,
         tax_rate: taxRate,
         discount_amount: discountAmount,
@@ -341,6 +350,10 @@ function buildInvoiceResponse(bill, { role } = {}) {
         charges: {
             pickupCharge: bill.pickup_charges || 0,
             dropCharge: bill.drop_charges || 0,
+            // 0 for a rideable bike and for every bill issued before towing
+            // existed, so the three invoice templates can render it with the
+            // same `> 0` guard they already use for pickup/drop.
+            towingCharge: bill.towing_charge || 0,
         },
         subtotal: bill.subtotal,
         tax: { rate: bill.tax_rate, amount: bill.tax_amount },

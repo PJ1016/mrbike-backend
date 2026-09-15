@@ -71,6 +71,7 @@ const AutoIncrement = require("mongoose-sequence")(mongoose);
 const {
   PRICING_SNAPSHOT_FIELDS,
   PRICING_WRITE_BYPASS_FLAG,
+  BIKE_CONDITIONS,
   round2,
 } = require("../services/pricingEngine");
 
@@ -155,6 +156,26 @@ const bookingSchema = new mongoose.Schema(
     pickupCharges: { type: Number, default: 0 },
     dropCharges: { type: Number, default: 0 },
 
+    // ── Bike condition & towing requirement ──────────────────────────────────
+    // Declared by the customer during booking. `towingRequired` is always
+    // derived from `bikeCondition` server-side (see pricingEngine.isTowingRequired)
+    // and never accepted from a client. Both are set once at creation and are
+    // not editable afterwards — they are what the customer declared, and the
+    // towing charge is priced off them.
+    //
+    // The RIDEABLE/false defaults are what every booking created before this
+    // feature implicitly was, so existing bookings read back correctly with
+    // no migration.
+    bikeCondition: {
+      type: String,
+      enum: Object.values(BIKE_CONDITIONS),
+      default: BIKE_CONDITIONS.RIDEABLE,
+    },
+    towingRequired: { type: Boolean, default: false },
+    // Optional short note from the customer describing the problem, only
+    // captured when towing is required.
+    towingNote: { type: String, default: null, maxlength: 500 },
+
     // ── Pricing snapshot (services/pricingEngine.js) ──────────────────────────
     // Computed once by pricingEngine.computePriceBreakdown() at booking
     // creation and stored permanently. These values are immutable: later
@@ -166,6 +187,18 @@ const bookingSchema = new mongoose.Schema(
       default: "SELF_VISIT",
     },
     serviceAmount: { type: Number, default: 0 },
+    // Part of the pricing snapshot (and therefore of the subtotal, tax and
+    // commission base), but unlike the other snapshot fields it may be
+    // revised after creation by the dealer/admin while the booking is still
+    // unpaid — see controller/booking.js#updateTowingCharge, which recomputes
+    // the WHOLE breakdown through pricingEngine rather than patching a total.
+    towingCharge: { type: Number, default: 0 },
+    towingChargeUpdatedAt: { type: Date, default: null },
+    towingChargeUpdatedByRole: {
+      type: String,
+      enum: ["dealer", "admin", null],
+      default: null,
+    },
     subtotal: { type: Number, default: 0 },
     taxRate: { type: Number, default: 0 },
     taxAmount: { type: Number, default: 0 },

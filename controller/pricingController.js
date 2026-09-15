@@ -5,6 +5,8 @@ const {
   computePriceBreakdown,
   computeTransportCharges,
   resolveServiceAmount,
+  resolveTowingCharge,
+  isTowingRequired,
   round2,
   PricingError,
 } = require("../services/pricingEngine");
@@ -21,13 +23,17 @@ const { validatePromoCode } = require("../services/promoService");
 // promo is actually locked onto a booking, and services/invoiceService.js
 // for where its usage is finally counted, only after payment succeeds).
 //
-// Body: { dealerId, serviceIds: [AdminServiceId], additionalServiceIds?, transportOption, bikeCC, promoCode? }
+// Body: { dealerId, serviceIds: [AdminServiceId], additionalServiceIds?, transportOption, bikeCC, promoCode?, bikeCondition? }
+// bikeCondition (RIDEABLE | NOT_RIDEABLE | COMPLETELY_DEAD) is optional and
+// defaults to RIDEABLE, so clients that predate it keep getting the same
+// quote they always did. The two non-rideable values add the dealer's towing
+// charge as its own line in the breakdown.
 // bikeCC is required to resolve per-CC service pricing (AdminService.bikes is
 // keyed by cc) — not called out explicitly in the original spec's input list,
 // but there is no way to price a service without it.
 const getPricingQuote = async (req, res) => {
   try {
-    const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC, promoCode } = req.body;
+    const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC, promoCode, bikeCondition } = req.body;
 
     if (!dealerId) {
       return res.status(400).json({ success: false, message: "dealerId is required" });
@@ -43,7 +49,7 @@ const getPricingQuote = async (req, res) => {
     }
 
     const dealer = await Vendor.findById(dealerId)
-      .select("tax commission pickupCharges dropCharges providesPickup providesDrop")
+      .select("tax commission pickupCharges dropCharges providesPickup providesDrop providesTowing towingCharges")
       .lean();
     if (!dealer) {
       return res.status(404).json({ success: false, message: "Dealer not found" });
@@ -79,16 +85,20 @@ const getPricingQuote = async (req, res) => {
       } catch (_) {
         userId = undefined;
       }
-      // Resolve the real subtotal (service + pickup/drop) the same way
+      // Resolve the real subtotal (service + pickup/drop + towing) the same way
       // computePriceBreakdown will, so the minOrder/discount check below
       // matches exactly what the breakdown call further down computes.
       const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
-      const subtotal = round2(serviceAmount + pickupCharges + dropCharges);
+      const towingCharge = resolveTowingCharge({
+        towingRequired: isTowingRequired(bikeCondition),
+        dealer,
+      });
+      const subtotal = round2(serviceAmount + pickupCharges + dropCharges + towingCharge);
       const validated = await validatePromoCode({ code: promoCode, userId, subtotal });
       promo = validated.promo;
     }
 
-    const breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer, promo });
+    const breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer, promo, bikeCondition });
 
     return res.status(200).json({ success: true, data: breakdown });
   } catch (error) {

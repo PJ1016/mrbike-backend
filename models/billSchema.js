@@ -63,6 +63,14 @@ const billSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    // Towing charge, billed as its own line item (see the `services` array
+    // above, which also carries a "Towing Charges" row) so the customer can
+    // see exactly what they were charged for towing. 0 on every bill for a
+    // rideable bike and on every bill issued before this feature existed.
+    towing_charge: {
+        type: Number,
+        default: 0
+    },
     tax_amount: {
         type: Number,
         default: 0

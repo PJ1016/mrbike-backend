@@ -391,6 +391,7 @@ const getTransactionDetails = async (req, res) => {
               totalBill: booking.totalBill,
               pickupCharges: booking.pickupCharges || 0,
               dropCharges: booking.dropCharges || 0,
+              towingCharge: booking.towingCharge || 0,
               tax: booking.tax,
               paymentMethod: booking.payment_method,
               serviceSummary: booking.serviceSummary || [],
