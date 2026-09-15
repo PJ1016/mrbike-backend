@@ -12,6 +12,9 @@ const upload = createS3Upload("banners")
 router.post("/addbanner", requireAdmin, upload.single("images"), addbanner)
 router.get("/bannerlist", bannerlist)
 router.delete("/deletebanner", requireAdmin, deletebanner)
-router.put("/editbanner", requireAdmin, editbanner)
+// Same multipart field name as addbanner ("images"), so an edit can swap the
+// artwork. multer passes a plain JSON body straight through, so an edit that
+// only changes text fields still works unchanged.
+router.put("/editbanner", requireAdmin, upload.single("images"), editbanner)
 
 module.exports = router
