@@ -32,7 +32,17 @@ const appBannerSchema = new mongoose.Schema(
 );
 
 appBannerSchema.index({ bannerType: 1, isDeleted: 1, displayOrder: 1 });
-appBannerSchema.index({ legacyBannerId: 1 }, { unique: true, sparse: true });
+// One AppBanner per synced legacy banner. This MUST be a partial index, not a
+// sparse one: sparse only skips documents that are missing the field, and
+// `legacyBannerId` has `default: null`, so Mongoose writes an explicit null on
+// every banner created from the admin App Content drawer. Under the old sparse
+// index the first such banner took the null slot and every later one failed
+// with E11000, surfacing as a 500 from createAppBanner. Keying the constraint
+// off "is actually an ObjectId" leaves all non-synced banners out of the index.
+appBannerSchema.index(
+  { legacyBannerId: 1 },
+  { unique: true, partialFilterExpression: { legacyBannerId: { $type: "objectId" } } }
+);
 
 module.exports = mongoose.model("AppBanner", appBannerSchema);
 module.exports.BANNER_TYPES = BANNER_TYPES;

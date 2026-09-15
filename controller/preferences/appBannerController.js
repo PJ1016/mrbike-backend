@@ -117,6 +117,16 @@ const createAppBanner = async (req, res) => {
     return res.status(201).json({ success: true, message: "Banner created successfully", data: banner });
   } catch (error) {
     console.error("createAppBanner error:", error);
+    // A unique-index collision is a constraint the admin can act on, not a
+    // server fault. Reporting it as a bare 500 is what made the legacyBannerId
+    // index bug so hard to place from the admin UI alone.
+    if (error?.code === 11000) {
+      const field = Object.keys(error.keyPattern || {}).join(", ") || "a unique field";
+      return res.status(409).json({
+        success: false,
+        message: `Banner not created — another banner already uses the same ${field}.`,
+      });
+    }
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
