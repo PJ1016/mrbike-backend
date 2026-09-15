@@ -25,7 +25,7 @@ async function auditPaymentIntegrity() {
   for (const payment of successfulPayments) {
     const [booking, bill, walletSettlement] = await Promise.all([
       Booking.findById(payment.booking_id)
-        .select("payment_status payment_verified status walletSettled payment_method dealerEarnings commissionAmount")
+        .select("payment_status payment_verified status walletSettled payment_method dealerEarnings commissionAmount commissionTaxAmount platformFee")
         .lean(),
       Bill.findOne({ booking_id: payment.booking_id }).select("_id").lean(),
       Wallet.findOne({
@@ -36,8 +36,13 @@ async function auditPaymentIntegrity() {
     const tasks = [];
     if (!booking || booking.payment_status !== "completed" || !booking.payment_verified) tasks.push("BOOKING_SYNC");
     if (!bill) tasks.push("INVOICE");
+    // Mirrors the debit/credit helper/walletSettlement.js actually writes —
+    // a CASH settlement recovers the commission AND the platform fee the
+    // dealer collected on MR Bike's behalf.
     const expectedSettlementAmount = booking?.payment_method === "CASH"
-      ? Number(booking?.commissionAmount || 0)
+      ? Number(booking?.commissionAmount || 0) +
+        Number(booking?.commissionTaxAmount || 0) +
+        Number(booking?.platformFee || 0)
       : Number(booking?.dealerEarnings || 0);
     if (!booking?.walletSettled || (expectedSettlementAmount > 0 && !walletSettlement)) tasks.push("WALLET");
     if (
@@ -120,7 +125,9 @@ async function processTask(task) {
           transaction_type: { $in: ["settlement_online", "settlement_cash"] },
         });
         const expectedAmount = booking.payment_method === "CASH"
-          ? Number(booking.commissionAmount || 0)
+          ? Number(booking.commissionAmount || 0) +
+            Number(booking.commissionTaxAmount || 0) +
+            Number(booking.platformFee || 0)
           : Number(booking.dealerEarnings || 0);
         if (expectedAmount > 0 && !existingSettlement) {
           await Booking.updateOne({ _id: booking._id, walletSettled: true }, { $set: { walletSettled: false } });

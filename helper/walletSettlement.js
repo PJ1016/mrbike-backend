@@ -17,6 +17,18 @@ const mongoose = require("mongoose");
  * CASH:   Dealer received cash (the full Customer Total) → debit dealer
  *         the Commission owed to the platform, leaving them with Dealer Earnings.
  *
+ * "Commission owed" always means Commission + GST on that commission — MR
+ * Bike's commission is a taxable supply to the garage, so a ₹100 commission
+ * at 18% leaves the dealer as ₹118. Dealer Earnings already has both
+ * subtracted (services/pricingEngine.js), so the online credit needs no
+ * adjustment; only the cash debit has to add the tax back on explicitly.
+ *
+ * On a CASH booking the cash the dealer collects also contains MR Bike's
+ * platform fee — it is inside customerTotal but was never the dealer's money —
+ * so the debit is Commission + Platform Fee. Online there is nothing to
+ * recover: the platform already holds that fee, and the dealer is credited
+ * their earnings either way.
+ *
  * Idempotent: booking.walletSettled flag prevents running twice.
  *
  * @param {string|ObjectId} bookingId
@@ -53,13 +65,23 @@ async function settleBookingWalletInternal(bookingId, paymentMethod, session) {
   const hasPricingSnapshot = Boolean(bookingDoc.pricingVersion);
 
   let orderAmount, taxAmount, customerTotal, commissionRate, commissionAmount, dealerEarnings;
+  // 0 for every booking taken before the platform fee existed or while it was
+  // switched off, which is what keeps the legacy branch below correct.
+  let platformFee = 0;
+  // Same story for GST on the commission: bookings that predate it settled
+  // without it and must keep settling without it.
+  let commissionTaxRate = 0;
+  let commissionTaxAmount = 0;
 
   if (hasPricingSnapshot) {
     orderAmount = Number(bookingDoc.totalBill); // Subtotal (service + pickup + drop)
     taxAmount = Number(bookingDoc.tax);
     customerTotal = Number(bookingDoc.customerTotal);
+    platformFee = Number(bookingDoc.platformFee) || 0;
     commissionRate = Number(bookingDoc.commissionRate);
     commissionAmount = Number(bookingDoc.commissionAmount);
+    commissionTaxRate = Number(bookingDoc.commissionTaxRate) || 0;
+    commissionTaxAmount = Number(bookingDoc.commissionTaxAmount) || 0;
     dealerEarnings = Number(bookingDoc.dealerEarnings);
   } else {
     orderAmount = parseFloat(bookingDoc.totalBill) || 0;
@@ -82,13 +104,24 @@ async function settleBookingWalletInternal(bookingId, paymentMethod, session) {
     txnAmount = dealerEarnings;
     newBalance = parseFloat((preBalance + txnAmount).toFixed(2));
     txnType = "Credit";
-    note = `Online settlement | Customer Total ₹${customerTotal} | Commission ${commissionRate}% of ₹${orderAmount} = ₹${commissionAmount} | Net credit ₹${txnAmount}`;
+    note =
+      `Online settlement | Customer Total ₹${customerTotal} | ` +
+      `Commission ${commissionRate}% of ₹${orderAmount} = ₹${commissionAmount}` +
+      (commissionTaxAmount > 0 ? ` | GST ${commissionTaxRate}% on commission = ₹${commissionTaxAmount}` : "") +
+      ` | Net credit ₹${txnAmount}`;
   } else if (paymentMethod === "CASH") {
-    // Dealer collected cash — debit the commission owed to platform
-    txnAmount = commissionAmount;
+    // Dealer collected the full Customer Total in cash — debit what of it
+    // belongs to the platform: the commission, plus the platform fee the
+    // customer paid MR Bike but handed to the dealer along with the rest.
+    txnAmount = parseFloat((commissionAmount + commissionTaxAmount + platformFee).toFixed(2));
     newBalance = parseFloat((preBalance - txnAmount).toFixed(2));
     txnType = "Debit";
-    note = `Cash commission | Customer Total ₹${customerTotal} | Commission ${commissionRate}% of ₹${orderAmount} = ₹${txnAmount}`;
+    note =
+      `Cash commission | Customer Total ₹${customerTotal} | ` +
+      `Commission ${commissionRate}% of ₹${orderAmount} = ₹${commissionAmount}` +
+      (commissionTaxAmount > 0 ? ` | GST ${commissionTaxRate}% on commission = ₹${commissionTaxAmount}` : "") +
+      (platformFee > 0 ? ` | Platform fee ₹${platformFee}` : "") +
+      ` | Total debit ₹${txnAmount}`;
   } else {
     throw new Error(`Unknown paymentMethod: ${paymentMethod}`);
   }
@@ -118,8 +151,11 @@ async function settleBookingWalletInternal(bookingId, paymentMethod, session) {
     orderAmount,
     taxAmount,
     customerTotal,
+    platformFee,
     commissionRate,
     commissionAmount,
+    commissionTaxRate,
+    commissionTaxAmount,
     dealerEarnings,
     txnAmount,
     preBalance,

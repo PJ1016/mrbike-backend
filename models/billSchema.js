@@ -34,9 +34,21 @@ const billSchema = new mongoose.Schema({
     dealer_details: {
         name: String,
         address: String,
+        // Kept on the stored bill for internal/audit lookups only. It is
+        // deliberately NOT part of the invoice API response — the number
+        // printed on a customer's invoice is MR Bike's support number, see
+        // `support_details` below and invoiceService#buildInvoiceResponse.
         phone: String,
         gst_number: String,
         logo_url: String
+    },
+    // MR Bike's own support contact, snapshotted at invoice time from
+    // AppSettings so a later change to the support number never rewrites an
+    // invoice that has already been issued. Bills created before this field
+    // existed fall back to the current support number when rendered.
+    support_details: {
+        phone: String,
+        email: String
     },
     bike_details: {
         model: String,
@@ -75,6 +87,18 @@ const billSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    // MR Bike's platform/convenience fee — already included in total_amount,
+    // but never in `subtotal`, `commission_amount` or `dealer_earnings`,
+    // because it is the platform's charge and not the garage's. 0 on every
+    // bill issued before the fee existed or while it is switched off.
+    platform_fee: {
+        type: Number,
+        default: 0
+    },
+    platform_fee_label: {
+        type: String,
+        default: null
+    },
     tax_rate: {
         type: Number,
         default: 0
@@ -100,6 +124,18 @@ const billSchema = new mongoose.Schema({
         default: 0
     },
     commission_amount: {
+        type: Number,
+        default: 0
+    },
+    // GST MR Bike charges the dealer on that commission. Already subtracted
+    // from `dealer_earnings`; recovered from the dealer together with the
+    // commission (₹100 commission at 18% = ₹118 deducted). Never part of what
+    // the customer paid. 0 on every bill issued before this existed.
+    commission_tax_rate: {
+        type: Number,
+        default: 0
+    },
+    commission_tax_amount: {
         type: Number,
         default: 0
     },

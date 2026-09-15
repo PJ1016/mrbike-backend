@@ -11,6 +11,7 @@ const {
   PricingError,
 } = require("../services/pricingEngine");
 const { validatePromoCode } = require("../services/promoService");
+const { getPricingSettings } = require("../services/appSettingsService");
 
 // POST /pricing/quote
 //
@@ -98,7 +99,21 @@ const getPricingQuote = async (req, res) => {
       promo = validated.promo;
     }
 
-    const breakdown = computePriceBreakdown({ serviceAmount, transportOption, dealer, promo, bikeCondition });
+    // MR Bike's own admin-configured numbers — the platform fee the customer
+    // pays, and the GST rate on the commission the dealer pays. Read here so
+    // the quote is the same one createBooking() will lock onto the booking a
+    // moment later.
+    const { platformFeeConfig, commissionTaxRate } = await getPricingSettings();
+
+    const breakdown = computePriceBreakdown({
+      serviceAmount,
+      transportOption,
+      dealer,
+      promo,
+      bikeCondition,
+      platformFeeConfig,
+      commissionTaxRate,
+    });
 
     return res.status(200).json({ success: true, data: breakdown });
   } catch (error) {

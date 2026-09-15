@@ -3,6 +3,12 @@ const Bill = require("../models/billSchema");
 const Dealer = require("../models/dealerModel");
 const InvoiceCounter = require("../models/invoiceCounterModel");
 const { PRICING_WRITE_BYPASS_FLAG, round2 } = require("./pricingEngine");
+const {
+    MR_BIKE_SUPPORT_PHONE,
+    MR_BIKE_SUPPORT_EMAIL,
+    DEFAULT_PLATFORM_FEE_LABEL,
+    getSupportContact,
+} = require("./appSettingsService");
 
 // Sequential, atomic, per-year invoice numbers (e.g. INV-2026-000001).
 // findOneAndUpdate($inc, upsert) is a single atomic Mongo op, so concurrent
@@ -144,6 +150,10 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     const hasPricingSnapshot = Boolean(booking.pricingVersion);
 
     let pickupCharge, dropCharge, taxRate, taxAmount, totalAmount, commissionRate, commissionAmount, dealerEarnings;
+    // GST MR Bike charges the dealer on its commission. Like the platform fee
+    // below, it only exists on bookings that carry a pricing snapshot.
+    let commissionTaxRate = 0;
+    let commissionTaxAmount = 0;
     // Towing only ever exists on a booking with a pricing snapshot — bookings
     // that predate the snapshot also predate towing entirely, so the legacy
     // branch below leaves this at 0.
@@ -151,6 +161,10 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     // Only ever non-zero when hasPricingSnapshot — bookings without a
     // pricing snapshot predate the promo-code feature entirely.
     let discountAmount = 0;
+    // Likewise: a booking without a pricing snapshot predates the platform
+    // fee, so the legacy branch below leaves both of these alone.
+    let platformFee = 0;
+    let platformFeeLabel = null;
 
     if (hasPricingSnapshot) {
         pickupCharge = Number(booking.pickupCharges);
@@ -160,12 +174,19 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         taxRate = Number(booking.taxRate);
         taxAmount = Number(booking.taxAmount);
         discountAmount = Number(booking.discountAmount) || 0;
+        platformFee = Number(booking.platformFee) || 0;
+        platformFeeLabel = platformFee > 0
+            ? booking.platformFeeLabel || DEFAULT_PLATFORM_FEE_LABEL
+            : null;
         // total_amount / "Total Paid" is what the customer actually paid —
         // customerTotal minus whatever discount (promo) was applied, i.e.
-        // the same amountDue virtual payment.js charges against.
+        // the same amountDue virtual payment.js charges against. The platform
+        // fee is already inside customerTotal, so it needs no adding here.
         totalAmount = round2(Number(booking.customerTotal) - discountAmount);
         commissionRate = Number(booking.commissionRate);
         commissionAmount = Number(booking.commissionAmount);
+        commissionTaxRate = Number(booking.commissionTaxRate) || 0;
+        commissionTaxAmount = Number(booking.commissionTaxAmount) || 0;
         dealerEarnings = Number(booking.dealerEarnings);
     } else {
         const dealer = booking.dealer_id;
@@ -213,6 +234,7 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
             phone: booking.user_id.phone,
         },
         dealer_details: resolveDealerDetails(booking.dealer_id),
+        support_details: await getSupportContact(),
         bike_details: {
             model: booking.userBike_id?.model || "N/A",
             // UserBike stores the plate as `plate_number`; `registration_number`
@@ -230,12 +252,16 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
         towing_charge: towingCharge,
         tax_amount: taxAmount,
         tax_rate: taxRate,
+        platform_fee: platformFee,
+        platform_fee_label: platformFeeLabel,
         discount_amount: discountAmount,
         promo_code: booking.promoCode || null,
         promo_name: booking.promoName || null,
         total_amount: totalAmount,
         commission_rate: commissionRate,
         commission_amount: commissionAmount,
+        commission_tax_rate: commissionTaxRate,
+        commission_tax_amount: commissionTaxAmount,
         dealer_earnings: dealerEarnings,
         payment_details: {
             payment_method: paymentMeta.payment_method || "online",
@@ -285,6 +311,22 @@ async function getOrCreateInvoice(bookingId, paymentMeta = {}) {
     return bill;
 }
 
+// A customer's phone number is theirs, not the garage's. The dealer gets the
+// booking's own contact channels (pickup OTP, in-app chat, the platform's
+// support line) and never the raw digits off the invoice, so the number is
+// masked down to its last four before it reaches them — enough to match a
+// number they already have on a job card, useless for anything else.
+//
+// Nothing here is a substitute for the server-side rule that the dealer's own
+// copy is the only one they can fetch (requireBookingParticipant); it is the
+// second layer, so a leak can't happen through the invoice shape alone.
+function maskPhone(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    if (!digits) return null;
+    if (digits.length <= 4) return "X".repeat(digits.length);
+    return `${"X".repeat(digits.length - 4)}${digits.slice(-4)}`;
+}
+
 const PLACEHOLDER_REGISTRATIONS = new Set(["", "-", "N/A", "NA", "NONE", "NULL", "UNDEFINED"]);
 
 function isMissingRegistration(value) {
@@ -325,13 +367,29 @@ function buildInvoiceResponse(bill, { role } = {}) {
         dealer: {
             name: bill.dealer_details?.name || null,
             address: bill.dealer_details?.address || null,
-            phone: bill.dealer_details?.phone || null,
             gstNumber: bill.dealer_details?.gst_number || null,
             logoUrl: bill.dealer_details?.logo_url || null,
         },
+        // The only phone number an invoice ever carries. The dealer's own
+        // number is withheld from this payload entirely (it stays on the
+        // stored bill for internal lookups) so no template can print it —
+        // customers with an invoice question must reach MR Bike, not the
+        // garage. Bills issued before support_details existed fall back to
+        // the number this build ships with.
+        support: {
+            phone: bill.support_details?.phone || MR_BIKE_SUPPORT_PHONE,
+            email: bill.support_details?.email || MR_BIKE_SUPPORT_EMAIL,
+        },
         customer: {
             name: bill.customer_details?.name || null,
-            mobile: bill.customer_details?.phone || null,
+            // Full digits only for the customer reading their own invoice.
+            // The dealer sees a masked number; the admin panel keeps the real
+            // one because support has to be able to call the customer back.
+            // The customer's email is on no invoice at all, for any role.
+            mobile:
+                role === "dealer"
+                    ? maskPhone(bill.customer_details?.phone)
+                    : bill.customer_details?.phone || null,
         },
         bike: {
             company: bill.bike_details?.company || null,
@@ -357,17 +415,34 @@ function buildInvoiceResponse(bill, { role } = {}) {
         },
         subtotal: bill.subtotal,
         tax: { rate: bill.tax_rate, amount: bill.tax_amount },
+        // MR Bike's convenience fee. Already part of `totalPaid`, so every
+        // template must render it for the invoice to add up. `amount` is 0
+        // whenever the fee didn't apply, which is the guard templates use.
+        platformFee: {
+            amount: bill.platform_fee || 0,
+            label: bill.platform_fee_label || DEFAULT_PLATFORM_FEE_LABEL,
+        },
         discount: bill.promo_code
             ? { code: bill.promo_code, name: bill.promo_name || null, amount: bill.discount_amount || 0 }
             : null,
         totalPaid: bill.total_amount,
-        // The customer's copy shows only the platform fee. `dealerPayout` is
-        // settlement data between MR Bike and the dealer, so it is withheld
-        // from the User App entirely rather than merely hidden client-side;
-        // the Dealer App and Admin Panel still receive it.
+        // Commission — MR Bike's cut of the garage's own amount, and a
+        // different thing entirely from the customer-facing `platformFee`
+        // above. `dealerPayout` is settlement data between MR Bike and the
+        // dealer, so it is withheld from the User App entirely rather than
+        // merely hidden client-side; the Dealer App and Admin Panel still
+        // receive it.
         settlement: {
             commissionRate: bill.commission_rate,
             commissionAmount: bill.commission_amount,
+            // GST on that commission, and the two added together — what is
+            // actually recovered from the dealer. 0 on bills issued before
+            // the tax existed, which is the guard the templates render behind.
+            commissionTaxRate: bill.commission_tax_rate || 0,
+            commissionTaxAmount: bill.commission_tax_amount || 0,
+            commissionTotal: round2(
+                (bill.commission_amount || 0) + (bill.commission_tax_amount || 0)
+            ),
             ...(role === "customer" ? {} : { dealerPayout: bill.dealer_earnings }),
         },
     };

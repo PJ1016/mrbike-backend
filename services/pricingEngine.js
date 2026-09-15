@@ -4,17 +4,35 @@
  * Formula:
  *   Subtotal        = Service Amount + Pickup Charges + Drop Charges + Towing Charge
  *   Tax             = Subtotal × Dealer.tax %
- *   Customer Total  = Subtotal + Tax
+ *   Platform Fee    = flat amount configured by admin (AppSettings)
+ *   Customer Total  = Subtotal + Tax + Platform Fee
  *   Commission      = Subtotal × Dealer.commission %
- *   Dealer Earnings = Subtotal − Commission
+ *   Commission Tax  = Commission × commissionTaxRate %   (GST on commission)
+ *   Dealer Earnings = Subtotal − Commission − Commission Tax
+ *
+ * MR Bike's commission is itself a taxable supply to the garage, so GST is
+ * charged on top of it and recovered from the dealer along with it: a ₹100
+ * commission at 18% is a ₹118 deduction. That tax is charged BY the platform
+ * TO the dealer and never reaches the customer's total — it is a different
+ * thing entirely from `Tax` above, which is the customer's tax on the
+ * garage's service.
  *
  * Tax is collected from the customer but belongs to platform accounting —
  * it is never part of Dealer Earnings.
  *
+ * The Platform Fee sits OUTSIDE the subtotal on purpose: it is MR Bike's own
+ * convenience charge, not the garage's, so it is never taxed at the dealer's
+ * rate, never enters the commission base, and never moves Dealer Earnings.
+ * It is admin-configured globally (services/appSettingsService.js), never
+ * per-dealer, and is snapshotted onto the booking like every other number
+ * here so changing the setting can't re-price an existing booking.
+ *
  * No values here are ever hardcoded — tax %, commission %, pickupCharges,
  * dropCharges and towingCharges always come from the Dealer document passed
  * in by the caller (or, for towing, from an explicit dealer/admin override on
- * an existing booking — see resolveTowingCharge()).
+ * an existing booking — see resolveTowingCharge()), and the platform fee
+ * always comes from the `platformFeeConfig` the caller reads out of
+ * AppSettings, as does the commission tax rate.
  *
  * Every caller in the backend (booking creation, live quote, bill generation,
  * wallet settlement) MUST route through this module instead of re-deriving
@@ -53,6 +71,17 @@ const TOWING_REQUIRED_CONDITIONS = Object.freeze([
 // (a dealer fat-fingering an extra zero); the real authority on what is
 // charged stays the dealer's configured rate.
 const MAX_TOWING_CHARGE = 100000;
+
+// Same idea for the admin-configured platform fee — a flat convenience fee
+// above this is a mistyped amount, not a business decision. Kept in sync with
+// services/appSettingsService.js#MAX_PLATFORM_FEE, which guards the write.
+const MAX_PLATFORM_FEE = 10000;
+
+const DEFAULT_PLATFORM_FEE_LABEL = "Platform Fee";
+
+// GST on commission is a percentage, so anything outside 0–100 is a data
+// error rather than a rate.
+const MAX_COMMISSION_TAX_RATE = 100;
 
 class PricingError extends Error {
   constructor(message, code = "PRICING_ERROR") {
@@ -209,6 +238,82 @@ function resolveTowingCharge({ towingRequired, dealer, override = null }) {
 }
 
 /**
+ * Resolve MR Bike's platform/convenience fee for a booking.
+ *
+ * - `override` wins when supplied. That is how an EXISTING booking keeps the
+ *   fee it was created with: every recompute path (a changed service list, a
+ *   revised towing charge) passes the booking's own stored platformFee back
+ *   in, so the fee is frozen at creation exactly like the rest of the pricing
+ *   snapshot and an admin changing the setting never re-prices old bookings.
+ *   Legacy bookings created before this feature carry 0 and stay at 0.
+ * - Otherwise it is the admin's current flat amount, and only while the fee
+ *   is switched on. No config, or the fee switched off, means no fee at all.
+ */
+function resolvePlatformFee({ platformFeeConfig = null, override = null }) {
+  if (override !== null && override !== undefined && override !== "") {
+    const value = Number(override);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new PricingError(
+        "Platform fee must be a non-negative number",
+        "INVALID_PLATFORM_FEE"
+      );
+    }
+    if (value > MAX_PLATFORM_FEE) {
+      throw new PricingError(
+        `Platform fee cannot exceed ₹${MAX_PLATFORM_FEE}`,
+        "PLATFORM_FEE_TOO_LARGE"
+      );
+    }
+    return round2(value);
+  }
+
+  if (!platformFeeConfig?.enabled) return 0;
+
+  const amount = Number(platformFeeConfig.amount) || 0;
+  if (amount < 0) return 0;
+  return round2(Math.min(amount, MAX_PLATFORM_FEE));
+}
+
+/**
+ * The label the customer app prints next to the platform fee. Only ever
+ * meaningful when the fee itself is non-zero.
+ */
+function resolvePlatformFeeLabel({ platformFee, platformFeeConfig = null, override = null }) {
+  if (!platformFee) return null;
+  const label = String(override || platformFeeConfig?.label || "").trim();
+  return label || DEFAULT_PLATFORM_FEE_LABEL;
+}
+
+/**
+ * Resolve the GST rate applied to MR Bike's commission.
+ *
+ * `override` is how an EXISTING booking replays the rate it was created with,
+ * exactly like resolvePlatformFee() — a statutory rate change must never
+ * re-rate a booking that has already been settled or invoiced. Bookings that
+ * predate this feature carry 0 and stay at 0.
+ */
+function resolveCommissionTaxRate({ commissionTaxRate = 0, override = null }) {
+  const raw = override !== null && override !== undefined && override !== ""
+    ? override
+    : commissionTaxRate;
+
+  const rate = Number(raw) || 0;
+  if (!Number.isFinite(rate) || rate < 0) {
+    throw new PricingError(
+      "Commission tax rate must be a non-negative percentage",
+      "INVALID_COMMISSION_TAX_RATE"
+    );
+  }
+  if (rate > MAX_COMMISSION_TAX_RATE) {
+    throw new PricingError(
+      `Commission tax rate cannot exceed ${MAX_COMMISSION_TAX_RATE}%`,
+      "COMMISSION_TAX_RATE_TOO_LARGE"
+    );
+  }
+  return rate;
+}
+
+/**
  * Compute the discount a promo code is worth against a given subtotal. Pure —
  * takes an already-fetched PromoCode document/lean object and performs no DB
  * access itself. Usage-limit / per-user-limit checks require querying
@@ -272,6 +377,12 @@ function computePromoDiscountAmount({ promo, subtotal }) {
  * same `discountAmount`/`amountDue` mechanism and stamps the promo snapshot
  * fields onto the returned breakdown so applyBreakdownToBooking() can lock
  * them onto the Booking at creation time.
+ *
+ * `platformFeeConfig` is the admin's current setting, read by the caller via
+ * services/appSettingsService.js#getPlatformFeeConfig(). Omit it and the fee
+ * is 0 — which is exactly right for every recompute of an existing booking,
+ * where `platformFeeOverride` (the booking's own stored fee) is passed
+ * instead to keep the fee frozen at what the customer already agreed to.
  */
 function computePriceBreakdown({
   serviceAmount,
@@ -281,6 +392,11 @@ function computePriceBreakdown({
   promo = null,
   bikeCondition = BIKE_CONDITIONS.RIDEABLE,
   towingChargeOverride = null,
+  platformFeeConfig = null,
+  platformFeeOverride = null,
+  platformFeeLabelOverride = null,
+  commissionTaxRate = 0,
+  commissionTaxRateOverride = null,
 }) {
   const amount = round2(Number(serviceAmount) || 0);
 
@@ -301,12 +417,42 @@ function computePriceBreakdown({
 
   const taxRate = Number(dealer?.tax) || 0;
   const taxAmount = round2((subtotal * taxRate) / 100);
-  const customerTotal = round2(subtotal + taxAmount);
+
+  // MR Bike's own convenience charge. Deliberately added AFTER tax and left
+  // out of the subtotal: it is not the garage's revenue, so it must not be
+  // taxed at the dealer's rate nor widen the commission/earnings base below.
+  const platformFee = resolvePlatformFee({
+    platformFeeConfig,
+    override: platformFeeOverride,
+  });
+  const platformFeeLabel = resolvePlatformFeeLabel({
+    platformFee,
+    platformFeeConfig,
+    override: platformFeeLabelOverride,
+  });
+
+  const customerTotal = round2(subtotal + taxAmount + platformFee);
 
   const commissionRate = Number(dealer?.commission) || 0;
   const commissionAmount = round2((subtotal * commissionRate) / 100);
-  const dealerEarnings = round2(subtotal - commissionAmount);
 
+  // GST on that commission — MR Bike's commission is a taxable supply to the
+  // garage, so the dealer is charged commission + GST on it. The customer's
+  // total is untouched by this: it moves money between MR Bike and the
+  // dealer only, which is why it is deducted from dealerEarnings rather than
+  // added to customerTotal.
+  const resolvedCommissionTaxRate = resolveCommissionTaxRate({
+    commissionTaxRate,
+    override: commissionTaxRateOverride,
+  });
+  const commissionTaxAmount = round2((commissionAmount * resolvedCommissionTaxRate) / 100);
+  // What actually leaves the dealer: ₹100 commission at 18% is a ₹118 debit.
+  const commissionTotal = round2(commissionAmount + commissionTaxAmount);
+
+  const dealerEarnings = round2(subtotal - commissionTotal);
+
+  // Promo discounts are computed against the subtotal, so the platform fee is
+  // never discounted away — the customer always pays it in full.
   let promoDiscountAmount = 0;
   let promoCodeId = null;
   let promoCode = null;
@@ -336,9 +482,14 @@ function computePriceBreakdown({
     subtotal,
     taxRate,
     taxAmount,
+    platformFee,
+    platformFeeLabel,
     customerTotal,
     commissionRate,
     commissionAmount,
+    commissionTaxRate: resolvedCommissionTaxRate,
+    commissionTaxAmount,
+    commissionTotal,
     dealerEarnings,
     discountAmount: discount,
     pricingVersion: PRICING_VERSION,
@@ -367,9 +518,13 @@ const PRICING_SNAPSHOT_FIELDS = Object.freeze([
   "subtotal",
   "taxRate",
   "taxAmount",
+  "platformFee",
+  "platformFeeLabel",
   "customerTotal",
   "commissionRate",
   "commissionAmount",
+  "commissionTaxRate",
+  "commissionTaxAmount",
   "dealerEarnings",
   "discountAmount",
   "pricingVersion",
@@ -412,9 +567,13 @@ function applyBreakdownToBooking(bookingDoc, breakdown) {
   bookingDoc.subtotal = breakdown.subtotal;
   bookingDoc.taxRate = breakdown.taxRate;
   bookingDoc.taxAmount = breakdown.taxAmount;
+  bookingDoc.platformFee = breakdown.platformFee;
+  bookingDoc.platformFeeLabel = breakdown.platformFeeLabel;
   bookingDoc.customerTotal = breakdown.customerTotal;
   bookingDoc.commissionRate = breakdown.commissionRate;
   bookingDoc.commissionAmount = breakdown.commissionAmount;
+  bookingDoc.commissionTaxRate = breakdown.commissionTaxRate;
+  bookingDoc.commissionTaxAmount = breakdown.commissionTaxAmount;
   bookingDoc.dealerEarnings = breakdown.dealerEarnings;
   bookingDoc.discountAmount = breakdown.discountAmount;
   bookingDoc.pricingVersion = breakdown.pricingVersion;
@@ -479,6 +638,9 @@ module.exports = {
   BIKE_CONDITIONS,
   TOWING_REQUIRED_CONDITIONS,
   MAX_TOWING_CHARGE,
+  MAX_PLATFORM_FEE,
+  MAX_COMMISSION_TAX_RATE,
+  DEFAULT_PLATFORM_FEE_LABEL,
   PricingError,
   PRICING_SNAPSHOT_FIELDS,
   PRICING_WRITE_BYPASS_FLAG,
@@ -489,6 +651,8 @@ module.exports = {
   normalizeBikeCondition,
   isTowingRequired,
   resolveTowingCharge,
+  resolvePlatformFee,
+  resolveCommissionTaxRate,
   computePromoDiscountAmount,
   computePriceBreakdown,
   applyBreakdownToBooking,

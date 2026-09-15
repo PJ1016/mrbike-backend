@@ -33,6 +33,7 @@ const {
   resolveTowingCharge,
   PricingError,
 } = require("../services/pricingEngine");
+const { getPricingSettings } = require("../services/appSettingsService");
 const { validatePromoCode } = require("../services/promoService");
 const PromoCode = require("../models/PromoCode");
 const PromoCodeUsage = require("../models/PromoCodeUsage");
@@ -975,12 +976,21 @@ async function createBooking(req, res) {
         promo = validated.promo;
       }
 
+      // MR Bike's platform fee and commission-GST rate, read fresh from the
+      // admin settings and locked onto the booking here — the same values
+      // /pricing/quote just showed the customer. Every later recompute passes
+      // the stored ones back in as overrides instead, so an admin changing
+      // either can never re-price or re-rate this booking.
+      const { platformFeeConfig, commissionTaxRate } = await getPricingSettings();
+
       breakdown = computePriceBreakdown({
         serviceAmount,
         transportOption,
         dealer,
         promo,
         bikeCondition: resolvedBikeCondition,
+        platformFeeConfig,
+        commissionTaxRate,
       });
     } catch (pricingError) {
       if (pricingError instanceof PricingError) {
@@ -1200,7 +1210,8 @@ async function getBookingDetails(req, res) {
 
 // Business/logistics fields this endpoint is allowed to touch. Deliberately
 // excludes every pricing snapshot field (serviceAmount, pickupCharges,
-// dropCharges, subtotal, taxRate, taxAmount, customerTotal, commissionRate,
+// dropCharges, subtotal, taxRate, taxAmount, platformFee, platformFeeLabel,
+// customerTotal, commissionRate,
 // commissionAmount, dealerEarnings, discountAmount, pricingVersion,
 // priceSnapshotAt, totalBill, tax) and `status` (status transitions have
 // their own guarded endpoint — updateBookingStatus — with timer/race-condition
@@ -1338,6 +1349,12 @@ async function updateBooking(req, res) {
           // dealer's current rate, nor drop a charge the dealer already set.
           bikeCondition: existingBooking.bikeCondition,
           towingChargeOverride: existingBooking.towingCharge,
+          // …and the platform fee this booking was created with, for the same
+          // reason: a service-list edit must not pull in the admin's current
+          // fee, nor drop one the customer has already agreed to.
+          platformFeeOverride: existingBooking.platformFee,
+          platformFeeLabelOverride: existingBooking.platformFeeLabel,
+          commissionTaxRateOverride: existingBooking.commissionTaxRate,
         });
       } catch (pricingError) {
         if (pricingError instanceof PricingError) {
@@ -3212,6 +3229,11 @@ async function updateTowingCharge(req, res) {
         discountAmount: existingBooking.discountAmount,
         bikeCondition: existingBooking.bikeCondition,
         towingChargeOverride: amount,
+        // The platform fee is frozen at what the booking was created with —
+        // revising towing must not re-read the admin's current setting.
+        platformFeeOverride: existingBooking.platformFee,
+        platformFeeLabelOverride: existingBooking.platformFeeLabel,
+        commissionTaxRateOverride: existingBooking.commissionTaxRate,
       });
     } catch (pricingError) {
       if (pricingError instanceof PricingError) {
@@ -3248,11 +3270,15 @@ async function updateTowingCharge(req, res) {
         subtotal: existingBooking.subtotal,
         taxRate: existingBooking.taxRate,
         taxAmount: existingBooking.taxAmount,
+        platformFee: existingBooking.platformFee,
+        platformFeeLabel: existingBooking.platformFeeLabel,
         discountAmount: existingBooking.discountAmount,
         customerTotal: existingBooking.customerTotal,
         amountDue: existingBooking.amountDue,
         commissionRate: existingBooking.commissionRate,
         commissionAmount: existingBooking.commissionAmount,
+        commissionTaxRate: existingBooking.commissionTaxRate,
+        commissionTaxAmount: existingBooking.commissionTaxAmount,
         dealerEarnings: existingBooking.dealerEarnings,
       },
       pricing: breakdown,

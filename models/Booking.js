@@ -202,9 +202,26 @@ const bookingSchema = new mongoose.Schema(
     subtotal: { type: Number, default: 0 },
     taxRate: { type: Number, default: 0 },
     taxAmount: { type: Number, default: 0 },
+    // MR Bike's admin-configured convenience fee, charged on top of the
+    // garage's amount and the tax on it. Part of customerTotal (and therefore
+    // of what the customer actually pays) but NOT of subtotal, so it never
+    // touches commissionAmount or dealerEarnings. 0 on every booking created
+    // before the fee existed and on every booking taken while it is switched
+    // off. `platformFeeLabel` is the wording the customer saw, snapshotted
+    // alongside the amount so a later rename can't rewrite an old bill.
+    platformFee: { type: Number, default: 0 },
+    platformFeeLabel: { type: String, default: null },
     customerTotal: { type: Number, default: 0 },
     commissionRate: { type: Number, default: 0 },
     commissionAmount: { type: Number, default: 0 },
+    // GST MR Bike charges the dealer on top of that commission. Recovered
+    // from the dealer together with the commission (a ₹100 commission at 18%
+    // is a ₹118 deduction, already reflected in dealerEarnings below) and
+    // never added to what the customer pays. 0 on every booking created
+    // before this existed, which keeps their payout exactly as settled.
+    commissionTaxRate: { type: Number, default: 0 },
+    commissionTaxAmount: { type: Number, default: 0 },
+    // Net payout: subtotal − commission − commission tax.
     dealerEarnings: { type: Number, default: 0 },
     discountAmount: { type: Number, default: 0 },
     pricingVersion: { type: Number, default: null },
