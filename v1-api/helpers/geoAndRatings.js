@@ -171,12 +171,56 @@ async function resolveBikeContext(bikeId) {
   }
 }
 
-/** Distinct base_service_id list any dealer, network-wide, has configured for this bike's brand. */
-async function getCompatibleServiceIds(companyId) {
-  const ids = await AdminService.distinct("base_service_id", {
-    isActive: true,
-    companies: companyId,
+/**
+ * A price row is usable only when it can actually be booked for the saved
+ * bike.  A missing model/variant is deliberately treated as a dealer-wide
+ * price row, but a populated field must match exactly.  This keeps cards,
+ * garage lists and booking entry points from advertising a service priced for
+ * a different model, variant or engine size.
+ */
+function matchesBikePriceRow(row, bikeContext) {
+  if (!row || !bikeContext) return false
+  if (row.model_id && String(row.model_id) !== String(bikeContext.modelId)) return false
+  if (row.variant_id && String(row.variant_id) !== String(bikeContext.variantId)) return false
+  if (row.cc != null && bikeContext.cc != null && Number(row.cc) !== Number(bikeContext.cc)) return false
+  return typeof row.price === "number" && row.price >= 0
+}
+
+function isAdminServiceCompatibleWithBike(adminService, bikeContext) {
+  if (!adminService || !bikeContext) return false
+  const supportsCompany = (adminService.companies || []).some(
+    companyId => String(companyId) === String(bikeContext.companyId),
+  )
+  return supportsCompany && (adminService.bikes || []).some(row => matchesBikePriceRow(row, bikeContext))
+}
+
+function priceForBike(adminService, bikeContext) {
+  const matches = (adminService.bikes || []).filter(row => matchesBikePriceRow(row, bikeContext))
+  if (!matches.length) return null
+  // The most specific configured price wins: variant > model > company-wide.
+  matches.sort((a, b) => {
+    const specificity = row => Number(!!row.model_id) + Number(!!row.variant_id)
+    return specificity(b) - specificity(a) || Number(a.price) - Number(b.price)
   })
+  return matches[0].price
+}
+
+/** Distinct base services that a dealer has priced for this exact bike. */
+async function getCompatibleServiceIds(bikeContext, dealerIds = null) {
+  if (!bikeContext) return []
+  const filter = { isActive: true, companies: bikeContext.companyId }
+  if (dealerIds) filter.dealer_id = { $in: dealerIds }
+  const services = await AdminService.find(filter).select("base_service_id companies bikes").lean()
+  return [...new Set(services
+    .filter(service => isAdminServiceCompatibleWithBike(service, bikeContext))
+    .map(service => String(service.base_service_id)))]
+}
+
+/** Base services currently offered by the eligible dealers in a scope. */
+async function getAvailableServiceIds(dealerIds = null) {
+  const filter = { isActive: true }
+  if (dealerIds) filter.dealer_id = { $in: dealerIds }
+  const ids = await AdminService.distinct("base_service_id", filter)
   return ids.map(String)
 }
 
@@ -189,4 +233,8 @@ module.exports = {
   computeServicePopularity,
   resolveBikeContext,
   getCompatibleServiceIds,
+  getAvailableServiceIds,
+  matchesBikePriceRow,
+  isAdminServiceCompatibleWithBike,
+  priceForBike,
 }

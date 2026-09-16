@@ -7,6 +7,9 @@ const {
   computeServicePopularity,
   resolveBikeContext,
   getCompatibleServiceIds,
+  getAvailableServiceIds,
+  isAdminServiceCompatibleWithBike,
+  priceForBike,
   DEFAULT_RADIUS_KM,
 } = require("../helpers/geoAndRatings")
 
@@ -81,14 +84,12 @@ async function quickServices(req, res) {
     if (nearbyDealerIds) dealerServiceFilter.dealer_id = { $in: nearbyDealerIds }
     if (bikeContext) dealerServiceFilter.companies = bikeContext.companyId
 
-    const dealerServices = await AdminService.find(dealerServiceFilter).select("base_service_id dealer_id bikes")
+    const dealerServices = await AdminService.find(dealerServiceFilter).select("base_service_id dealer_id companies bikes")
 
     // Brand match is enforced by the query above; model match (when a model
     // is pinned on the dealer's mapping) is narrowed here.
     const matchedDealerServices = bikeContext
-      ? dealerServices.filter(ds =>
-          (ds.bikes || []).some(b => !b.model_id || String(b.model_id) === String(bikeContext.modelId)),
-        )
+      ? dealerServices.filter(ds => isAdminServiceCompatibleWithBike(ds, bikeContext))
       : dealerServices
 
     if (!matchedDealerServices.length) {
@@ -135,14 +136,9 @@ async function quickServices(req, res) {
       .map(id => {
         const best = bestByBaseServiceId.get(id)
         const bikes = best.adminService.bikes || []
-        const priceMatch = bikeContext
-          ? bikes.find(
-              b =>
-                (!b.variant_id || String(b.variant_id) === String(bikeContext.variantId)) &&
-                (bikeContext.cc == null || b.cc === bikeContext.cc),
-            ) || bikes.find(b => !b.model_id || String(b.model_id) === String(bikeContext.modelId))
-          : null
-        const price = priceMatch ? priceMatch.price : bikes.length ? Math.min(...bikes.map(b => b.price)) : null
+        const price = bikeContext
+          ? priceForBike(best.adminService, bikeContext)
+          : bikes.length ? Math.min(...bikes.map(b => b.price)) : null
 
         return {
           service: baseServiceById.get(id),
@@ -184,15 +180,16 @@ async function recommended(req, res) {
     if (scope === null) return
     const { nearbyDealerIds, distanceByDealerId } = scope
 
-    let allowedServiceIds = null
+    let allowedServiceIds = await getAvailableServiceIds(nearbyDealerIds)
     let bikeMatched = false
+    let bikeContext = null
     if (bikeId) {
       if (!mongoose.Types.ObjectId.isValid(bikeId)) {
         return res.status(400).json({ status: false, message: "Invalid bikeId" })
       }
-      const bikeContext = await resolveBikeContext(bikeId)
+      bikeContext = await resolveBikeContext(bikeId)
       if (bikeContext) {
-        allowedServiceIds = await getCompatibleServiceIds(bikeContext.companyId)
+        allowedServiceIds = await getCompatibleServiceIds(bikeContext, nearbyDealerIds)
         bikeMatched = true
       }
     }
@@ -207,15 +204,17 @@ async function recommended(req, res) {
     // Nearest dealer distance per base_service_id, within scope.
     let minDistanceByService = new Map()
     if (nearbyDealerIds) {
-      const adminServices = await AdminService.find({ dealer_id: { $in: nearbyDealerIds }, isActive: true }).select("base_service_id dealer_id")
-      adminServices.forEach(as => {
+      const adminServices = await AdminService.find({ dealer_id: { $in: nearbyDealerIds }, isActive: true }).select("base_service_id dealer_id companies bikes")
+      adminServices
+        .filter(as => !bikeContext || isAdminServiceCompatibleWithBike(as, bikeContext))
+        .forEach(as => {
         const d = distanceByDealerId.get(String(as.dealer_id))
         if (d == null) return
         const key = String(as.base_service_id)
         if (!minDistanceByService.has(key) || d < minDistanceByService.get(key)) {
           minDistanceByService.set(key, d)
         }
-      })
+        })
     }
 
     // Proximity is scored relative to the farthest service actually in scope,
@@ -277,6 +276,17 @@ async function mostBooked(req, res) {
     const scope = await resolveDealerScope(req, res)
     if (scope === null) return
     const { nearbyDealerIds } = scope
+    const { bikeId } = req.query
+    let allowedServiceIds = await getAvailableServiceIds(nearbyDealerIds)
+    let bikeMatched = false
+    if (bikeId) {
+      if (!mongoose.Types.ObjectId.isValid(bikeId)) return res.status(400).json({ status: false, message: "Invalid bikeId" })
+      const bikeContext = await resolveBikeContext(bikeId)
+      if (bikeContext) {
+        allowedServiceIds = await getCompatibleServiceIds(bikeContext, nearbyDealerIds)
+        bikeMatched = true
+      }
+    }
 
     const { days } = req.query
     let sinceDate = null
@@ -291,6 +301,7 @@ async function mostBooked(req, res) {
     const popularity = await computeServicePopularity(nearbyDealerIds, sinceDate)
     const topIds = Array.from(popularity.entries())
       .sort((a, b) => b[1].count - a[1].count)
+      .filter(([id]) => !allowedServiceIds || allowedServiceIds.includes(String(id)))
       .slice(0, 6)
       .map(([id]) => id)
 
@@ -313,7 +324,7 @@ async function mostBooked(req, res) {
       status: true,
       message: ranked.length ? "Most booked services fetched" : "No booking data available yet for this area",
       data: ranked,
-      meta: { scope: nearbyDealerIds ? "area" : "network", windowDays: sinceDate ? Number.parseInt(days, 10) : null },
+      meta: { bikeMatched, scope: nearbyDealerIds ? "area" : "network", windowDays: sinceDate ? Number.parseInt(days, 10) : null },
     })
   } catch (error) {
     console.error("Error fetching most-booked services:", error)
@@ -324,7 +335,7 @@ async function mostBooked(req, res) {
 // GET /api/v1/home/top-garages?lat=&lng=&serviceId=
 async function topGarages(req, res) {
   try {
-    const { lat, lng, city, serviceId } = req.query
+    const { lat, lng, city, serviceId, bikeId } = req.query
     if (!lat && !lng && !city) {
       return res.status(400).json({ status: false, message: "lat/lng (or city) is required" })
     }
@@ -340,6 +351,19 @@ async function topGarages(req, res) {
     }
 
     let eligibleDealerIds = new Set(nearby.map(n => String(n.dealer._id)))
+    let bikeContext = null
+    if (bikeId) {
+      if (!mongoose.Types.ObjectId.isValid(bikeId)) return res.status(400).json({ status: false, message: "Invalid bikeId" })
+      bikeContext = await resolveBikeContext(bikeId)
+      if (bikeContext) {
+        const matchingServices = await AdminService.find({
+          dealer_id: { $in: nearby.map(n => n.dealer._id) }, isActive: true, companies: bikeContext.companyId,
+        }).select("dealer_id companies bikes").lean()
+        eligibleDealerIds = new Set(matchingServices
+          .filter(service => isAdminServiceCompatibleWithBike(service, bikeContext))
+          .map(service => String(service.dealer_id)))
+      }
+    }
 
     if (serviceId) {
       const dealerIds = nearby.map(n => n.dealer._id)
@@ -347,12 +371,14 @@ async function topGarages(req, res) {
         dealer_id: { $in: dealerIds },
         base_service_id: serviceId,
         isActive: true,
-      }).select("dealer_id bikes")
+      }).select("dealer_id companies bikes")
 
       const ids = new Set()
       matching.forEach(svc => {
-        const hasPricedBike = (svc.bikes || []).some(b => b.price != null && b.price > 0)
-        if (hasPricedBike) ids.add(String(svc.dealer_id))
+        const hasPricedBike = bikeContext
+          ? isAdminServiceCompatibleWithBike(svc, bikeContext)
+          : (svc.bikes || []).some(b => b.price != null && b.price > 0)
+        if (hasPricedBike && eligibleDealerIds.has(String(svc.dealer_id))) ids.add(String(svc.dealer_id))
       })
       eligibleDealerIds = ids
     }

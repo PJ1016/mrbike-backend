@@ -34,7 +34,7 @@ async function listByCategory(req, res) {
       }
       const bikeContext = await resolveBikeContext(bikeId)
       if (bikeContext) {
-        const allowedServiceIds = await getCompatibleServiceIds(bikeContext.companyId)
+        const allowedServiceIds = await getCompatibleServiceIds(bikeContext)
         filter._id = { $in: allowedServiceIds }
         bikeMatched = true
       }
