@@ -46,6 +46,9 @@ var {
   getDealerActivityHistory,
 } = require("../controller/dealer")
 const { getDealerServices, saveDealerServices, getDealersByService } = require("../controller/service")
+// Identifies the rider when a customer token is present so nearby-garage
+// results can respect their saved bikes; never rejects. See the middleware.
+const { attachCustomerIfPresent } = require("../middlewares/optionalCustomer")
 const { processDealer } = require("../controller/dealerController")
 const { log } = require("console")
 const { getPayouts, getDealerWalletsSummary } = require("../controller/adminFinance")
@@ -538,7 +541,7 @@ router.put(
 )
 
 router.get("/dealerList", requireAdmin, dealerList)
-router.get("/dealerWithInRange", dealerWithInRange)
+router.get("/dealerWithInRange", attachCustomerIfPresent, dealerWithInRange)
 router.get("/dealerWithInRange2", dealerWithInRange2)
 router.get("/dealer/:id", verifyDealerToken, requireOwnDealer("id"), singledealer)
 // Shared with the admin panel (dealer wallet transaction history / summary

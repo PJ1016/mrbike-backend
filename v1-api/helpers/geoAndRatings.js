@@ -1,15 +1,16 @@
-const Vendor = require("../../models/dealerModel")
+// Primitives shared by the v1 read paths: distance maths, dealer rating
+// rollups, derived service popularity, and the bike/price-row matchers.
+//
+// The eligibility RULES that compose these — which dealers a user may see,
+// which services their bikes can be booked for — deliberately live in exactly
+// one place, ./serviceEligibility.js. They used to be duplicated here as
+// findNearbyDealers/getCompatibleServiceIds/getAvailableServiceIds, each
+// controller applying a slightly different subset; that drift is what let a
+// service card open onto an empty garage list.
 const RatingSummary = require("../../models/RatingSummary")
 const AdminService = require("../../models/adminService")
 const Booking = require("../../models/Booking")
-const UserBike = require("../../models/userBikeModel")
-const { isDealerBookable } = require("../../helper/dealerStatus")
-const {
-  DEFAULT_SERVICE_RADIUS_KM,
-  getDealerServiceRadiusKm,
-  isWithinServiceRadius,
-  serviceRadiusBoundingBoxDegrees,
-} = require("../../helper/dealerServiceRadius")
+const { DEFAULT_SERVICE_RADIUS_KM } = require("../../helper/dealerServiceRadius")
 
 // Kept as the fallback reach of a dealer that never configured one, and as the
 // normalization constant for proximity scoring. The actual visibility cut-off
@@ -35,62 +36,6 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
     Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return R * c
-}
-
-/**
- * Finds bookable dealers that actually serve a lat/lng point, or that sit in a
- * given city (admin-facing fallback when no live coordinates are available).
- * Mirrors the eligibility rules already used by controller/dealer.js#dealerWithInRange.
- *
- * Reach is per-dealer: each garage's own serviceRadiusKm decides whether this
- * user is inside its service area. Pass radiusKm to additionally cap how far
- * the caller is willing to look — the effective cut-off is then the smaller of
- * the two, so a caller can narrow the search but never widen a garage's reach
- * beyond what the garage itself agreed to.
- */
-async function findNearbyDealers({ lat, lng, city, radiusKm = null } = {}) {
-  const baseFilter = {
-    online: true,
-    wallet: { $gt: -500 },
-    isBlocked: { $ne: true },
-  }
-
-  if (city) {
-    baseFilter.city = new RegExp(`^${city.trim()}$`, "i")
-    const dealers = (await Vendor.find(baseFilter)).filter(isDealerBookable)
-    return dealers.map(d => ({ dealer: d, distanceKm: null }))
-  }
-
-  const latitude = parseFloat(lat)
-  const longitude = parseFloat(lng)
-  if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
-    throw new Error("INVALID_COORDINATES")
-  }
-
-  // Coarse pre-filter sized off the widest radius any dealer may configure, so
-  // a far-reaching garage is never dropped before its own radius is consulted.
-  const boxDelta = serviceRadiusBoundingBoxDegrees()
-
-  const dealers = (
-    await Vendor.find({
-      ...baseFilter,
-      latitude: { $gte: latitude - boxDelta, $lte: latitude + boxDelta },
-      longitude: { $gte: longitude - boxDelta, $lte: longitude + boxDelta },
-    })
-  ).filter(isDealerBookable)
-
-  const callerCap = Number(radiusKm)
-  const hasCallerCap = Number.isFinite(callerCap) && callerCap > 0
-
-  return dealers
-    .map(dealer => ({
-      dealer,
-      distanceKm: calculateDistanceKm(latitude, longitude, dealer.latitude, dealer.longitude),
-      serviceRadiusKm: getDealerServiceRadiusKm(dealer),
-    }))
-    .filter(entry => isWithinServiceRadius(entry.distanceKm, entry.dealer))
-    .filter(entry => !hasCallerCap || entry.distanceKm <= callerCap)
-    .sort((a, b) => a.distanceKm - b.distanceKm)
 }
 
 /** Reads the maintained dealer rollups in one query (no per-card/N+1 work). */
@@ -152,41 +97,47 @@ async function computeServicePopularity(dealerIds, sinceDate = null) {
   return map
 }
 
-/** Resolves a customer's saved bike down to its brand/model/variant/cc. */
-async function resolveBikeContext(bikeId) {
-  const bike = await UserBike.findById(bikeId).populate({
-    path: "variant_id",
-    populate: { path: "model_id", populate: { path: "company_id" } },
-  })
-
-  if (!bike || !bike.variant_id || !bike.variant_id.model_id || !bike.variant_id.model_id.company_id) {
-    return null
-  }
-
-  return {
-    companyId: bike.variant_id.model_id.company_id._id,
-    modelId: bike.variant_id.model_id._id,
-    variantId: bike.variant_id._id,
-    cc: bike.variant_id.engine_cc,
-  }
+/**
+ * A price row is usable only when it can actually be booked for the saved
+ * bike.  A missing model/variant is deliberately treated as a dealer-wide
+ * price row, but a populated field must match exactly.  This keeps cards,
+ * garage lists and booking entry points from advertising a service priced for
+ * a different model, variant or engine size.
+ */
+function matchesBikePriceRow(row, bikeContext) {
+  if (!row || !bikeContext) return false
+  if (row.model_id && String(row.model_id) !== String(bikeContext.modelId)) return false
+  if (row.variant_id && String(row.variant_id) !== String(bikeContext.variantId)) return false
+  if (row.cc != null && bikeContext.cc != null && Number(row.cc) !== Number(bikeContext.cc)) return false
+  return typeof row.price === "number" && row.price >= 0
 }
 
-/** Distinct base_service_id list any dealer, network-wide, has configured for this bike's brand. */
-async function getCompatibleServiceIds(companyId) {
-  const ids = await AdminService.distinct("base_service_id", {
-    isActive: true,
-    companies: companyId,
+function isAdminServiceCompatibleWithBike(adminService, bikeContext) {
+  if (!adminService || !bikeContext) return false
+  const supportsCompany = (adminService.companies || []).some(
+    companyId => String(companyId) === String(bikeContext.companyId),
+  )
+  return supportsCompany && (adminService.bikes || []).some(row => matchesBikePriceRow(row, bikeContext))
+}
+
+function priceForBike(adminService, bikeContext) {
+  const matches = (adminService.bikes || []).filter(row => matchesBikePriceRow(row, bikeContext))
+  if (!matches.length) return null
+  // The most specific configured price wins: variant > model > company-wide.
+  matches.sort((a, b) => {
+    const specificity = row => Number(!!row.model_id) + Number(!!row.variant_id)
+    return specificity(b) - specificity(a) || Number(a.price) - Number(b.price)
   })
-  return ids.map(String)
+  return matches[0].price
 }
 
 module.exports = {
   DEFAULT_RADIUS_KM,
   EXCLUDED_BOOKING_STATUSES,
   calculateDistanceKm,
-  findNearbyDealers,
   getRatingsMap,
   computeServicePopularity,
-  resolveBikeContext,
-  getCompatibleServiceIds,
+  matchesBikePriceRow,
+  isAdminServiceCompatibleWithBike,
+  priceForBike,
 }

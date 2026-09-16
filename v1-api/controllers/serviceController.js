@@ -1,11 +1,15 @@
 const mongoose = require("mongoose")
 const BaseService = require("../../models/baseService")
-const AdminService = require("../../models/adminService")
-const { isDealerBookable } = require("../../helper/dealerStatus")
-const { getRatingsMap, calculateDistanceKm, resolveBikeContext, getCompatibleServiceIds } = require("../helpers/geoAndRatings")
-const { getDealerServiceRadiusKm, isWithinServiceRadius } = require("../../helper/dealerServiceRadius")
+const { getRatingsMap } = require("../helpers/geoAndRatings")
 const ServiceDetail = require("../../models/serviceDetail")
-const { computeFromPrice, countProviders, mergeServiceDetail } = require("../helpers/serviceDetail")
+const { mergeServiceDetail } = require("../helpers/serviceDetail")
+const {
+  resolveDiscoveryBikeContexts,
+  resolveBikeContextById,
+  resolveDealerScope,
+  resolveEligibleServices,
+  resolveEligibleGarages,
+} = require("../helpers/serviceEligibility")
 
 function formatImage(url, req) {
   if (url && !url.startsWith("http")) {
@@ -14,10 +18,30 @@ function formatImage(url, req) {
   return url
 }
 
-// GET /api/v1/services?categoryId=&bikeId=
+function parseCc(cc) {
+  if (cc === undefined || cc === null || String(cc).trim() === "") return null
+  const parsed = Number.parseInt(cc, 10)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+function parseBool(value) {
+  return value === true || value === "true" || value === "1" || value === 1
+}
+
+// GET /api/v1/services?categoryId=&bikeId=&bikeIds=&lat=&lng=&city=
+//
+// The All Services / category list. Same DISCOVERY = ALL SAVED BIKES rule as
+// the home feeds: a service is listed when at least ONE of the rider's saved
+// bikes has a bookable, in-range provider for it — the union across the whole
+// garage, de-duplicated by service.
+//
+// This list used to be a plain BaseService.find(): with no bike it showed
+// every active service in the catalog whether or not anybody could perform it,
+// and with a bike it checked compatibility but not dealer bookability or
+// location. Both routes ended at an empty garage list on BOOK NOW.
 async function listByCategory(req, res) {
   try {
-    const { categoryId, bikeId } = req.query
+    const { categoryId, bikeId, bikeIds, lat, lng, city } = req.query
     const filter = { isActive: true }
 
     if (categoryId) {
@@ -26,19 +50,42 @@ async function listByCategory(req, res) {
       }
       filter.categoryId = categoryId
     }
-
-    let bikeMatched = false
-    if (bikeId) {
-      if (!mongoose.Types.ObjectId.isValid(bikeId)) {
-        return res.status(400).json({ status: false, message: "Invalid bikeId" })
-      }
-      const bikeContext = await resolveBikeContext(bikeId)
-      if (bikeContext) {
-        const allowedServiceIds = await getCompatibleServiceIds(bikeContext.companyId)
-        filter._id = { $in: allowedServiceIds }
-        bikeMatched = true
-      }
+    if (bikeId && !mongoose.Types.ObjectId.isValid(bikeId)) {
+      return res.status(400).json({ status: false, message: "Invalid bikeId" })
     }
+
+    const { contexts: bikeContexts } = await resolveDiscoveryBikeContexts({
+      userId: req.user_id || null,
+      bikeId,
+      bikeIds,
+    })
+
+    let scope
+    try {
+      scope = await resolveDealerScope({ lat, lng, city })
+    } catch (err) {
+      return res.status(400).json({ status: false, message: "Invalid lat/lng" })
+    }
+
+    const eligibility = await resolveEligibleServices({ scope, bikeContexts })
+    // Honest empty result: no eligible provider means no services, never a
+    // fallback to the raw catalog.
+    if (!eligibility.serviceIds.length) {
+      return res.status(200).json({
+        status: true,
+        message: "No services found",
+        data: [],
+        meta: {
+          bikeMatched: bikeContexts.length > 0,
+          bikeCount: bikeContexts.length,
+          evaluatedBikeIds: bikeContexts.map(ctx => ctx.bikeId),
+          scope: scope.kind === "network" ? "network" : "area",
+          scopeKind: scope.kind,
+        },
+      })
+    }
+
+    filter._id = { $in: eligibility.serviceIds }
 
     // Same guard as homeController's SERVICE_CARD_FIELDS: this list must never
     // start carrying Service Detail content just because a field was added to
@@ -52,18 +99,31 @@ async function listByCategory(req, res) {
     return res.status(200).json({
       status: true,
       message: services.length ? "Services fetched" : "No services found",
-      data: services.map(s => ({
-        serviceId: s._id,
-        name: s.name,
-        image: formatImage(s.image, req),
-        description: s.description,
-        category: s.categoryId ? { id: s.categoryId._id, name: s.categoryId.name, icon: s.categoryId.icon } : null,
-        basePrice: s.basePrice,
-        duration: s.duration,
-        pickupAvailable: s.pickupAvailable,
-        warranty: s.warranty,
-      })),
-      meta: { bikeMatched },
+      data: services.map(s => {
+        const bucket = eligibility.byServiceId.get(String(s._id))
+        return {
+          serviceId: s._id,
+          name: s.name,
+          image: formatImage(s.image, req),
+          description: s.description,
+          category: s.categoryId ? { id: s.categoryId._id, name: s.categoryId.name, icon: s.categoryId.icon } : null,
+          basePrice: s.basePrice,
+          duration: s.duration,
+          pickupAvailable: s.pickupAvailable,
+          warranty: s.warranty,
+          // Additive: how many garages can take it, and which saved bikes it
+          // is bookable for. Phase B uses these; existing clients ignore them.
+          providerCount: bucket ? bucket.dealerIds.size : 0,
+          eligibleBikeIds: bucket ? Array.from(bucket.eligibleBikeIds) : [],
+        }
+      }),
+      meta: {
+        bikeMatched: bikeContexts.length > 0,
+        bikeCount: bikeContexts.length,
+        evaluatedBikeIds: bikeContexts.map(ctx => ctx.bikeId),
+        scope: scope.kind === "network" ? "network" : "area",
+        scopeKind: scope.kind,
+      },
     })
   } catch (error) {
     console.error("Error fetching services:", error)
@@ -71,72 +131,65 @@ async function listByCategory(req, res) {
   }
 }
 
-// GET /api/v1/services/:id/garages?lat=&lng=&variant_id=&cc=
-// Full compare list for the Service Detail screen: every bookable dealer
-// offering this service, with server-computed price/rating/distance.
+// GET /api/v1/services/:id/garages?lat=&lng=&bikeId=&variant_id=&cc=&towingRequired=
+//
+// BOOKING = ONE SELECTED BIKE. This is the provider-selection list, so the
+// union used by discovery does NOT apply here: the rider has picked a bike,
+// and every garage returned must be able to service THAT bike.
+//
+// Pass `bikeId` for the full rule (brand + model + variant + cc + price row).
+// `variant_id`/`cc` remain supported and behave exactly as before for clients
+// that only know the variant.
 async function garagesForService(req, res) {
   try {
     const { id } = req.params
-    const { lat, lng, variant_id, cc } = req.query
+    const { lat, lng, city, bikeId, variant_id, cc, towingRequired } = req.query
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ status: false, message: "Invalid service id" })
     }
+    if (bikeId && !mongoose.Types.ObjectId.isValid(bikeId)) {
+      return res.status(400).json({ status: false, message: "Invalid bikeId" })
+    }
+    if (variant_id && !mongoose.Types.ObjectId.isValid(variant_id)) {
+      return res.status(400).json({ status: false, message: "Invalid variant_id" })
+    }
 
-    const baseService = await BaseService.findOne({ _id: id, isActive: true })
+    const baseService = await BaseService.findOne({ _id: id, isActive: true }).select("_id").lean()
     if (!baseService) {
       return res.status(404).json({ status: false, message: "Service not found" })
     }
 
-    const adminServices = await AdminService.find({ base_service_id: id, isActive: true }).populate("dealer_id")
-
-    const ccFilter = cc !== undefined && cc !== "" ? Number.parseInt(cc, 10) : null
-
-    let entries = adminServices
-      .filter(svc => svc.dealer_id)
-      .map(svc => {
-        let price = null
-        if (variant_id) {
-          const match = (svc.bikes || []).find(b => b.variant_id && String(b.variant_id) === String(variant_id) && (ccFilter === null || b.cc === ccFilter))
-          price = match ? match.price : null
-        } else {
-          const prices = (svc.bikes || []).map(b => b.price).filter(p => typeof p === "number")
-          price = prices.length ? Math.min(...prices) : null
-        }
-        // adminServiceId is what POST /pricing/quote takes as `serviceIds`
-        // (it resolves AdminService docs, not BaseService ids). Returning it
-        // here is what lets the provider list hand the booking screen a
-        // priceable id directly, instead of re-querying every dealer's full
-        // service list one call at a time.
-        return { adminServiceId: svc._id, dealer: svc.dealer_id, price }
-      })
-
-    // Only bookable dealers, and only ones that actually have a price for the
-    // requested bike (if a bike was specified).
-    entries = entries.filter(e => isDealerBookable(e.dealer) && (!variant_id || e.price != null))
-
-    let distanceById = new Map()
-    if (lat && lng) {
-      const latitude = Number.parseFloat(lat)
-      const longitude = Number.parseFloat(lng)
-      if (!Number.isNaN(latitude) && !Number.isNaN(longitude)) {
-        entries.forEach(e => {
-          distanceById.set(String(e.dealer._id), calculateDistanceKm(latitude, longitude, e.dealer.latitude, e.dealer.longitude))
-        })
-
-        // A garage only serves users inside its own radius (serviceRadiusKm,
-        // default 3 km), so one that can't reach this user must not appear in
-        // the compare list either. Without live coordinates there is nothing to
-        // measure against, and the full list is returned as before.
-        entries = entries.filter(e =>
-          isWithinServiceRadius(distanceById.get(String(e.dealer._id)), e.dealer),
-        )
-      }
+    // A rider's own bike is resolved against their account when we know who
+    // they are; anonymous callers can still resolve a bike id, exactly as the
+    // pre-existing variant_id path allowed.
+    const bikeContext = bikeId ? await resolveBikeContextById(bikeId, req.user_id || null) : null
+    if (bikeId && !bikeContext) {
+      return res.status(404).json({ status: false, message: "Bike not found" })
     }
 
+    const needsTowing = parseBool(towingRequired)
+
+    let result
+    try {
+      result = await resolveEligibleGarages({
+        baseServiceId: id,
+        bikeContext,
+        variantId: bikeContext ? null : variant_id || null,
+        cc: parseCc(cc),
+        lat,
+        lng,
+        city,
+        towingRequired: needsTowing,
+      })
+    } catch (err) {
+      return res.status(400).json({ status: false, message: "Invalid lat/lng" })
+    }
+
+    const { scope, entries } = result
     const ratingsMap = await getRatingsMap(entries.map(e => e.dealer._id))
 
-    const result = entries
+    const data = entries
       .map(e => {
         const rating = ratingsMap.get(String(e.dealer._id)) || { averageRating: 0, ratingCount: 0 }
         return {
@@ -146,19 +199,23 @@ async function garagesForService(req, res) {
           locality: e.dealer.locality,
           latitude: e.dealer.latitude,
           longitude: e.dealer.longitude,
-          distanceKm: distanceById.has(String(e.dealer._id)) ? Number(distanceById.get(String(e.dealer._id)).toFixed(2)) : null,
-          serviceRadiusKm: getDealerServiceRadiusKm(e.dealer),
+          distanceKm: e.distanceKm != null ? Number(e.distanceKm.toFixed(2)) : null,
+          serviceRadiusKm: e.serviceRadiusKm,
           price: e.price,
           averageRating: rating.averageRating,
           ratingCount: rating.ratingCount,
           providesPickup: !!e.dealer.providesPickup,
           providesDrop: !!e.dealer.providesDrop,
           // A bike declared NOT_RIDEABLE/COMPLETELY_DEAD has to be towed, so
-          // the app can only offer garages that actually tow. Exposed here so
-          // that filter is applied against real dealer capability rather than
-          // guessed at client-side.
+          // the app can only offer garages that actually tow. Pass
+          // towingRequired=true and the list is filtered on it server-side.
           providesTowing: !!e.dealer.providesTowing,
           towingCharges: e.dealer.towingCharges ?? 0,
+          // adminServiceId is what POST /pricing/quote takes as `serviceIds`
+          // (it resolves AdminService docs, not BaseService ids). Returning it
+          // here is what lets the provider list hand the booking screen a
+          // priceable id directly, instead of re-querying every dealer's full
+          // service list one call at a time.
           adminServiceId: e.adminServiceId,
           shopImages: (e.dealer.shopImages || []).map(url => formatImage(url, req)),
         }
@@ -171,8 +228,15 @@ async function garagesForService(req, res) {
 
     return res.status(200).json({
       status: true,
-      message: result.length ? "Garages fetched" : "No garages found for this service nearby",
-      data: result,
+      message: data.length ? "Garages fetched" : "No garages found for this service nearby",
+      data,
+      meta: {
+        scope: scope.kind === "network" ? "network" : "area",
+        scopeKind: scope.kind,
+        bikeMatched: !!bikeContext,
+        bikeId: bikeContext ? bikeContext.bikeId : null,
+        towingRequired: needsTowing,
+      },
     })
   } catch (error) {
     console.error("Error fetching garages for service:", error)
@@ -180,36 +244,30 @@ async function garagesForService(req, res) {
   }
 }
 
-
-// Dealer fields the eligibility rules actually read — isDealerBookable()
-// (helper/dealerStatus.js) plus the service-radius check. Projected rather
-// than pulling whole dealer documents, because this endpoint only ever counts
-// providers and prices them; it never renders a garage.
-const PROVIDER_DEALER_FIELDS =
-  "isBlocked online dealerStatus registrationStatus status isActive isDoc latitude longitude serviceRadiusKm"
-
-// GET /api/v1/services/:id?lat=&lng=&variant_id=&cc=
+// GET /api/v1/services/:id?lat=&lng=&bikeId=&variant_id=&cc=&towingRequired=
 //
 // The Service Detail screen's single read: BaseService merged with its
 // optional ServiceDetail content, plus the two numbers the screen puts next
 // to BOOK NOW — the cheapest available price and how many garages can
 // actually take the booking.
 //
-// Provider eligibility deliberately reuses isDealerBookable() and
-// isWithinServiceRadius() unchanged, so providerCount always agrees with the
-// list GET /api/v1/services/:id/garages returns for the same coordinates.
+// Eligibility runs through the same resolveEligibleGarages() the garage list
+// uses, so providerCount can never disagree with the list BOOK NOW opens.
 // `fromPrice` is indicative only — the payable amount still comes solely from
 // /pricing/quote (services/pricingEngine.js).
 async function getServiceById(req, res) {
   try {
     const { id } = req.params
-    const { lat, lng, variant_id, cc } = req.query
+    const { lat, lng, city, bikeId, variant_id, cc, towingRequired } = req.query
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ status: false, message: "Invalid service id" })
     }
     if (variant_id && !mongoose.Types.ObjectId.isValid(variant_id)) {
       return res.status(400).json({ status: false, message: "Invalid variant_id" })
+    }
+    if (bikeId && !mongoose.Types.ObjectId.isValid(bikeId)) {
+      return res.status(400).json({ status: false, message: "Invalid bikeId" })
     }
 
     const baseService = await BaseService.findOne({ _id: id, isActive: true }).populate("categoryId", "name icon")
@@ -221,31 +279,29 @@ async function getServiceById(req, res) {
     // content) is not an error — the merge falls back to the base fields.
     const detail = await ServiceDetail.findOne({ baseServiceId: id }).lean()
 
-    const adminServices = await AdminService.find({ base_service_id: id, isActive: true })
-      .select("dealer_id bikes")
-      .populate("dealer_id", PROVIDER_DEALER_FIELDS)
-      .lean()
+    const bikeContext = bikeId ? await resolveBikeContextById(bikeId, req.user_id || null) : null
 
-    let eligible = adminServices.filter(svc => svc.dealer_id && isDealerBookable(svc.dealer_id))
-
-    // With live coordinates, drop garages whose own radius can't reach the
-    // user — identical to the rule garagesForService applies, so the count
-    // shown here matches the list BOOK NOW opens. Without coordinates there is
-    // nothing to measure against and every bookable garage counts.
-    const latitude = Number.parseFloat(lat)
-    const longitude = Number.parseFloat(lng)
-    const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude)
-    if (hasCoords) {
-      eligible = eligible.filter(svc =>
-        isWithinServiceRadius(
-          calculateDistanceKm(latitude, longitude, svc.dealer_id.latitude, svc.dealer_id.longitude),
-          svc.dealer_id,
-        ),
-      )
+    let entries = []
+    let scope = null
+    try {
+      const result = await resolveEligibleGarages({
+        baseServiceId: id,
+        bikeContext,
+        variantId: bikeContext ? null : variant_id || null,
+        cc: parseCc(cc),
+        lat,
+        lng,
+        city,
+        towingRequired: parseBool(towingRequired),
+      })
+      entries = result.entries
+      scope = result.scope
+    } catch (err) {
+      return res.status(400).json({ status: false, message: "Invalid lat/lng" })
     }
 
-    const ccFilter = cc !== undefined && cc !== "" ? Number.parseInt(cc, 10) : null
-    const priceOptions = { variantId: variant_id || null, cc: Number.isNaN(ccFilter) ? null : ccFilter }
+    const prices = entries.map(e => e.price).filter(p => typeof p === "number")
+    const providerCount = new Set(entries.map(e => String(e.dealer._id))).size
 
     const service = mergeServiceDetail(baseService, detail, {
       formatUrl: url => formatImage(url, req),
@@ -256,10 +312,15 @@ async function getServiceById(req, res) {
       message: "Service fetched",
       data: {
         ...service,
-        fromPrice: computeFromPrice(eligible, priceOptions),
-        providerCount: countProviders(eligible),
+        fromPrice: prices.length ? Math.min(...prices) : null,
+        providerCount,
       },
-      meta: { scope: hasCoords ? "area" : "network" },
+      meta: {
+        scope: scope.kind === "network" ? "network" : "area",
+        scopeKind: scope.kind,
+        bikeMatched: !!bikeContext,
+        bikeId: bikeContext ? bikeContext.bikeId : null,
+      },
     })
   } catch (error) {
     console.error("Error fetching service detail:", error)

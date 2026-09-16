@@ -1498,7 +1498,8 @@ async function saveDealerServices(req, res) {
       if (bikes.length === 0) continue;
 
       // `companies` drives bike-compatibility matching for Quick Services /
-      // Recommended (see getCompatibleServiceIds in v1-api/helpers/geoAndRatings.js) —
+      // Recommended (see resolveEligibleServices in
+      // v1-api/helpers/serviceEligibility.js) —
       // derive it from the bike company each mapped variant actually belongs
       // to, rather than leaving it empty, or this service will never surface
       // for any bike.
