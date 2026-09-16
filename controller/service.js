@@ -1452,6 +1452,82 @@ async function updateServiceById(req, res) {
  * rather than throwing — a service with no priced bikes yet legitimately has
  * no compatible companies.
  */
+// A 24-hex ObjectId string. mongoose.Types.ObjectId.isValid() also accepts any
+// 12-character string ("undefined123" passes), so the round-tripped junk this
+// endpoint actually receives from the panel would slip through it.
+function isObjectIdString(value) {
+  return typeof value === "string" && /^[0-9a-fA-F]{24}$/.test(value);
+}
+
+function toObjectIdString(value) {
+  if (value === null || value === undefined) return null;
+  const str = String(value);
+  return isObjectIdString(str) ? str : null;
+}
+
+/**
+ * Validates the `pricing` array of saveDealerServices.
+ *
+ * Every field here reaches Mongoose as an ObjectId or a Number. Anything that
+ * can't be cast (a null serviceId from a deleted base service, a NaN price
+ * from an empty input box) throws a CastError deep inside findOne/create and
+ * surfaced as a blind 500. Reject it up front with a row-level message
+ * instead, so the panel can tell the admin which row is broken.
+ */
+function validatePricingRows(pricing) {
+  const errors = [];
+  const rows = [];
+
+  pricing.forEach((item, index) => {
+    const label = `pricing[${index}]`;
+
+    if (!item || typeof item !== "object") {
+      errors.push(`${label}: must be an object`);
+      return;
+    }
+
+    const { type } = item;
+    if (type !== "base" && type !== "additional") {
+      // Unknown types were silently dropped before; keep ignoring them so an
+      // older panel build sending extra rows doesn't fail the whole save.
+      return;
+    }
+
+    const serviceId = toObjectIdString(item.serviceId);
+    if (!serviceId) {
+      errors.push(`${label}: serviceId "${item.serviceId}" is not a valid id`);
+      return;
+    }
+
+    // variant_id is optional in both schemas ("Generic Bike" rows), but a
+    // non-null value that isn't an ObjectId is a bug, not a generic row.
+    let variantId = null;
+    if (item.variantId !== null && item.variantId !== undefined && item.variantId !== "") {
+      variantId = toObjectIdString(item.variantId);
+      if (!variantId) {
+        errors.push(`${label}: variantId "${item.variantId}" is not a valid id`);
+        return;
+      }
+    }
+
+    const cc = Number(item.cc);
+    if (!Number.isFinite(cc) || cc < 0) {
+      errors.push(`${label}: cc "${item.cc}" is not a valid number`);
+      return;
+    }
+
+    const price = Number(item.price);
+    if (!Number.isFinite(price) || price < 0) {
+      errors.push(`${label}: price "${item.price}" is not a valid number`);
+      return;
+    }
+
+    rows.push({ type, serviceId, variantId, cc, price });
+  });
+
+  return { rows, errors };
+}
+
 async function resolveCompanyIdsForVariants(variantIds) {
   const uniqueIds = [...new Set((variantIds || []).filter(Boolean).map(String))];
   if (!uniqueIds.length) return [];
@@ -1474,23 +1550,31 @@ async function resolveCompanyIdsForVariants(variantIds) {
 async function saveDealerServices(req, res) {
   try {
     const { dealerId, pricing } = req.body;
-    
+
     if (!dealerId || !Array.isArray(pricing)) {
       return res.status(400).json({ status: false, message: "Invalid payload" });
+    }
+
+    if (!isObjectIdString(String(dealerId))) {
+      return res.status(400).json({ status: false, message: "Invalid dealerId" });
+    }
+
+    const { rows, errors } = validatePricingRows(pricing);
+    if (errors.length) {
+      return res.status(400).json({
+        status: false,
+        message: `Invalid pricing rows: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` (+${errors.length - 5} more)` : ""}`,
+        errors,
+      });
     }
 
     const baseMap = {};
     const addlMap = {};
 
-    pricing.forEach(item => {
-      const { type, serviceId, variantId, cc, price } = item;
-      if (type === "base") {
-        if (!baseMap[serviceId]) baseMap[serviceId] = [];
-        baseMap[serviceId].push({ variant_id: variantId, cc, price });
-      } else if (type === "additional") {
-        if (!addlMap[serviceId]) addlMap[serviceId] = [];
-        addlMap[serviceId].push({ variant_id: variantId, cc, price });
-      }
+    rows.forEach(({ type, serviceId, variantId, cc, price }) => {
+      const target = type === "base" ? baseMap : addlMap;
+      if (!target[serviceId]) target[serviceId] = [];
+      target[serviceId].push({ variant_id: variantId, cc, price });
     });
 
     // Process Base Services (AdminService model)
@@ -1563,8 +1647,33 @@ async function saveDealerServices(req, res) {
 
     return res.status(200).json({ status: true, message: "Dealer services saved successfully" });
   } catch (error) {
-    console.error("Error saving dealer services:", error);
-    return res.status(500).json({ status: false, message: "Internal Server Error" });
+    // The generic 500 this used to return told nobody anything. Log the fields
+    // that actually identify the failure (CastError path/value, E11000 key)
+    // and echo the error name back so the panel can report something useful.
+    console.error("Error saving dealer services:", {
+      name: error?.name,
+      message: error?.message,
+      code: error?.code,
+      path: error?.path,
+      value: error?.value,
+      keyValue: error?.keyValue,
+      dealerId: req.body?.dealerId,
+      pricingCount: Array.isArray(req.body?.pricing) ? req.body.pricing.length : null,
+      stack: error?.stack,
+    });
+
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        status: false,
+        message: "Another save for this dealer is in progress. Please retry.",
+      });
+    }
+
+    return res.status(500).json({
+      status: false,
+      message: "Internal Server Error",
+      error: error?.name || "Error",
+    });
   }
 }
 
@@ -1678,6 +1787,8 @@ module.exports = {
   deleteAdminService,
   getDealerServices,
   saveDealerServices,
+  // exported for unit tests
+  validatePricingRows,
   getAdminServicesByDealer,
   getDealersByService,
 }
