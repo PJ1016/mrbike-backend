@@ -35,6 +35,14 @@ async function createIndexes() {
     await mongoose.connection.db.collection('adminservices').createIndex({ dealer_id: 1, isActive: 1 })
     await mongoose.connection.db.collection('adminservices').createIndex({ dealers: 1, isActive: 1 })
     await mongoose.connection.db.collection('adminservices').createIndex({ createdAt: -1 })
+    // Bike-aware discovery (v1-api/helpers/serviceEligibility.js) reads
+    // AdminService once per request, filtering on isActive + the saved bikes'
+    // brands, optionally narrowed to the in-range dealers. `companies` is an
+    // array, so this is a multikey index on the brand fan-out.
+    await mongoose.connection.db.collection('adminservices').createIndex({ isActive: 1, companies: 1 })
+    // Provider selection for one service (GET /api/v1/services/:id and
+    // /:id/garages) filters base_service_id + isActive together.
+    await mongoose.connection.db.collection('adminservices').createIndex({ base_service_id: 1, isActive: 1 })
     console.log('✓ AdminService indexes created')
     
     // AdditionalService indexes
@@ -59,10 +67,17 @@ async function createIndexes() {
     await mongoose.connection.db.collection('servicedetails').createIndex({ isPublished: 1 })
     console.log('✓ ServiceDetail indexes created')
     
+    // UserBike — discovery resolves a rider's WHOLE garage on every home load.
+    // The unique { user_id, plate_number } index the model declares already
+    // serves this as a prefix; created here too so a fresh environment that
+    // has not yet built the model index is still covered.
+    await mongoose.connection.db.collection('userbikes').createIndex({ user_id: 1 })
+    console.log('✓ UserBike indexes created')
+
     // Vendor/Dealer indexes
     await mongoose.connection.db.collection('vendors').createIndex({ shopName: 1 })
     await mongoose.connection.db.collection('vendors').createIndex({ email: 1 })
-    // Nearby-garage lookups (dealerWithInRange, findNearbyDealers) pre-filter
+    // Nearby-garage lookups (dealerWithInRange, resolveDealerScope) pre-filter
     // on online + a lat/lng bounding box before the exact per-dealer
     // service-radius check runs. That box is sized off the widest radius a
     // dealer may configure, so it is deliberately generous — this index keeps

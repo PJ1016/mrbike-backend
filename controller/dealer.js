@@ -19,6 +19,11 @@ const Bike = require('../models/bikeCompanyModel')
 const UserBike = require("../models/userBikeModel")
 const servicess = require("../models/service_model")
 const AdminService = require("../models/adminService")
+const {
+  resolveDealerScope,
+  resolveDiscoveryBikeContexts,
+  matchingBikeContexts,
+} = require("../v1-api/helpers/serviceEligibility");
 const { sendBookingNotification } = require("../helper/pushNotification");
 const { logDealerActivity } = require("../helper/dealerActivityLog");
 const DealerActivityLog = require("../models/DealerActivityLog");
@@ -65,9 +70,24 @@ async function checkPermission(user_id, requiredPermission) {
   }
 }
 
+// GET /bikedoctor/dealer/dealerWithInRange
+//   ?userLat=&userLon=&serviceId=&bikeId=&bikeIds=&variant_id=&cc=&towingRequired=
+//
+// Nearby garages for the user app. Location + bookability now come from the
+// shared scope resolver (v1-api/helpers/serviceEligibility.js) rather than a
+// second hand-rolled copy of the same rules, so this list can never disagree
+// with home/discovery or with the provider list BOOK NOW opens.
+//
+// Bike awareness is additive and follows the same rule as the rest of the app:
+//   - bikeId / variant_id given  → BOOKING semantics, that one bike only
+//   - signed-in rider, no bike   → DISCOVERY semantics, a garage stays if it
+//                                  can serve AT LEAST ONE saved bike (union)
+//   - anonymous, no bike         → no compatibility filter, as before
+//
+// The response shape (full dealer documents under `data`) is unchanged.
 const dealerWithInRange = async (req, res) => {
   try {
-    const { userLat, userLon, serviceId, variant_id, cc } = req.query;
+    const { userLat, userLon, serviceId, bikeId, bikeIds, variant_id, cc, towingRequired } = req.query;
 
     if (!userLat || !userLon) {
       return res.status(400).json({
@@ -76,76 +96,68 @@ const dealerWithInRange = async (req, res) => {
       });
     }
 
-    const latitude = parseFloat(userLat);
-    const longitude = parseFloat(userLon);
-
-    console.log(`📍 Searching dealers near lat: ${latitude}, lon: ${longitude}`);
-
-    if (isNaN(latitude) || isNaN(longitude)) {
+    let scope;
+    try {
+      scope = await resolveDealerScope({
+        lat: userLat,
+        lng: userLon,
+        towingRequired: towingRequired === "true" || towingRequired === "1",
+        // Legacy contract: this endpoint has always returned whole dealer
+        // documents, and the app reads fields well beyond the eligibility set.
+        select: null,
+      });
+    } catch (err) {
       return res.status(400).json({
         success: false,
         message: "Invalid latitude or longitude."
       });
     }
 
-    // Coarse pre-filter only. The box is sized off the largest radius any
-    // dealer may configure — not off the default — otherwise a garage that
-    // serves 25 km would be dropped before its own radius is ever consulted.
-    const boxDelta = serviceRadiusBoundingBoxDegrees();
+    let nearbyDealers = scope.dealerIds
+      .map(id => scope.dealerById.get(String(id)))
+      .filter(Boolean);
 
-    const dealers = (await Vendor.find({
-      online: true,
-      wallet: { $gt: -500 },
-      isBlocked: { $ne: true },
-      latitude: { $gte: latitude - boxDelta, $lte: latitude + boxDelta },
-      longitude: { $gte: longitude - boxDelta, $lte: longitude + boxDelta },
-    })).filter(isDealerBookable); // approved + active + online, not just online
-
-    console.log(`✅ Total Dealers Found: ${dealers.length}`);
-
-    // Each garage decides its own reach (serviceRadiusKm, default 3 km) — a
-    // user outside it never sees that garage or its services.
-    let nearbyDealers = dealers.filter(dealer => {
-      const distance = calculateDistance(
-        latitude,
-        longitude,
-        dealer.latitude,
-        dealer.longitude
-      );
-      return isWithinServiceRadius(distance, dealer);
+    // Which bikes to judge compatibility against. An explicitly selected bike
+    // wins; otherwise a signed-in rider's whole garage is used, so a garage is
+    // only dropped when it can serve none of their bikes.
+    const { contexts: bikeContexts } = await resolveDiscoveryBikeContexts({
+      userId: req.user_id || null,
+      bikeId,
+      bikeIds,
     });
 
-    // If the user has selected a service + bike variant, only keep dealers who
-    // actually offer that service for that variant with pricing configured.
-    // (base_service_id is the id the User App sends as serviceId; AdminService
-    // _id is accepted as a fallback, same as the resolution used at booking time.)
-    if (serviceId && variant_id) {
+    if (bikeContexts.length || (serviceId && variant_id)) {
+      const filter = { isActive: true, dealer_id: { $in: nearbyDealers.map(d => d._id) } };
+      if (serviceId) filter.$or = [{ base_service_id: serviceId }, { _id: serviceId }];
+      if (bikeContexts.length) filter.companies = { $in: bikeContexts.map(ctx => ctx.companyId) };
+
+      const rows = await AdminService.find(filter).select("dealer_id companies bikes").lean();
+
       const ccFilter = cc !== undefined && cc !== "" ? parseInt(cc, 10) : null;
-      const dealerIds = nearbyDealers.map(dealer => dealer._id);
-
-      const matchingAdminServices = await AdminService.find({
-        dealer_id: { $in: dealerIds },
-        isActive: true,
-        "bikes.variant_id": variant_id,
-        $or: [{ base_service_id: serviceId }, { _id: serviceId }],
-      });
-
       const eligibleDealerIds = new Set();
-      matchingAdminServices.forEach(svc => {
-        const hasConfiguredBike = (svc.bikes || []).some(bike => {
-          if (!bike.variant_id || String(bike.variant_id) !== String(variant_id)) {
-            return false;
-          }
-          if (ccFilter !== null && bike.cc !== ccFilter) {
-            return false;
-          }
-          return bike.price != null && bike.price > 0;
-        });
-        if (hasConfiguredBike) {
-          eligibleDealerIds.add(String(svc.dealer_id));
+
+      rows.forEach(svc => {
+        const servesASavedBike = bikeContexts.length
+          ? matchingBikeContexts(svc, bikeContexts).length > 0
+          : true;
+        if (!servesASavedBike) return;
+
+        // The pre-existing variant/cc narrowing, kept verbatim so clients that
+        // only know the variant behave exactly as they did before.
+        if (!bikeContexts.length && variant_id) {
+          const hasConfiguredBike = (svc.bikes || []).some(bike => {
+            if (!bike.variant_id || String(bike.variant_id) !== String(variant_id)) return false;
+            if (ccFilter !== null && bike.cc !== ccFilter) return false;
+            return bike.price != null && bike.price > 0;
+          });
+          if (!hasConfiguredBike) return;
         }
+
+        eligibleDealerIds.add(String(svc.dealer_id));
       });
 
+      // Honest empty result: no garage that can serve this rider's bike(s) for
+      // this service means an empty list, never a fallback to other garages.
       nearbyDealers = nearbyDealers.filter(dealer => eligibleDealerIds.has(String(dealer._id)));
     }
 
