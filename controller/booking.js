@@ -859,13 +859,6 @@ async function createBooking(req, res) {
       }
       throw conditionError;
     }
-    const resolvedTowingRequired = isTowingRequired(resolvedBikeCondition);
-    // The note only describes a towing problem, so it is dropped entirely for
-    // a rideable bike rather than stored against a booking it cannot apply to.
-    const resolvedTowingNote = resolvedTowingRequired
-      ? (typeof towingNote === "string" && towingNote.trim() ? towingNote.trim().slice(0, 500) : null)
-      : null;
-
     // ── Validate Dealer ───────────────────────────────────────────────────────
     // Reload fresh from the DB on every booking attempt — never trust a garage
     // shown in the app that may have gone offline/inactive since it was fetched.
@@ -946,6 +939,20 @@ async function createBooking(req, res) {
         transportOption = TRANSPORT_OPTIONS.SELF_VISIT;
       }
     }
+
+    // ── Towing requirement ────────────────────────────────────────────────────
+    // Derived only now, because it takes BOTH halves: a bike that cannot be
+    // ridden AND a transport option under which the garage collects it. A
+    // customer who declares a dead bike but self-visits (or only wants it
+    // dropped back) is bringing it in themselves, so nothing is towed and
+    // nothing is charged for towing.
+    const resolvedTowingRequired = isTowingRequired(resolvedBikeCondition, transportOption);
+    // The note only describes a towing problem, so it is dropped entirely when
+    // nothing is being towed rather than stored against a booking it cannot
+    // apply to.
+    const resolvedTowingNote = resolvedTowingRequired
+      ? (typeof towingNote === "string" && towingNote.trim() ? towingNote.trim().slice(0, 500) : null)
+      : null;
 
     // ── Call pricingEngine.computePriceBreakdown() ─────────────────────────────
     let breakdown;
@@ -1348,6 +1355,7 @@ async function updateBooking(req, res) {
           // the service list must not silently re-derive towing from the
           // dealer's current rate, nor drop a charge the dealer already set.
           bikeCondition: existingBooking.bikeCondition,
+          towingRequiredOverride: existingBooking.towingRequired,
           towingChargeOverride: existingBooking.towingCharge,
           // …and the platform fee this booking was created with, for the same
           // reason: a service-list edit must not pull in the admin's current
@@ -3228,6 +3236,9 @@ async function updateTowingCharge(req, res) {
         // Any reward/promo discount already on this booking is preserved as-is.
         discountAmount: existingBooking.discountAmount,
         bikeCondition: existingBooking.bikeCondition,
+        // Replay the booking's own flag — the towing rule this booking was
+        // created under is part of its frozen snapshot, exactly like the fee.
+        towingRequiredOverride: existingBooking.towingRequired,
         towingChargeOverride: amount,
         // The platform fee is frozen at what the booking was created with —
         // revising towing must not re-read the admin's current setting.

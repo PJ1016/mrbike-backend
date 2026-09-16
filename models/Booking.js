@@ -158,9 +158,12 @@ const bookingSchema = new mongoose.Schema(
 
     // ── Bike condition & towing requirement ──────────────────────────────────
     // Declared by the customer during booking. `towingRequired` is always
-    // derived from `bikeCondition` server-side (see pricingEngine.isTowingRequired)
-    // and never accepted from a client. Both are set once at creation and are
-    // not editable afterwards — they are what the customer declared, and the
+    // derived server-side from `bikeCondition` AND `transportOption` together
+    // (see pricingEngine.isTowingRequired) and never accepted from a client:
+    // a bike that cannot be ridden is only towed when the GARAGE is the one
+    // collecting it, so a customer who brings a dead bike in themselves is
+    // never charged for towing. All three are set once at creation and are not
+    // editable afterwards — they are what the customer declared, and the
     // towing charge is priced off them.
     //
     // The RIDEABLE/false defaults are what every booking created before this

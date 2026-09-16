@@ -50,8 +50,9 @@ const TRANSPORT_OPTIONS = Object.freeze({
 
 /**
  * Condition the customer declares for their bike during booking. Only
- * RIDEABLE can reach the garage under its own power — the other two require
- * the bike to be towed, which is what drives the towing charge below.
+ * RIDEABLE can reach the garage under its own power — the other two mean the
+ * bike has to be carried there, which drives the towing charge below whenever
+ * the garage is the one carrying it (see TOWING_TRANSPORT_OPTIONS).
  *
  * RIDEABLE is the default for any booking (and every booking created before
  * this field existed), so legacy bookings read back as "no towing required".
@@ -65,6 +66,21 @@ const BIKE_CONDITIONS = Object.freeze({
 const TOWING_REQUIRED_CONDITIONS = Object.freeze([
   BIKE_CONDITIONS.NOT_RIDEABLE,
   BIKE_CONDITIONS.COMPLETELY_DEAD,
+]);
+
+/**
+ * Transport options under which the GARAGE is the one moving the bike to the
+ * workshop, and is therefore the party that has to tow a bike that cannot be
+ * ridden there.
+ *
+ * SELF_VISIT and DROP_ONLY both mean the customer brings the bike in
+ * themselves — on a truck, a friend's help, whatever — so the garage never
+ * tows it and must not charge for towing, however bad the bike's condition is.
+ * (DROP_ONLY only covers the return leg, which is what dropCharges pay for.)
+ */
+const TOWING_TRANSPORT_OPTIONS = Object.freeze([
+  TRANSPORT_OPTIONS.PICKUP_ONLY,
+  TRANSPORT_OPTIONS.PICKUP_AND_DROP,
 ]);
 
 // Upper bound for a manually entered towing charge. Purely a typo guard
@@ -196,19 +212,38 @@ function normalizeBikeCondition(bikeCondition) {
   return value;
 }
 
+/** Whether the garage is the party collecting the bike under this option. */
+function transportNeedsTowing(transportOption) {
+  return TOWING_TRANSPORT_OPTIONS.includes(transportOption);
+}
+
 /**
- * Towing is required by the declared condition of the bike, never by a
- * client-supplied boolean — a customer app could otherwise flip the flag off
- * and dodge the charge. Always derive it here.
+ * Towing is required by the declared condition of the bike AND by who is
+ * bringing it in — never by a client-supplied boolean, which a customer app
+ * could otherwise flip off to dodge the charge. Always derive it here.
+ *
+ * A bike that cannot be ridden only has to be towed when the GARAGE is the one
+ * fetching it (see TOWING_TRANSPORT_OPTIONS). A customer who declares a dead
+ * bike and then chooses to bring it to the shop themselves is doing the towing
+ * job the garage would have charged for, so there is nothing to charge.
+ *
+ * `transportOption` is always known by the time this is called — every caller
+ * either validated it through computeTransportCharges() or read it off an
+ * existing booking — so an absent one means "no garage collection", not
+ * "unknown".
  */
-function isTowingRequired(bikeCondition) {
-  return TOWING_REQUIRED_CONDITIONS.includes(normalizeBikeCondition(bikeCondition));
+function isTowingRequired(bikeCondition, transportOption) {
+  return (
+    TOWING_REQUIRED_CONDITIONS.includes(normalizeBikeCondition(bikeCondition)) &&
+    transportNeedsTowing(transportOption)
+  );
 }
 
 /**
  * Resolve the towing charge for a booking.
  *
- * - No towing required -> always 0, whatever anyone passes.
+ * - No towing required (rideable bike, or a customer bringing it in
+ *   themselves) -> always 0, whatever anyone passes.
  * - `override` (a dealer/admin editing the charge on an existing booking,
  *   see controller/booking.js#updateTowingCharge) wins when supplied.
  * - Otherwise it is the dealer's configured rate, and only when the dealer
@@ -391,6 +426,7 @@ function computePriceBreakdown({
   discountAmount = 0,
   promo = null,
   bikeCondition = BIKE_CONDITIONS.RIDEABLE,
+  towingRequiredOverride = null,
   towingChargeOverride = null,
   platformFeeConfig = null,
   platformFeeOverride = null,
@@ -405,8 +441,20 @@ function computePriceBreakdown({
   // Towing sits alongside pickup/drop: a transport charge that is part of the
   // subtotal, so it is taxed and commissioned exactly like they are, and shows
   // as its own line on the bill rather than being folded into the service.
+  //
+  // It takes BOTH a bike that cannot be ridden and a transport option under
+  // which the garage collects it — a customer bringing a dead bike in on their
+  // own is not being towed by anyone and is never charged for it.
+  //
+  // `towingRequiredOverride` replays what an EXISTING booking was created with,
+  // exactly like platformFeeOverride: a recompute (an edited service list, a
+  // revised towing charge) must never re-derive this and quietly drop a towing
+  // charge the customer already agreed to under the rule of the day.
   const condition = normalizeBikeCondition(bikeCondition);
-  const towingRequired = isTowingRequired(condition);
+  const towingRequired =
+    towingRequiredOverride === null || towingRequiredOverride === undefined
+      ? isTowingRequired(condition, transportOption)
+      : Boolean(towingRequiredOverride);
   const towingCharge = resolveTowingCharge({
     towingRequired,
     dealer,
@@ -637,6 +685,7 @@ module.exports = {
   TRANSPORT_OPTIONS,
   BIKE_CONDITIONS,
   TOWING_REQUIRED_CONDITIONS,
+  TOWING_TRANSPORT_OPTIONS,
   MAX_TOWING_CHARGE,
   MAX_PLATFORM_FEE,
   MAX_COMMISSION_TAX_RATE,
@@ -650,6 +699,7 @@ module.exports = {
   computeTransportCharges,
   normalizeBikeCondition,
   isTowingRequired,
+  transportNeedsTowing,
   resolveTowingCharge,
   resolvePlatformFee,
   resolveCommissionTaxRate,

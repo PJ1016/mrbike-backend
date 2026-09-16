@@ -28,7 +28,9 @@ const { getPricingSettings } = require("../services/appSettingsService");
 // bikeCondition (RIDEABLE | NOT_RIDEABLE | COMPLETELY_DEAD) is optional and
 // defaults to RIDEABLE, so clients that predate it keep getting the same
 // quote they always did. The two non-rideable values add the dealer's towing
-// charge as its own line in the breakdown.
+// charge as its own line in the breakdown — but only for a transportOption
+// under which the garage collects the bike; a customer bringing a dead bike in
+// themselves is never quoted for towing.
 // bikeCC is required to resolve per-CC service pricing (AdminService.bikes is
 // keyed by cc) — not called out explicitly in the original spec's input list,
 // but there is no way to price a service without it.
@@ -91,7 +93,7 @@ const getPricingQuote = async (req, res) => {
       // matches exactly what the breakdown call further down computes.
       const { pickupCharges, dropCharges } = computeTransportCharges({ transportOption, dealer });
       const towingCharge = resolveTowingCharge({
-        towingRequired: isTowingRequired(bikeCondition),
+        towingRequired: isTowingRequired(bikeCondition, transportOption),
         dealer,
       });
       const subtotal = round2(serviceAmount + pickupCharges + dropCharges + towingCharge);
