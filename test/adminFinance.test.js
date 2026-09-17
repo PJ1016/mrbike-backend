@@ -9,6 +9,7 @@ const transactions = fs.readFileSync(path.join(root, "controller/adminTransactio
 const adjustment = fs.readFileSync(path.join(root, "services/adminWalletAdjustmentService.js"), "utf8");
 const reconciliation = fs.readFileSync(path.join(root, "services/walletReconciliationService.js"), "utf8");
 const wallet = fs.readFileSync(path.join(root, "models/Wallet_modal.js"), "utf8");
+const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 
 assert.match(financeRoutes, /router\.post\("\/wallets\/:id\/adjustments", requireAdmin/);
 assert.match(finance, /reason, reference and x-idempotency-key are required/);
@@ -17,6 +18,7 @@ assert.match(finance, /transactionType deposit is only valid for credit adjustme
 assert.match(adjustment, /transactionType === "deposit" && direction === "Credit" \? "deposit" : "manual"/);
 assert.match(adjustment, /wallet: \{ \$gte: round2\(amount \+ CREDIT_LIMIT\) \}/);
 assert.match(wallet, /one_wallet_request_per_dealer_idempotency_key/);
+assert.match(server, /allowedHeaders: \["Content-Type", "Authorization", "token", "x-idempotency-key"\]/);
 assert.match(transactions, /page = 1/);
 assert.match(transactions, /dealer_id/);
 assert.match(transactions, /transaction_type/);

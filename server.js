@@ -315,7 +315,7 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
-  allowedHeaders: ["Content-Type", "Authorization", "token"],
+  allowedHeaders: ["Content-Type", "Authorization", "token", "x-idempotency-key"],
 };
 
 app.use(cors(corsOptions));
