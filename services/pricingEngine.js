@@ -114,13 +114,37 @@ function round2(n) {
 
 /**
  * Resolve the price of a single AdminService/additional-service document for
- * a given bike CC. `doc.bikes` is the per-CC pricing table on the service.
+ * a bike. Legacy callers may supply only CC; bike-aware callers must also pass
+ * model/variant IDs so another variant with the same engine size cannot lend
+ * its price to the selected bike.
  */
-function resolvePriceForCC(doc, bikeCC) {
+function resolvePriceForCC(doc, bikeCC, bikeContext = null) {
   if (!doc || !Array.isArray(doc.bikes)) return 0;
   const cc = Number(bikeCC);
-  const match = doc.bikes.find((b) => Number(b.cc) === cc);
-  return match ? Number(match.price) || 0 : 0;
+  const ccMatches = doc.bikes.filter(
+    (row) => Number(row.cc) === cc && Number.isFinite(Number(row.price))
+  );
+
+  // Keep old non-bike-aware integrations working, while all user booking
+  // paths below provide the selected variant context.
+  if (!bikeContext) {
+    return ccMatches.length ? Number(ccMatches[0].price) || 0 : 0;
+  }
+
+  const variantId = bikeContext.variantId || bikeContext.variant_id;
+  const modelId = bikeContext.modelId || bikeContext.model_id;
+  const matches = ccMatches.filter((row) => {
+    if (row.variant_id && String(row.variant_id) !== String(variantId || "")) return false;
+    if (row.model_id && String(row.model_id) !== String(modelId || "")) return false;
+    return true;
+  });
+
+  // Exact variant > model-specific generic > company/CC generic.
+  matches.sort((a, b) => {
+    const specificity = (row) => Number(Boolean(row.variant_id)) + Number(Boolean(row.model_id));
+    return specificity(b) - specificity(a) || Number(a.price) - Number(b.price);
+  });
+  return matches.length ? Number(matches[0].price) || 0 : 0;
 }
 
 /**
@@ -129,10 +153,10 @@ function resolvePriceForCC(doc, bikeCC) {
  * per-service-loop that used to live in controller/booking.js and
  * controller/payment.js.
  */
-function resolveServiceAmount({ services = [], additionalServices = [], bikeCC }) {
+function resolveServiceAmount({ services = [], additionalServices = [], bikeCC, bikeContext = null }) {
   let amount = 0;
-  for (const svc of services) amount += resolvePriceForCC(svc, bikeCC);
-  for (const svc of additionalServices) amount += resolvePriceForCC(svc, bikeCC);
+  for (const svc of services) amount += resolvePriceForCC(svc, bikeCC, bikeContext);
+  for (const svc of additionalServices) amount += resolvePriceForCC(svc, bikeCC, bikeContext);
   return round2(amount);
 }
 

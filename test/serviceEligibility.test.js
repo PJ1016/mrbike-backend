@@ -17,6 +17,7 @@ const {
   buildScope,
   buildServiceEligibilityIndex,
   buildGarageEntries,
+  hasEligibleWalletBalance,
 } = require("../v1-api/helpers/serviceEligibility");
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ const M9 = "6512d0000000000000000009";
 const V1 = "6512e0000000000000000001";
 const V2 = "6512e0000000000000000002";
 const V3 = "6512e0000000000000000003";
+const V4 = "6512e0000000000000000004";
 const V9 = "6512e0000000000000000009";
 
 const D1 = "6512f0000000000000000001";
@@ -41,6 +43,7 @@ const D3 = "6512f0000000000000000003";
 const BIKE_A = { bikeId: "bikeA", companyId: HONDA, modelId: M1, variantId: V1, cc: 110 };
 const BIKE_B = { bikeId: "bikeB", companyId: HONDA, modelId: M2, variantId: V2, cc: 150 };
 const BIKE_C = { bikeId: "bikeC", companyId: HERO, modelId: M3, variantId: V3, cc: 200 };
+const BIKE_SAME_CC_UNMAPPED = { bikeId: "bikeSameCc", companyId: HERO, modelId: M3, variantId: V4, cc: 200 };
 
 // Exactly the spec's example: A serves services 1,2 — B serves 2,3 — C serves 4,5.
 const ROWS = [
@@ -111,6 +114,12 @@ assert.deepStrictEqual(dealerScopeBaseFilter(), {
   isBlocked: { $ne: true },
   wallet: { $gt: -500 },
 });
+assert.strictEqual(hasEligibleWalletBalance(0), true);
+assert.strictEqual(hasEligibleWalletBalance(250), true);
+assert.strictEqual(hasEligibleWalletBalance(-499), true);
+assert.strictEqual(hasEligibleWalletBalance(-500), false);
+assert.strictEqual(hasEligibleWalletBalance(-900), false);
+assert.strictEqual(hasEligibleWalletBalance(null), false);
 // A bike that has to be towed may only ever see garages that tow.
 assert.strictEqual(dealerScopeBaseFilter({ towingRequired: true }).providesTowing, true);
 
@@ -128,6 +137,10 @@ assert.strictEqual(scopeOf([]).isEmpty, true);
 // ── Per-row bike compatibility ──────────────────────────────────────────────
 assert.strictEqual(adminServiceSupportsBike(ROWS[0], BIKE_A), true);
 assert.strictEqual(adminServiceSupportsBike(ROWS[0], BIKE_B), false);
+// Same company/model/CC is not compatibility when a different exact variant
+// is mapped (production regression: TVS APACHI RTR 200).
+assert.strictEqual(adminServiceSupportsBike(ROWS[3], BIKE_SAME_CC_UNMAPPED), false);
+assert.strictEqual(adminServiceSupportsBike(ROWS[3], BIKE_C), true);
 // Brand not listed → no match even though a price row exists.
 assert.strictEqual(adminServiceSupportsBike(ROWS[3], BIKE_A), false);
 // No bike in play → nothing to be incompatible with.
@@ -169,6 +182,13 @@ assert.strictEqual(resolveIndicativePrice({ bikes: [] }, []), null);
 
   const c = buildServiceEligibilityIndex({ rows: ROWS, scope: ALL_DEALERS, bikeContexts: [BIKE_C] });
   assert.deepStrictEqual(c.serviceIds.sort(), ["svc4", "svc5"]);
+
+  const sameCcUnmapped = buildServiceEligibilityIndex({
+    rows: ROWS,
+    scope: ALL_DEALERS,
+    bikeContexts: [BIKE_SAME_CC_UNMAPPED],
+  });
+  assert.deepStrictEqual(sameCcUnmapped.serviceIds, []);
 
   // svc6 is priced for a bike nobody owns and must never surface.
   assert.ok(!a.serviceIds.includes("svc6"));

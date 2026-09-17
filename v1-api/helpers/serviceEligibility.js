@@ -58,7 +58,12 @@ const GARAGE_DEALER_FIELDS =
 
 // A dealer must also be solvent to take work — same floor the nearby-dealer
 // lookup in geoAndRatings.js applies.
-const SOLVENCY_FILTER = { wallet: { $gt: -500 } }
+const MINIMUM_SERVICE_WALLET = -500
+const SOLVENCY_FILTER = { wallet: { $gt: MINIMUM_SERVICE_WALLET } }
+
+function hasEligibleWalletBalance(wallet) {
+  return typeof wallet === "number" && Number.isFinite(wallet) && wallet > MINIMUM_SERVICE_WALLET
+}
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -487,6 +492,8 @@ function buildGarageEntries({ rows = [], scope, bikeContext = null, variantId = 
 module.exports = {
   ELIGIBILITY_DEALER_FIELDS,
   GARAGE_DEALER_FIELDS,
+  MINIMUM_SERVICE_WALLET,
+  hasEligibleWalletBalance,
   toBikeContext,
   normalizeIdList,
   resolveBikeContextsForUser,

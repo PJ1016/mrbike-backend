@@ -117,6 +117,7 @@ async function usersignin(req, res) {
         isVerify: false,
         isProfile: false,
         isDoc: false,
+        wallet: 0,
       });
     } else {
       dealer.ftoken = ftoken || dealer.ftoken;
@@ -249,6 +250,7 @@ async function verifyOTP(req, res) {
         isProfile: false,
         isDoc: false,
         isActive: true,
+        wallet: 0,
         ...(isTestAccountLogin ? { isPlayStoreTestAccount: true } : {}),
       });
 

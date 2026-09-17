@@ -879,11 +879,14 @@ async function createBooking(req, res) {
     // User App sends BaseService IDs; resolve to AdminService IDs for correct pricing and refs
     let resolvedServiceIds = services;
     let serviceDocs = [];
-    const bikeData = await UserBike.findOne({ _id: userBike_id, user_id });
+    const bikeData = await UserBike.findOne({ _id: userBike_id, user_id }).populate({
+      path: "variant_id",
+      select: "model_id engine_cc",
+    });
     if (!bikeData) {
       return res.status(400).json({ success: false, message: "User bike not found" });
     }
-    const bikeCC = parseInt(bikeData.bike_cc || 0);
+    const bikeCC = parseInt(bikeData.variant_id?.engine_cc || bikeData.bike_cc || 0);
 
     // ── Single Active Booking Per Bike ────────────────────────────────────────
     // Server-side source of truth: a bike cannot have two non-final bookings
@@ -961,6 +964,10 @@ async function createBooking(req, res) {
         services: serviceDocs,
         additionalServices: additionalServiceDocs,
         bikeCC,
+        bikeContext: {
+          variantId: bikeData.variant_id?._id || bikeData.variant_id,
+          modelId: bikeData.variant_id?.model_id,
+        },
       });
 
       // ── Re-validate promo code at creation time ─────────────────────────────
@@ -1330,7 +1337,9 @@ async function updateBooking(req, res) {
         Vendor.findById(existingBooking.dealer_id)
           .select("tax commission pickupCharges dropCharges providesPickup providesDrop providesTowing towingCharges")
           .lean(),
-        UserBike.findById(existingBooking.userBike_id).select("bike_cc"),
+        UserBike.findById(existingBooking.userBike_id)
+          .select("bike_cc variant_id")
+          .populate({ path: "variant_id", select: "model_id engine_cc" }),
         AdminService.find({ _id: { $in: existingBooking.services } }).select("bikes"),
         AdditionalService.find({ _id: { $in: existingBooking.additionalServices } }).select("bikes"),
       ]);
@@ -1339,8 +1348,16 @@ async function updateBooking(req, res) {
         return res.status(404).json({ success: false, message: "Dealer not found for this booking" });
       }
 
-      const bikeCC = parseInt(bikeData?.bike_cc || 0);
-      const serviceAmount = resolveServiceAmount({ services: mainDocs, additionalServices: addlDocs, bikeCC });
+      const bikeCC = parseInt(bikeData?.variant_id?.engine_cc || bikeData?.bike_cc || 0);
+      const serviceAmount = resolveServiceAmount({
+        services: mainDocs,
+        additionalServices: addlDocs,
+        bikeCC,
+        bikeContext: {
+          variantId: bikeData?.variant_id?._id || bikeData?.variant_id,
+          modelId: bikeData?.variant_id?.model_id,
+        },
+      });
 
       let breakdown;
       try {
@@ -3211,7 +3228,9 @@ async function updateTowingCharge(req, res) {
       Vendor.findById(existingBooking.dealer_id)
         .select("tax commission pickupCharges dropCharges providesPickup providesDrop providesTowing towingCharges")
         .lean(),
-      UserBike.findById(existingBooking.userBike_id).select("bike_cc"),
+      UserBike.findById(existingBooking.userBike_id)
+        .select("bike_cc variant_id")
+        .populate({ path: "variant_id", select: "model_id engine_cc" }),
       AdminService.find({ _id: { $in: existingBooking.services } }).select("bikes"),
       AdditionalService.find({ _id: { $in: existingBooking.additionalServices } }).select("bikes"),
     ]);
@@ -3220,11 +3239,15 @@ async function updateTowingCharge(req, res) {
       return res.status(404).json({ success: false, message: "Dealer not found for this booking" });
     }
 
-    const bikeCC = parseInt(bikeData?.bike_cc || 0);
+    const bikeCC = parseInt(bikeData?.variant_id?.engine_cc || bikeData?.bike_cc || 0);
     const serviceAmount = resolveServiceAmount({
       services: mainDocs,
       additionalServices: addlDocs,
       bikeCC,
+      bikeContext: {
+        variantId: bikeData?.variant_id?._id || bikeData?.variant_id,
+        modelId: bikeData?.variant_id?.model_id,
+      },
     });
 
     let breakdown;

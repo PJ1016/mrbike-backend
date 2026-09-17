@@ -12,6 +12,7 @@ const {
 } = require("../services/pricingEngine");
 const { validatePromoCode } = require("../services/promoService");
 const { getPricingSettings } = require("../services/appSettingsService");
+const { resolveBikeContextById } = require("../v1-api/helpers/serviceEligibility");
 
 // POST /pricing/quote
 //
@@ -24,7 +25,7 @@ const { getPricingSettings } = require("../services/appSettingsService");
 // promo is actually locked onto a booking, and services/invoiceService.js
 // for where its usage is finally counted, only after payment succeeds).
 //
-// Body: { dealerId, serviceIds: [AdminServiceId], additionalServiceIds?, transportOption, bikeCC, promoCode?, bikeCondition? }
+// Body: { dealerId, serviceIds: [AdminServiceId], additionalServiceIds?, transportOption, bikeCC, bikeId?, promoCode?, bikeCondition? }
 // bikeCondition (RIDEABLE | NOT_RIDEABLE | COMPLETELY_DEAD) is optional and
 // defaults to RIDEABLE, so clients that predate it keep getting the same
 // quote they always did. The two non-rideable values add the dealer's towing
@@ -36,7 +37,7 @@ const { getPricingSettings } = require("../services/appSettingsService");
 // but there is no way to price a service without it.
 const getPricingQuote = async (req, res) => {
   try {
-    const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC, promoCode, bikeCondition } = req.body;
+    const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC, bikeId, promoCode, bikeCondition } = req.body;
 
     if (!dealerId) {
       return res.status(400).json({ success: false, message: "dealerId is required" });
@@ -78,7 +79,32 @@ const getPricingQuote = async (req, res) => {
         .lean();
     }
 
-    const serviceAmount = resolveServiceAmount({ services, additionalServices, bikeCC });
+    let bikeContext = null;
+    if (bikeId) {
+      let userId = null;
+      try {
+        userId = jwt_decode(req.headers.token)?.user_id || null;
+      } catch (_) {
+        userId = null;
+      }
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Authentication is required for selected-bike pricing" });
+      }
+      bikeContext = await resolveBikeContextById(bikeId, userId);
+      if (!bikeContext) {
+        return res.status(400).json({ success: false, message: "Selected user bike was not found" });
+      }
+    }
+
+    // The populated catalog variant is authoritative. UserBike.bike_cc and a
+    // client-supplied bikeCC are legacy denormalized values and may be stale.
+    const resolvedBikeCC = bikeContext?.cc ?? bikeCC;
+    const serviceAmount = resolveServiceAmount({
+      services,
+      additionalServices,
+      bikeCC: resolvedBikeCC,
+      bikeContext,
+    });
 
     let promo = null;
     if (promoCode) {

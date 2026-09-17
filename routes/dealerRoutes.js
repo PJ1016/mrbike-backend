@@ -259,6 +259,7 @@ router.post(
         isProfile: true,
         isDoc: true,
         isActive: true,
+        wallet: 0,
       }
 
       const newDealer = await Vendor.create(dealerData)
