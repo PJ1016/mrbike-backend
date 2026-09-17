@@ -13,12 +13,15 @@ const wallet = fs.readFileSync(path.join(root, "models/Wallet_modal.js"), "utf8"
 assert.match(financeRoutes, /router\.post\("\/wallets\/:id\/adjustments", requireAdmin/);
 assert.match(finance, /reason, reference and x-idempotency-key are required/);
 assert.match(adjustment, /withTransaction/);
-assert.match(adjustment, /transaction_type: "manual"/);
+assert.match(finance, /transactionType deposit is only valid for credit adjustments/);
+assert.match(adjustment, /transactionType === "deposit" && direction === "Credit" \? "deposit" : "manual"/);
 assert.match(adjustment, /wallet: \{ \$gte: round2\(amount \+ CREDIT_LIMIT\) \}/);
 assert.match(wallet, /one_wallet_request_per_dealer_idempotency_key/);
 assert.match(transactions, /page = 1/);
 assert.match(transactions, /dealer_id/);
 assert.match(transactions, /transaction_type/);
+assert.match(transactions, /legacyAdminDeposit/);
+assert.match(transactions, /\^ADMIN-DEP-/);
 assert.match(transactions, /payment_method/);
 assert.match(finance, /withdrawalPage/);
 assert.match(financeRoutes, /router\.get\("\/reconciliation", requireAdmin/);

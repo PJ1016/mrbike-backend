@@ -5,7 +5,7 @@ const CREDIT_LIMIT = -500;
 const round2 = (value) => Number(Number(value).toFixed(2));
 const unsupported = (error) => /Transaction numbers are only allowed|replica set|mongos/i.test(error?.message || "");
 
-async function applyInternal({ dealerId, amount, direction, reason, reference, adminId, idempotencyKey }, session) {
+async function applyInternal({ dealerId, amount, direction, reason, reference, adminId, idempotencyKey, transactionType }, session) {
   const existing = await Wallet.findOne({ dealer_id: dealerId, idempotency_key: idempotencyKey }).session(session);
   if (existing) return { existing: true, wallet: existing };
   const signed = direction === "Credit" ? amount : -amount;
@@ -17,7 +17,8 @@ async function applyInternal({ dealerId, amount, direction, reason, reference, a
   const [wallet] = await Wallet.create([{
     orderId: reference, dealer_id: dealer._id, Amount: amount, Type: direction, Note: reason,
     Total: round2(dealer.wallet), pre_balance: round2(dealer.wallet - signed), order_status: "APPROVED",
-    transaction_type: "manual", performed_by: adminId, idempotency_key: idempotencyKey,
+    transaction_type: transactionType === "deposit" && direction === "Credit" ? "deposit" : "manual",
+    performed_by: adminId, idempotency_key: idempotencyKey,
   }], { session });
   return { existing: false, wallet };
 }

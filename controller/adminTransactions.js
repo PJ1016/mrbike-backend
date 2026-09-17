@@ -53,6 +53,14 @@ function customerName(customer) {
   return [customer.first_name, customer.last_name].filter(Boolean).join(" ").trim() || null;
 }
 
+function transactionTypeFor(wallet) {
+  const legacyAdminDeposit =
+    wallet.transaction_type === "manual" &&
+    wallet.Type === "Credit" &&
+    /^ADMIN-DEP-/i.test(wallet.orderId || "");
+  return legacyAdminDeposit ? "deposit" : wallet.transaction_type;
+}
+
 // Commission only applies to settlement transactions — withdrawals/deposits/
 // manual adjustments/reconciliations don't carry a per-transaction commission.
 //
@@ -169,7 +177,15 @@ const getTransactionsList = async (req, res) => {
 
     // ── Base match: fields native to the Wallet document itself ──
     const baseMatch = {};
-    if (transaction_type) baseMatch.transaction_type = transaction_type;
+    if (transaction_type === "deposit") {
+      baseMatch.$or = [
+        { transaction_type: "deposit" },
+        { transaction_type: "manual", Type: "Credit", orderId: { $regex: "^ADMIN-DEP-", $options: "i" } },
+      ];
+    } else if (transaction_type === "manual") {
+      baseMatch.transaction_type = "manual";
+      baseMatch.$nor = [{ Type: "Credit", orderId: { $regex: "^ADMIN-DEP-", $options: "i" } }];
+    } else if (transaction_type) baseMatch.transaction_type = transaction_type;
     if (status) baseMatch.order_status = status;
     if (dealer_id && mongoose.Types.ObjectId.isValid(dealer_id)) {
       baseMatch.dealer_id = new mongoose.Types.ObjectId(dealer_id);
@@ -296,8 +312,9 @@ const getTransactionsList = async (req, res) => {
         ? { _id: w.customer._id, name: customerName(w.customer), phone: w.customer.phone }
         : null,
       amount: w.Amount,
+      direction: w.Type,
       commission: resolveBookingMoney(w.booking, w.Amount, w.transaction_type).commission,
-      transactionType: w.transaction_type,
+      transactionType: transactionTypeFor(w),
       status: w.order_status,
       paymentMethod: w.paymentMethod || null,
       createdAt: w.createdAt,
@@ -377,7 +394,7 @@ const getTransactionDetails = async (req, res) => {
         transactionId: formatTransactionId(wallet.id),
         _id: wallet._id,
         orderId: wallet.orderId,
-        transactionType: wallet.transaction_type,
+        transactionType: transactionTypeFor(wallet),
         status: wallet.order_status,
         note: wallet.Note,
         createdAt: wallet.createdAt,

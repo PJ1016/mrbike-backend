@@ -813,7 +813,10 @@ const getDealerWalletDetails = async (req, res) => {
       transactionId: `TXN${(w.id || 0).toString().padStart(6, "0")}`,
       amount: w.Amount,
       type: w.Type,
-      transactionType: w.transaction_type,
+      transactionType:
+        w.transaction_type === "manual" && w.Type === "Credit" && /^ADMIN-DEP-/i.test(w.orderId || "")
+          ? "deposit"
+          : w.transaction_type,
       status: w.order_status,
       note: w.Note,
       booking: w.booking_id ? { _id: w.booking_id._id, bookingId: w.booking_id.bookingId } : null,
@@ -861,14 +864,15 @@ const getDealerWalletDetails = async (req, res) => {
 const createAdminWalletAdjustment = async (req, res) => {
   try {
     const { id: dealerId } = req.params;
-    const { amount, direction, reason, reference } = req.body;
+    const { amount, direction, reason, reference, transactionType } = req.body;
     const idempotencyKey = req.get("x-idempotency-key");
     if (!mongoose.Types.ObjectId.isValid(dealerId)) return res.status(400).json({ success: false, message: "Invalid dealer id" });
     if (!(Number(amount) > 0) || !["Credit", "Debit"].includes(direction)) return res.status(400).json({ success: false, message: "amount and direction are invalid" });
+    if (transactionType && (transactionType !== "deposit" || direction !== "Credit")) return res.status(400).json({ success: false, message: "transactionType deposit is only valid for credit adjustments" });
     if (!reason?.trim() || !reference?.trim() || !idempotencyKey) return res.status(400).json({ success: false, message: "reason, reference and x-idempotency-key are required" });
     const result = await applyAdminWalletAdjustment({
       dealerId, amount: Number(amount), direction, reason: reason.trim(), reference: reference.trim(),
-      adminId: req.admin?._id || req.user?._id || null, idempotencyKey,
+      adminId: req.admin?._id || req.user?._id || null, idempotencyKey, transactionType,
     });
     return res.status(200).json({ success: true, data: result.wallet, idempotent: result.existing });
   } catch (error) {
