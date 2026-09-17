@@ -49,6 +49,14 @@ async function settleBookingWalletInternal(bookingId, paymentMethod, session) {
     return null;
   }
 
+  // Covers recovery from a historical partial write: if a settlement ledger
+  // already exists, retain the settled claim and never apply the balance again.
+  const existingSettlement = await Wallet.findOne({
+    booking_id: bookingDoc._id,
+    transaction_type: { $in: ["settlement_online", "settlement_cash"] },
+  }).session(session || null);
+  if (existingSettlement) return null;
+
   const dealer = await Vendor.findById(bookingDoc.dealer_id).session(session || null);
   if (!dealer) throw new Error(`Dealer not found for booking: ${bookingId}`);
 
@@ -130,19 +138,34 @@ async function settleBookingWalletInternal(bookingId, paymentMethod, session) {
   if (txnAmount > 0) {
     dealer.wallet = newBalance;
     await dealer.save({ session });
-
-    await Wallet.create([{
-      orderId: bookingDoc.bookingId || bookingDoc._id.toString(),
-      dealer_id: dealer._id,
-      booking_id: bookingDoc._id,
-      Amount: txnAmount,
-      Type: txnType,
-      Note: note,
-      Total: newBalance,
-      pre_balance: preBalance,
-      order_status: "APPROVED",
-      transaction_type: paymentMethod === "ONLINE" ? "settlement_online" : "settlement_cash",
-    }], { session });
+    try {
+      await Wallet.create([{
+        orderId: bookingDoc.bookingId || bookingDoc._id.toString(),
+        dealer_id: dealer._id,
+        booking_id: bookingDoc._id,
+        Amount: txnAmount,
+        Type: txnType,
+        Note: note,
+        Total: newBalance,
+        pre_balance: preBalance,
+        order_status: "APPROVED",
+        transaction_type: paymentMethod === "ONLINE" ? "settlement_online" : "settlement_cash",
+      }], { session });
+    } catch (error) {
+      // Standalone Mongo fallback has no transaction. Reverse only when the
+      // exact settlement balance is still present; otherwise leave the booking
+      // claimed to prevent a blind duplicate credit/debit.
+      if (!session) {
+        const rollback = await Vendor.updateOne(
+          { _id: dealer._id, wallet: newBalance },
+          { $set: { wallet: preBalance } },
+        );
+        if (rollback.modifiedCount === 1) {
+          await Booking.updateOne({ _id: bookingDoc._id, walletSettled: true }, { $set: { walletSettled: false } });
+        }
+      }
+      throw error;
+    }
   }
 
   return {
@@ -185,7 +208,6 @@ async function settleBookingWallet(bookingId, paymentMethod, options = {}) {
     try {
       return await settleBookingWalletInternal(bookingId, paymentMethod, null);
     } catch (fallbackError) {
-      await Booking.updateOne({ _id: bookingId }, { $set: { walletSettled: false } });
       throw fallbackError;
     }
   } finally {

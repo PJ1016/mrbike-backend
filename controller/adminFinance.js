@@ -14,6 +14,8 @@ const Wallet = require("../models/Wallet_modal");
 const Vendor = require("../models/dealerModel");
 const Booking = require("../models/Booking");
 const { getDealerStatus, DEALER_STATUSES } = require("../helper/dealerStatus");
+const { applyAdminWalletAdjustment } = require("../services/adminWalletAdjustmentService");
+const { reconcileWallets } = require("../services/walletReconciliationService");
 
 // Wallet order_status values that represent a completed/approved payout
 const APPROVED_STATUSES = ["COMPLETED", "APPROVED"];
@@ -856,10 +858,41 @@ const getDealerWalletDetails = async (req, res) => {
   }
 };
 
+const createAdminWalletAdjustment = async (req, res) => {
+  try {
+    const { id: dealerId } = req.params;
+    const { amount, direction, reason, reference } = req.body;
+    const idempotencyKey = req.get("x-idempotency-key");
+    if (!mongoose.Types.ObjectId.isValid(dealerId)) return res.status(400).json({ success: false, message: "Invalid dealer id" });
+    if (!(Number(amount) > 0) || !["Credit", "Debit"].includes(direction)) return res.status(400).json({ success: false, message: "amount and direction are invalid" });
+    if (!reason?.trim() || !reference?.trim() || !idempotencyKey) return res.status(400).json({ success: false, message: "reason, reference and x-idempotency-key are required" });
+    const result = await applyAdminWalletAdjustment({
+      dealerId, amount: Number(amount), direction, reason: reason.trim(), reference: reference.trim(),
+      adminId: req.admin?._id || req.user?._id || null, idempotencyKey,
+    });
+    return res.status(200).json({ success: true, data: result.wallet, idempotent: result.existing });
+  } catch (error) {
+    console.error("createAdminWalletAdjustment error:", error);
+    return res.status(400).json({ success: false, message: error.message || "Unable to apply wallet adjustment" });
+  }
+};
+
+const getWalletReconciliation = async (req, res) => {
+  try {
+    const result = await reconcileWallets({ ...req.query, mismatchOnly: req.query.mismatchOnly === "true" });
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error("getWalletReconciliation error:", error);
+    return res.status(500).json({ success: false, message: "Unable to reconcile wallets" });
+  }
+};
+
 module.exports = {
   getPayouts,
   getFinanceSummary,
   getDealerWalletsSummary,
   getDealerWallets,
   getDealerWalletDetails,
+  createAdminWalletAdjustment,
+  getWalletReconciliation,
 };

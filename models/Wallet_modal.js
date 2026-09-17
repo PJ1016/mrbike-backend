@@ -44,6 +44,9 @@ const walletSchema = new mongoose.Schema({
     performed_by: {
         type: mongoose.Schema.Types.ObjectId,
     },
+    idempotency_key: { type: String, default: null },
+    payout_reference: { type: String, default: null },
+    rollback_of: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet", default: null },
 }, {
     timestamps: true,
 });
@@ -58,6 +61,24 @@ walletSchema.index(
             transaction_type: { $in: ["settlement_online", "settlement_cash"] },
         },
         name: "one_wallet_settlement_per_booking_method",
+    },
+);
+walletSchema.index(
+    { dealer_id: 1, idempotency_key: 1 },
+    { unique: true, sparse: true, name: "one_wallet_request_per_dealer_idempotency_key" },
+);
+walletSchema.index(
+    { rollback_of: 1 },
+    { unique: true, sparse: true, name: "one_wallet_rollback_per_source_transaction" },
+);
+// A Cashfree wallet top-up order is an idempotency key. This also protects the
+// standalone-Mongo fallback in services/walletTopupService.js.
+walletSchema.index(
+    { orderId: 1, transaction_type: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { transaction_type: "deposit" },
+        name: "one_deposit_ledger_per_order",
     },
 );
 

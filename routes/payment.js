@@ -5,13 +5,14 @@ const { requireCustomer, requireOwnCustomerParam } = require("../middlewares/cus
 const { requireBookingParticipant } = require("../middlewares/bookingAuth");
 const { verifyDealerToken, requireOwnDealerBody } = require("../middlewares/dealerAuth");
 const cashfreeWebhookSecurity = require("../middlewares/cashfreeWebhookSecurity");
-const { getAllPayments,getBillByBookingId,getUserBillsSimple,getUserBillDetails,getAllBills, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, createOrderForAdd } = require("../controller/payment");
+const { getAllPayments,getBillByBookingId,getUserBillsSimple,getUserBillDetails,getAllBills, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, createOrderForAdd, verifyWalletTopupStatus } = require("../controller/payment");
 
 router.post("/initiate", requireBookingParticipant(req => req.body.booking_id), initiatePayment);
 router.post("/create-checkout", requireAdmin, createCheckoutUrl);
 router.post('/create-checkout-session', requireAdmin, createCheckoutSession);
 router.post('/link', requireAdmin, createPaymentLink);
 router.post("/createOrderForAdd", verifyDealerToken, requireOwnDealerBody("dealer_id"), createOrderForAdd);
+router.get("/wallet-topups/:orderId/status", verifyDealerToken, verifyWalletTopupStatus);
 router.get("/all-payments", requireAdmin, getAllPayments);
 router.get("/single-payment-detail/:id", requireAdmin, getPaymentById);
 router.post("/webhook", cashfreeWebhookSecurity, paymentWebhook);

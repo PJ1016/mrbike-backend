@@ -90,6 +90,14 @@ const paymentSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Top-up only: guards a single Vendor.wallet + Wallet ledger credit for a
+    // successful Cashfree order across webhooks and authenticated status polls.
+    wallet_credit_state: {
+      type: String,
+      enum: ["PENDING", "PROCESSING", "CREDITED"],
+      default: "PENDING",
+    },
+    wallet_credited_at: { type: Date, default: null },
     refund_amount: {
       type: Number,
       default: 0,

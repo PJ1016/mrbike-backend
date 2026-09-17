@@ -30,6 +30,7 @@ const DealerActivityLog = require("../models/DealerActivityLog");
 const fs = require("fs");
 const mongoose = require('mongoose');
 const { log } = require("console");
+const { createWithdrawal, transitionWithdrawal } = require("../services/withdrawalService");
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -1092,52 +1093,17 @@ const getPendingWallets = async (req, res) => {
 const updateWalletStatus = async (req, res) => {
   try {
     const { wallet_id } = req.params;
-    const { new_status } = req.body;
+    const { new_status, payout_reference } = req.body;
 
     if (!wallet_id || !new_status) {
       return res.status(400).json({ status: false, message: "wallet_id and new_status are required" });
     }
 
-    const walletEntry = await Wallet.findById(wallet_id);
-    if (!walletEntry) {
-      return res.status(404).json({ status: false, message: "Wallet entry not found" });
-    }
-
-    // Rollback dealer.wallet when a PENDING or IN_PROGRESS transaction is rejected
-    if (new_status === "REJECTED" && ["PENDING", "IN_PROGRESS"].includes(walletEntry.order_status)) {
-      const dealer = await Vendor.findById(walletEntry.dealer_id);
-      if (dealer) {
-        const preRollbackBalance = parseFloat(dealer.wallet) || 0;
-
-        if (walletEntry.pre_balance !== undefined && walletEntry.pre_balance !== null) {
-          dealer.wallet = walletEntry.pre_balance;
-        } else {
-          if (walletEntry.Type === "Credit") dealer.wallet -= walletEntry.Amount;
-          else if (walletEntry.Type === "Debit") dealer.wallet += walletEntry.Amount;
-        }
-        await dealer.save();
-
-        // Compensating ledger entry for full audit trail.
-        // transaction_type "rollback" is excluded from summary.currentBalance by GetwalletInfo,
-        // so this entry does not affect the computed balance — it only appears in history.
-        await Wallet.create({
-          orderId: `ROLLBACK-${walletEntry.orderId}`,
-          dealer_id: walletEntry.dealer_id,
-          Amount: walletEntry.Amount,
-          Type: walletEntry.Type === "Credit" ? "Debit" : "Credit",
-          Note: `Rollback: rejected txn ${walletEntry.orderId}`,
-          Total: dealer.wallet,
-          pre_balance: preRollbackBalance,
-          order_status: "APPROVED",
-          transaction_type: "rollback",
-          ...(walletEntry.booking_id ? { booking_id: walletEntry.booking_id } : {}),
-          ...(walletEntry.performed_by ? { performed_by: walletEntry.performed_by } : {}),
-        });
-      }
-    }
-
-    walletEntry.order_status = new_status;
-    const updatedWallet = await walletEntry.save();
+    const updatedWallet = await transitionWithdrawal({
+      walletId: wallet_id,
+      nextStatus: new_status,
+      payoutReference: payout_reference,
+    });
 
     return res.status(200).json({
       status: true,
@@ -1147,7 +1113,7 @@ const updateWalletStatus = async (req, res) => {
 
   } catch (error) {
     console.error("Error updating wallet status:", error);
-    return res.status(500).json({
+    return res.status(400).json({
       status: false,
       message: "Internal server error"
     });
@@ -1484,20 +1450,6 @@ async function getActiveDealers(req, res) {
 // Admin progresses: PENDING → IN_PROGRESS → COMPLETED  (or REJECTED to rollback)
 const createWithdrawalRequest = async (req, res) => {
   try {
-
-    if (!req.headers.token) {
-      return res.status(401).json({ status: false, message: "Token is required" });
-    }
-
-    let data;
-    try {
-      data = jwt.verify(req.headers.token, process.env.JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json({ status: false, message: "Invalid token" });
-    }
-
-
-    const { user_id, user_type } = data;
     const { dealer_id, amount, note } = req.body;
 
     if (!dealer_id || !amount) {
@@ -1513,48 +1465,20 @@ const createWithdrawalRequest = async (req, res) => {
       return res.status(400).json({ status: false, message: "Invalid dealer id" });
     }
 
-    const dealer = await Vendor.findById(dealer_id);
-    if (!dealer) {
-      return res.status(200).json({ status: false, message: "Dealer not found" });
-    }
-
-
-    if (user_type === 2 && dealer._id.toString() !== user_id) {
-      return res.status(200).json({ status: false, message: "You can only withdraw from your own wallet" });
-    }
-
-    const WITHDRAWAL_MIN_REMAINING = 200;
-    const currentWallet = parseFloat(dealer.wallet) || 0;
-
-    if (currentWallet - withdrawAmount < WITHDRAWAL_MIN_REMAINING) {
-      return res.status(200).json({
-        status: false,
-        message: `Insufficient balance. Minimum remaining balance of ₹${WITHDRAWAL_MIN_REMAINING} required after withdrawal`,
-      });
-    }
-
-    const preBalance = currentWallet;
-    dealer.wallet = parseFloat((currentWallet - withdrawAmount).toFixed(2));
-    await dealer.save();
-
-    const walletEntry = await Wallet.create({
-      orderId: `WD-${Date.now()}`,
-      dealer_id: dealer._id,
-      Amount: withdrawAmount,
-      Type: "Debit",
-      Note: note || `Withdrawal request of ₹${withdrawAmount}`,
-      Total: dealer.wallet,
-      pre_balance: preBalance,
-      order_status: "PENDING",
-      transaction_type: "withdrawal",
-      performed_by: user_id,
+    const result = await createWithdrawal({
+      dealerId: req.dealer_id,
+      amount: withdrawAmount,
+      note,
+      performedBy: req.dealer_id,
+      idempotencyKey: req.get("x-idempotency-key") || null,
     });
+    const walletEntry = result.wallet;
 
     return res.status(200).json({
       status: true,
-      message: "Withdrawal request created. Pending admin approval.",
+      message: result.existing ? "Withdrawal request already submitted." : "Withdrawal request created. Pending admin approval.",
       data: walletEntry,
-      newBalance: dealer.wallet,
+      newBalance: walletEntry.Total,
     });
   } catch (error) {
     console.error('Withdrawal Error:', error);

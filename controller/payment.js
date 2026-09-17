@@ -32,6 +32,7 @@ const {
     enqueuePaymentReconciliation,
     completeReconciliationTask,
 } = require("../services/paymentReconciliationService");
+const { finalizeWalletTopup } = require("../services/walletTopupService");
 
 const CASHFREE_BASE_URL = "https://api.cashfree.com/pg/orders";
 
@@ -181,6 +182,19 @@ const paymentWebhook = async (req, res) => {
             bookingId: payment.booking_id?.toString?.() || payment.booking_id || null,
         });
 
+        // The webhook merely identifies the order. Cashfree's API remains the
+        // authority before a wallet is credited.
+        if (payment.payment_type === "WALLET_TOPUP") {
+            try {
+                const verified = await verifyAndRecordWalletTopup(payment);
+                if (verified.status === "SUCCESS") await finalizeWalletTopup(payment._id);
+                return res.status(200).send("Wallet top-up webhook processed");
+            } catch (topupError) {
+                console.error("[WALLET_TOPUP] webhook verification/finalization failed", { orderId, message: topupError.message });
+                return res.status(500).send("Wallet top-up processing failed");
+            }
+        }
+
         // Map Cashfree status
         let mappedStatus;
         switch (orderStatus) {
@@ -220,18 +234,6 @@ const paymentWebhook = async (req, res) => {
 
         if (mappedStatus === "SUCCESS" && payment.booking_id) {
             await enqueuePaymentReconciliation(payment);
-        }
-
-        // Wallet top-up: credit dealer wallet, skip booking/bill logic
-        if (mappedStatus === "SUCCESS" && payment.payment_type === "WALLET_TOPUP") {
-            console.log("[WALLET_TOPUP] success payment eligible for wallet credit", {
-                orderId,
-                dealerId: payment.dealer_id?.toString?.() || payment.dealer_id,
-                amount: payment.orderAmount,
-            });
-            await creditDealerWalletOnTopup(payment);
-            console.log(`🎉 Wallet top-up webhook done: orderId=${orderId}`);
-            return res.status(200).send("Webhook processed successfully");
         }
 
         // ONLINE payment flow: payment_selected → ready_for_delivery
@@ -1199,46 +1201,56 @@ const cashfreeHeaders = () => ({
     "Content-Type": "application/json",
 });
 
-// Idempotent wallet credit — called by webhook when WALLET_TOPUP payment succeeds.
-// Guards against duplicate credits using Wallet.orderId uniqueness.
-async function creditDealerWalletOnTopup(payment) {
-    console.log("[WALLET_TOPUP] creditDealerWalletOnTopup invoked", {
-        orderId: payment.orderId,
-        dealerId: payment.dealer_id?.toString?.() || payment.dealer_id,
-        paymentType: payment.payment_type,
-        amount: payment.orderAmount,
-    });
-
-    const existing = await Wallet.findOne({ orderId: payment.orderId, order_status: "APPROVED" });
-    if (existing) {
-        console.log(`Wallet already credited for order: ${payment.orderId}`);
-        return;
-    }
-
-    const dealer = await Dealer.findById(payment.dealer_id);
-    if (!dealer) {
-        console.error(`Dealer not found for wallet top-up: ${payment.dealer_id}`);
-        return;
-    }
-
-    const preBalance = parseFloat(dealer.wallet) || 0;
-    dealer.wallet = parseFloat((preBalance + payment.orderAmount).toFixed(2));
-    await dealer.save();
-
-    await Wallet.create({
-        orderId: payment.orderId,
-        dealer_id: payment.dealer_id,
-        Amount: payment.orderAmount,
-        Type: "Credit",
-        Note: `Wallet top-up via Cashfree (Order: ${payment.orderId})`,
-        Total: dealer.wallet,
-        pre_balance: preBalance,
-        order_status: "APPROVED",
-        transaction_type: "deposit",
-    });
-
-    console.log(`Wallet credited ₹${payment.orderAmount} to dealer ${payment.dealer_id}. New balance: ₹${dealer.wallet}`);
+function mapCashfreeOrderStatus(status) {
+    if (status === "PAID") return "SUCCESS";
+    if (["FAILED", "EXPIRED"].includes(status)) return "FAILED";
+    if (["CANCELLED", "TERMINATED", "TERMINATION_REQUESTED"].includes(status)) return "CANCELLED";
+    return "PENDING";
 }
+
+async function verifyAndRecordWalletTopup(payment) {
+    const orderResponse = await axios.get(`${CASHFREE_ORDERS_URL}/${payment.orderId}`, { headers: cashfreeHeaders() });
+    const order = orderResponse.data || {};
+    const verifiedAmount = Number(order.order_amount);
+    if (!Number.isFinite(verifiedAmount) || Number(verifiedAmount.toFixed(2)) !== Number(Number(payment.orderAmount).toFixed(2))) {
+        throw new Error("Cashfree wallet top-up amount mismatch");
+    }
+    if (order.order_currency && order.order_currency !== payment.order_currency) throw new Error("Cashfree wallet top-up currency mismatch");
+
+    let successfulPayment = null;
+    if (order.order_status === "PAID") {
+        const paymentsResponse = await axios.get(`${CASHFREE_ORDERS_URL}/${payment.orderId}/payments`, { headers: cashfreeHeaders() });
+        const payments = Array.isArray(paymentsResponse.data) ? paymentsResponse.data : [];
+        successfulPayment = payments.find((item) => item.payment_status === "SUCCESS") || null;
+        if (!successfulPayment) throw new Error("Cashfree paid order has no successful payment record");
+    }
+
+    const status = mapCashfreeOrderStatus(order.order_status);
+    payment.order_status = status;
+    payment.gateway_status = successfulPayment?.payment_status || order.order_status || null;
+    payment.payment_method = successfulPayment?.payment_group || payment.payment_method || null;
+    payment.cf_payment_id = successfulPayment?.cf_payment_id?.toString() || payment.cf_payment_id;
+    payment.transaction_id = successfulPayment?.cf_payment_id?.toString() || payment.transaction_id;
+    payment.utr_number = successfulPayment?.bank_reference || payment.utr_number;
+    payment.verified_amount = verifiedAmount;
+    payment.verified_timestamp = new Date();
+    payment.metadata = { ...(payment.metadata || {}), wallet_topup_verified_at: new Date(), cashfree_order_status: order.order_status };
+    await payment.save();
+    return { status, order, payment: successfulPayment };
+}
+
+const verifyWalletTopupStatus = async (req, res) => {
+    try {
+        const payment = await Payment.findOne({ orderId: req.params.orderId, dealer_id: req.dealer_id, payment_type: "WALLET_TOPUP" });
+        if (!payment) return res.status(404).json({ success: false, message: "Wallet top-up order not found" });
+        const verified = await verifyAndRecordWalletTopup(payment);
+        const result = verified.status === "SUCCESS" ? await finalizeWalletTopup(payment._id) : { credited: false };
+        return res.status(200).json({ success: true, data: { order_id: payment.orderId, payment_status: verified.status, wallet_credited: result.credited || payment.wallet_credit_state === "CREDITED" } });
+    } catch (error) {
+        console.error("verifyWalletTopupStatus error:", error.response?.data || error.message);
+        return res.status(502).json({ success: false, message: "Unable to verify wallet top-up with Cashfree" });
+    }
+};
 
 const createOrderForAdd = async (req, res) => {
     try {
@@ -1325,7 +1337,7 @@ const createOrderForAdd = async (req, res) => {
     }
 };
 
-module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, generateBill, createOrderForAdd };
+module.exports = { getBillByBookingId, getAllBills, getUserBillsSimple, getUserBillDetails, getAllPayments, initiatePayment, getPaymentById, paymentWebhook, createCheckoutUrl, createCheckoutSession, createPaymentLink, generateBill, createOrderForAdd, verifyWalletTopupStatus, verifyAndRecordWalletTopup, mapCashfreeOrderStatus };
 
 // const axios = require('axios');
 // const Payment = require("../models/Payment");

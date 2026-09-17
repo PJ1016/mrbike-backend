@@ -1,0 +1,29 @@
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+
+const root = path.join(__dirname, "..");
+const financeRoutes = fs.readFileSync(path.join(root, "routes/financeRoutes.js"), "utf8");
+const finance = fs.readFileSync(path.join(root, "controller/adminFinance.js"), "utf8");
+const transactions = fs.readFileSync(path.join(root, "controller/adminTransactions.js"), "utf8");
+const adjustment = fs.readFileSync(path.join(root, "services/adminWalletAdjustmentService.js"), "utf8");
+const reconciliation = fs.readFileSync(path.join(root, "services/walletReconciliationService.js"), "utf8");
+const wallet = fs.readFileSync(path.join(root, "models/Wallet_modal.js"), "utf8");
+
+assert.match(financeRoutes, /router\.post\("\/wallets\/:id\/adjustments", requireAdmin/);
+assert.match(finance, /reason, reference and x-idempotency-key are required/);
+assert.match(adjustment, /withTransaction/);
+assert.match(adjustment, /transaction_type: "manual"/);
+assert.match(adjustment, /wallet: \{ \$gte: round2\(amount \+ CREDIT_LIMIT\) \}/);
+assert.match(wallet, /one_wallet_request_per_dealer_idempotency_key/);
+assert.match(transactions, /page = 1/);
+assert.match(transactions, /dealer_id/);
+assert.match(transactions, /transaction_type/);
+assert.match(transactions, /payment_method/);
+assert.match(finance, /withdrawalPage/);
+assert.match(financeRoutes, /router\.get\("\/reconciliation", requireAdmin/);
+assert.match(reconciliation, /MISSING_LEDGER/);
+assert.match(reconciliation, /DUPLICATE_LEDGER/);
+assert.match(reconciliation, /INVALID_TRANSACTION/);
+assert.match(reconciliation, /MISMATCH/);
+console.log("adminFinance.test.js: all assertions passed");

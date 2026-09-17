@@ -5,6 +5,8 @@ const {
   getFinanceSummary,
   getDealerWallets,
   getDealerWalletDetails,
+  createAdminWalletAdjustment,
+  getWalletReconciliation,
 } = require("../controller/adminFinance");
 const { getTransactionsList, getTransactionDetails } = require("../controller/adminTransactions");
 
@@ -17,6 +19,8 @@ router.get("/summary", requireAdmin, getFinanceSummary);
 // GET /bikedoctor/finance/wallets/:id
 router.get("/wallets", requireAdmin, getDealerWallets);
 router.get("/wallets/:id", requireAdmin, getDealerWalletDetails);
+router.post("/wallets/:id/adjustments", requireAdmin, createAdminWalletAdjustment);
+router.get("/reconciliation", requireAdmin, getWalletReconciliation);
 
 // ── Transactions ───────────────────────────────────────────────────────────────
 // GET /bikedoctor/finance/transactions
