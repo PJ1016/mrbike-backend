@@ -35,6 +35,14 @@ const {
 const { finalizeWalletTopup } = require("../services/walletTopupService");
 
 const CASHFREE_BASE_URL = "https://api.cashfree.com/pg/orders";
+// Do not derive gateway callbacks from the app's general BACKEND_URL. That
+// value historically pointed at the retired .com host, which made top-up
+// finalization depend entirely on the dealer app's foreground status check.
+const CASHFREE_PAYMENT_WEBHOOK_URL =
+    process.env.CASHFREE_PAYMENT_WEBHOOK_URL ||
+    "https://api.mrbikedoctor.cloud/bikedoctor/payment/webhook";
+const PAYMENT_DEALER_FIELDS =
+    "name shopName ownerName email shopEmail personalEmail phone personalPhone wallet";
 
 // Initiate Payment
 const initiatePayment = async (req, res) => {
@@ -540,8 +548,8 @@ const getPaymentById = async (req, res) => {
                 select: "bookingId totalBill status serviceDate",
                 options: { strictPopulate: false },
             })
-            .populate("dealer_id", "name email")
-            .populate("user_id", "name email");
+            .populate("dealer_id", PAYMENT_DEALER_FIELDS)
+            .populate("user_id", "first_name last_name email phone");
 
         // If not found by _id, try finding by orderId
         if (!payment) {
@@ -551,8 +559,8 @@ const getPaymentById = async (req, res) => {
                     select: "bookingId totalBill status serviceDate",
                     options: { strictPopulate: false },
                 })
-                .populate("dealer_id", "name email")
-                .populate("user_id", "name email");
+                .populate("dealer_id", PAYMENT_DEALER_FIELDS)
+                .populate("user_id", "first_name last_name email phone");
         }
 
         if (!payment) {
@@ -617,7 +625,7 @@ const getAllPayments = async (req, res) => {
                 select: "bookingId totalBill status serviceDate",
                 options: { strictPopulate: false },
             })
-            .populate("dealer_id", "name email")
+            .populate("dealer_id", PAYMENT_DEALER_FIELDS)
             .populate("user_id", "first_name last_name email phone")
             .sort(sort)
             .lean();
@@ -1244,8 +1252,20 @@ const verifyWalletTopupStatus = async (req, res) => {
         const payment = await Payment.findOne({ orderId: req.params.orderId, dealer_id: req.dealer_id, payment_type: "WALLET_TOPUP" });
         if (!payment) return res.status(404).json({ success: false, message: "Wallet top-up order not found" });
         const verified = await verifyAndRecordWalletTopup(payment);
-        const result = verified.status === "SUCCESS" ? await finalizeWalletTopup(payment._id) : { credited: false };
-        return res.status(200).json({ success: true, data: { order_id: payment.orderId, payment_status: verified.status, wallet_credited: result.credited || payment.wallet_credit_state === "CREDITED" } });
+        if (verified.status === "SUCCESS") await finalizeWalletTopup(payment._id);
+        const finalization = await Payment.findById(payment._id)
+            .select("wallet_credit_state wallet_credited_at")
+            .lean();
+        return res.status(200).json({
+            success: true,
+            data: {
+                order_id: payment.orderId,
+                payment_status: verified.status,
+                wallet_credited: finalization?.wallet_credit_state === "CREDITED",
+                wallet_credit_state: finalization?.wallet_credit_state || "PENDING",
+                wallet_credited_at: finalization?.wallet_credited_at || null,
+            },
+        });
     } catch (error) {
         console.error("verifyWalletTopupStatus error:", error.response?.data || error.message);
         return res.status(502).json({ success: false, message: "Unable to verify wallet top-up with Cashfree" });
@@ -1297,7 +1317,7 @@ const createOrderForAdd = async (req, res) => {
             },
             order_meta: {
                 return_url: `${process.env.FRONTEND_URL || "https://mrbikedoctor.com"}/wallet/topup?order_id={order_id}`,
-                notify_url: `${process.env.BACKEND_URL || "https://api.mrbikedoctor.com"}/bikedoctor/payment/webhook`,
+                notify_url: CASHFREE_PAYMENT_WEBHOOK_URL,
             },
             order_note: `Wallet top-up by ${dealer.shopName || dealer._id}`,
         };
