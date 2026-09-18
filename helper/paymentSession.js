@@ -4,6 +4,7 @@ const axios = require("axios");
 const crypto = require("crypto");
 
 const CASHFREE_ORDERS_URL = "https://api.cashfree.com/pg/orders";
+const CASHFREE_LINKS_URL = "https://api.cashfree.com/pg/links";
 const ORDER_LOCK_MS = 60 * 1000;
 
 const cashfreeHeaders = (idempotencyKey) => ({
@@ -60,7 +61,33 @@ async function terminateCashfreeOrder(payment) {
     .digest("hex");
   const idempotencyKey = `${idempotencyHex.slice(0, 8)}-${idempotencyHex.slice(8, 12)}-4${idempotencyHex.slice(13, 16)}-a${idempotencyHex.slice(17, 20)}-${idempotencyHex.slice(20, 32)}`;
 
+  const isPaymentLink = payment?.metadata?.cashfree_resource === "PAYMENT_LINK";
   let response;
+  if (isPaymentLink) {
+    try {
+      response = await axios.post(
+        `${CASHFREE_LINKS_URL}/${encodeURIComponent(payment.orderId)}/cancel`,
+        {},
+        { headers: cashfreeHeaders(idempotencyKey) },
+      );
+    } catch (error) {
+      if (![409, 422].includes(error.response?.status)) throw error;
+      response = await axios.get(
+        `${CASHFREE_LINKS_URL}/${encodeURIComponent(payment.orderId)}`,
+        { headers: cashfreeHeaders(idempotencyKey) },
+      );
+    }
+    if (response.data?.link_status === "PAID") {
+      const error = new Error(`Cashfree payment link ${payment.orderId} is already paid`);
+      error.code = "CASHFREE_ORDER_ALREADY_PAID";
+      throw error;
+    }
+    if (!["CANCELLED", "EXPIRED"].includes(response.data?.link_status)) {
+      throw new Error(`Cashfree did not cancel payment link ${payment.orderId}`);
+    }
+    return;
+  }
+
   try {
     response = await axios.patch(
       `${CASHFREE_ORDERS_URL}/${encodeURIComponent(payment.orderId)}`,

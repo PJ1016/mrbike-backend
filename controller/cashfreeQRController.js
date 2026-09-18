@@ -11,6 +11,7 @@ const {
   acquirePaymentOrderLock,
   releasePaymentOrderLock,
   cancelPendingPaymentSessions,
+  terminateCashfreeOrder,
 } = require("../helper/paymentSession")
 const {
   enqueuePaymentReconciliation,
@@ -20,6 +21,7 @@ const {
 const genDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000)
 
 const QR_DATA_URI_PREFIX = "data:image/png;base64,"
+const CASHFREE_RESOURCE_PAYMENT_LINK = "PAYMENT_LINK"
 
 // Cashfree's session/payments APIs are inconsistent about whether
 // payload.qrcode / default_qr_code is pure base64 or already a full data
@@ -30,40 +32,64 @@ const normalizeQrCode = (value) => {
   return { qrCodeDataUrl: `${QR_DATA_URI_PREFIX}${base64}`, qrCodeBase64: base64 }
 }
 
+const isPaymentLink = (payment) =>
+  payment?.metadata?.cashfree_resource === CASHFREE_RESOURCE_PAYMENT_LINK
+
+const mapCashfreeStatus = (status) => {
+  switch (String(status || "").toUpperCase()) {
+    case "PAID":
+    case "SUCCESS":
+      return "SUCCESS"
+    case "EXPIRED":
+      return "EXPIRED"
+    case "FAILED":
+      return "FAILED"
+    case "CANCELLED":
+    case "TERMINATED":
+    case "TERMINATION_REQUESTED":
+      return "CANCELLED"
+    default:
+      return "PENDING"
+  }
+}
+
 // Advance a booking to ready_for_delivery once its QR/UPI payment is confirmed
 // SUCCESS — mirrors confirmCashReceived so both payment methods land in the
 // same place: invoice generated, wallet settled, delivery OTP issued.
+//
+// The atomic update is deliberately the first state-changing operation. A
+// status poll and a webhook can arrive together; only the caller that claims
+// payment_verified:false may issue an OTP, invoice, or wallet settlement.
 const advanceBookingAfterOnlinePayment = async (payment, io) => {
-  await enqueuePaymentReconciliation(payment)
-  const currentBooking = await Booking.findById(payment.booking_id)
-  if (!currentBooking) return
-
-  const alreadyAdvanced = ["ready_for_delivery", "delivered", "completed", "cash received"].includes(
-    currentBooking.status,
+  const freshOtp = genDeliveryOtp()
+  const currentBooking = await Booking.findOneAndUpdate(
+    {
+      _id: payment.booking_id,
+      status: "payment_selected",
+      payment_verified: { $ne: true },
+      $or: [{ payment_method: "ONLINE" }, { payment_method: null }, { payment_method: { $exists: false } }],
+    },
+    {
+      $set: {
+        payment_method: "ONLINE",
+        payment_status: "completed",
+        payment_verified: true,
+        deliveryOtp: freshOtp,
+        status: "ready_for_delivery",
+        billStatus: "paid",
+        paymentStatus: "completed",
+        paymentDate: new Date(),
+      },
+    },
+    { new: true },
   )
-  if (alreadyAdvanced) return
 
-  // Defense in depth: if the dealer has since switched this booking to CASH,
-  // this payment belongs to an abandoned QR — do not let a late confirmation
-  // silently override the dealer's cash flow (and double-settle the wallet).
-  if (currentBooking.payment_method && currentBooking.payment_method !== "ONLINE") {
-    console.warn(
-      `[CASHFREE] Ignoring SUCCESS for payment ${payment._id} — booking ${currentBooking._id} was switched to ${currentBooking.payment_method}. Needs manual reconciliation.`,
-    )
-    return
+  if (!currentBooking) {
+    console.log(`[CASHFREE] Booking ${payment.booking_id} was already finalized or its payment method changed; skipping duplicate confirmation.`)
+    return false
   }
 
-  const freshOtp = genDeliveryOtp()
-
-  currentBooking.payment_method   = currentBooking.payment_method || "ONLINE"
-  currentBooking.payment_status   = "completed"
-  currentBooking.payment_verified = true
-  currentBooking.deliveryOtp      = freshOtp
-  currentBooking.status           = "ready_for_delivery"
-  currentBooking.billStatus       = "paid"
-  currentBooking.paymentStatus    = "completed"
-  currentBooking.paymentDate      = new Date()
-  await currentBooking.save()
+  await enqueuePaymentReconciliation(payment)
   await completeReconciliationTask(payment, "BOOKING_SYNC")
 
   console.log(`[CASHFREE] Booking ${payment.booking_id} → ready_for_delivery | OTP: ${freshOtp}`)
@@ -119,6 +145,7 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
       status: "ready_for_delivery",
     })
   }
+  return true
 }
 
 // Cashfree API Configuration
@@ -145,6 +172,28 @@ const getVerifiedPaymentDetails = async (orderId, fallback = {}) => {
       message: error.response?.data?.message || error.message,
     })
     return fallback
+  }
+}
+
+const getCashfreePaymentLink = async (linkId) => {
+  const response = await axios.get(
+    // Cashfree links create one or more underlying PG orders. The documented
+    // orders endpoint is the authoritative way to verify a link payment; a
+    // link can stay ACTIVE after failed attempts, so link state alone is not
+    // enough to mark a booking paid.
+    `${getCashfreeBaseUrl()}/links/${encodeURIComponent(linkId)}/orders`,
+    { headers: getCashfreeHeaders() },
+  )
+  const orders = Array.isArray(response.data) ? response.data : response.data?.data || []
+  const successfulOrder = orders.find((item) => item?.order_status === "PAID")
+  const latestOrder = successfulOrder || orders[0] || null
+  return {
+    link_status: successfulOrder ? "PAID" : "ACTIVE",
+    order_amount: latestOrder?.order_amount,
+    cf_order_id: latestOrder?.cf_order_id,
+    cf_payment_id: latestOrder?.cf_payment_id,
+    payment_group: latestOrder?.payment_group,
+    bank_reference: latestOrder?.bank_reference,
   }
 }
 
@@ -221,8 +270,11 @@ const generateUPIQRCode = async (req, res) => {
     // fresh order below stays payable — never two live QR codes at once.
     await cancelPendingPaymentSessions(booking_id)
 
-    // Generate unique order ID
-    const orderId = `BIKEDOC_${Date.now()}_${Math.random().toString(36).substr(2, 6).toUpperCase()}`
+    // Cashfree Payment Links are the supported scan-from-another-phone flow.
+    // Store the Cashfree link_id in orderId so the existing authenticated
+    // status route and Payment ownership middleware continue to work.
+    const linkId = `BIKEDOC_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+    const expiryTime = new Date(Date.now() + 30 * 60 * 1000).toISOString()
 
     // Customer details from booking or request
     const customerDetails = {
@@ -235,98 +287,55 @@ const generateUPIQRCode = async (req, res) => {
         "Customer",
     }
 
-    // Create Cashfree Order
-    const orderPayload = {
-      order_id: orderId,
-      order_amount: Number.parseFloat(amount),
-      order_currency: "INR",
-      customer_details: customerDetails,
-      order_meta: {
-        return_url: `${process.env.FRONTEND_URL || "https://bikedoctor.app"}/payment-status?order_id={order_id}`,
+    const linkPayload = {
+      link_id: linkId,
+      link_amount: Number.parseFloat(amount),
+      link_currency: "INR",
+      customer_details: {
+        customer_email: customerDetails.customer_email,
+        customer_phone: customerDetails.customer_phone,
+        customer_name: customerDetails.customer_name,
+      },
+      link_partial_payments: false,
+      link_auto_reminders: false,
+      link_notify: { send_sms: false, send_email: false },
+      link_meta: {
+        return_url: `${process.env.FRONTEND_URL || "https://bikedoctor.app"}/payment-status?link_id={link_id}`,
         notify_url: `${process.env.BACKEND_URL || "https://api.bikedoctor.app"}/bikedoctor/cashfree/webhook`,
-        payment_methods: "upi",
       },
-      order_expiry_time: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      order_note: `Payment for Booking ${booking.bookingId || booking_id}`,
-      order_tags: {
-        booking_id: booking_id,
-        dealer_id: booking.dealer_id?._id?.toString(),
-      },
-    }
-
-    console.log("Creating Cashfree order:", JSON.stringify(orderPayload, null, 2))
-
-    // Step 1: Create order in Cashfree
-    const orderResponse = await axios.post(`${getCashfreeBaseUrl()}/orders`, orderPayload, { headers: getCashfreeHeaders() })
-
-    const orderData = orderResponse.data
-    console.log("Cashfree order created:", JSON.stringify(orderData, null, 2))
-
-    const paymentSessionId = orderData.payment_session_id
-
-    // Step 2: Create UPI payment request to get QR code
-    const upiPayload = {
-      payment_session_id: paymentSessionId,
-      payment_method: {
-        upi: {
-          channel: "qrcode",
-        },
+      link_expiry_time: expiryTime,
+      link_purpose: `Payment for Booking ${booking.bookingId || booking_id}`,
+      link_notes: {
+        booking_id: booking_id.toString(),
+        dealer_id: booking.dealer_id?._id?.toString() || "",
       },
     }
 
-    let qrCodeDataUrl = null
-    let qrCodeBase64 = null
-    let upiLink = null
-
-    try {
-      // Try to get QR code from Cashfree sessions API
-      const paymentResponse = await axios.post(`${getCashfreeBaseUrl()}/orders/sessions`, upiPayload, {
-        headers: getCashfreeHeaders(),
-      })
-
-      const paymentData = paymentResponse.data
-      console.log("UPI Sessions Response:", JSON.stringify(paymentData, null, 2))
-
-      // Extract QR code or UPI link from response
-      if (paymentData.data?.payload?.qrcode) {
-        ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(paymentData.data.payload.qrcode))
-      } else if (paymentData.data?.payload?.default_qr_code) {
-        ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(paymentData.data.payload.default_qr_code))
-      } else if (paymentData.data?.url) {
-        upiLink = paymentData.data.url
-      }
-    } catch (sessionError) {
-      console.log("Sessions API error, trying alternative method:", sessionError.response?.data || sessionError.message)
+    console.log("Creating Cashfree booking payment link:", JSON.stringify({ ...linkPayload, customer_details: { ...customerDetails, customer_phone: "***" } }))
+    const linkResponse = await axios.post(`${getCashfreeBaseUrl()}/links`, linkPayload, {
+      headers: getCashfreeHeaders(),
+    })
+    const linkData = linkResponse.data || {}
+    const linkUrl = typeof linkData.link_url === "string" ? linkData.link_url.trim() : ""
+    if (!linkUrl) {
+      const linkError = new Error("Cashfree did not return a payment link URL")
+      linkError.code = "CASHFREE_LINK_URL_MISSING"
+      throw linkError
     }
 
-    if (!qrCodeDataUrl) {
-      // Fallback: Cashfree's hosted checkout page for this order/session —
-      // no UPI VPA is ever hardcoded here; the customer completes payment on
-      // Cashfree's own page, which is the only way a payment stays trackable
-      // via the order-status/webhook flow below.
-      const cashfreePaymentLink = `https://payments.cashfree.com/order/#${paymentSessionId}`
-
-      upiLink = cashfreePaymentLink
-
-      // Generate QR code from payment link
-      const generatedDataUrl = await QRCode.toDataURL(cashfreePaymentLink, {
-        width: 400,
-        margin: 2,
-        color: {
-          dark: "#000000",
-          light: "#FFFFFF",
-        },
-        errorCorrectionLevel: "M",
-      })
-      ;({ qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(generatedDataUrl))
-
-      console.log("Generated QR from payment link:", cashfreePaymentLink)
-    }
+    // The QR always encodes Cashfree's returned link_url. Never construct a
+    // payments.cashfree.com URL from a payment_session_id.
+    const generatedDataUrl = await QRCode.toDataURL(linkUrl, {
+      width: 400,
+      margin: 2,
+      color: { dark: "#000000", light: "#FFFFFF" },
+      errorCorrectionLevel: "M",
+    })
+    const { qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(generatedDataUrl)
 
     // Save payment record
     const payment = new Payment({
-      cf_order_id: orderData.cf_order_id,
-      orderId: orderId,
+      orderId: linkId,
       booking_id: booking_id,
       dealer_id: booking.dealer_id?._id,
       user_id: booking.user_id?._id,
@@ -334,14 +343,15 @@ const generateUPIQRCode = async (req, res) => {
       payment_type: "UPI_QR",
       order_currency: "INR",
       order_status: "PENDING",
-      order_token: paymentSessionId || "pending",
+      order_token: linkId,
       payment_by: "user",
       metadata: {
         qr_generated_at: new Date(),
-        payment_session_id: paymentSessionId,
-        cf_order_id: orderData.cf_order_id,
-        expiry_time: orderPayload.order_expiry_time,
-        upi_link: upiLink,
+        cashfree_resource: CASHFREE_RESOURCE_PAYMENT_LINK,
+        cashfree_link_id: linkData.cf_link_id || null,
+        link_id: linkData.link_id || linkId,
+        link_url: linkUrl,
+        expiry_time: linkData.link_expiry_time || expiryTime,
       },
     })
 
@@ -360,16 +370,15 @@ const generateUPIQRCode = async (req, res) => {
       success: true,
       message: "UPI QR Code generated successfully",
       data: {
-        order_id: orderId,
-        cf_order_id: orderData.cf_order_id,
+        order_id: linkId,
+        cf_link_id: linkData.cf_link_id || null,
         payment_id: payment._id,
         amount: Number.parseFloat(amount),
         currency: "INR",
         qr_code: qrCodeDataUrl,
         qr_code_raw: qrCodeBase64,
-        payment_session_id: paymentSessionId,
-        payment_link: upiLink,
-        expiry_time: orderPayload.order_expiry_time,
+        payment_link: linkUrl,
+        expiry_time: linkData.link_expiry_time || expiryTime,
         status: "PENDING",
         booking_id: booking_id,
         customer: {
@@ -415,35 +424,27 @@ const checkPaymentStatus = async (req, res) => {
       })
     }
 
-    // Get status from Cashfree
-    const response = await axios.get(`${getCashfreeBaseUrl()}/orders/${order_id}`, { headers: getCashfreeHeaders() })
-
-    const orderData = response.data
-
-    // Update local payment record
     const payment = await Payment.findOne({ orderId: order_id })
+    if (!payment) {
+      return res.status(404).json({ success: false, message: "Payment not found" })
+    }
+
+    const paymentLink = isPaymentLink(payment)
+    // Payment links are verified from the Links API; legacy QR orders retain
+    // their existing Orders API status path for backward compatibility.
+    const remoteData = paymentLink
+      ? await getCashfreePaymentLink(order_id)
+      : (await axios.get(`${getCashfreeBaseUrl()}/orders/${encodeURIComponent(order_id)}`, { headers: getCashfreeHeaders() })).data
+    let remoteStatus = paymentLink ? remoteData.link_status : remoteData.order_status
+    if (paymentLink && remoteStatus === "ACTIVE" && new Date(payment.metadata?.expiry_time || 0).getTime() <= Date.now()) {
+      remoteStatus = "EXPIRED"
+    }
+    const mappedStatus = mapCashfreeStatus(remoteStatus)
 
     if (payment) {
-      const verifiedPayment = orderData.order_status === "PAID"
+      const verifiedPayment = !paymentLink && remoteStatus === "PAID"
         ? await getVerifiedPaymentDetails(order_id)
         : null
-      let mappedStatus = "PENDING"
-      switch (orderData.order_status) {
-        case "PAID":
-          mappedStatus = "SUCCESS"
-          break
-        case "EXPIRED":
-        case "FAILED":
-          mappedStatus = "FAILED"
-          break
-        case "CANCELLED":
-        case "TERMINATED":
-        case "TERMINATION_REQUESTED":
-          mappedStatus = "CANCELLED"
-          break
-        default:
-          mappedStatus = "PENDING"
-      }
 
       // Update payment if status changed
       if (payment.order_status !== mappedStatus) {
@@ -454,16 +455,16 @@ const checkPaymentStatus = async (req, res) => {
 
         payment.order_status = mappedStatus
         payment.cf_payment_id = verifiedPayment?.cf_payment_id?.toString() || payment.cf_payment_id
-        payment.transaction_id = verifiedPayment?.cf_payment_id?.toString() || payment.transaction_id
+        payment.transaction_id = verifiedPayment?.cf_payment_id?.toString() || payment.transaction_id || remoteData.cf_link_id?.toString()
         payment.utr_number = verifiedPayment?.bank_reference || payment.utr_number
-        payment.payment_method = verifiedPayment?.payment_group || payment.payment_method
-        payment.gateway_status = verifiedPayment?.payment_status || orderData.order_status
-        payment.verified_amount = Number(orderData.order_amount)
+        payment.payment_method = verifiedPayment?.payment_group || payment.payment_method || (paymentLink ? "upi" : null)
+        payment.gateway_status = verifiedPayment?.payment_status || remoteStatus
+        payment.verified_amount = Number(paymentLink ? remoteData.order_amount ?? payment.orderAmount : remoteData.order_amount)
         payment.verified_timestamp = new Date()
         payment.metadata = {
           ...payment.metadata,
           last_status_check: new Date(),
-          cashfree_status: orderData.order_status,
+          cashfree_status: remoteStatus,
           ...(wasSupersededByDealerSwitch && mappedStatus === "SUCCESS"
             ? { orphaned_after_method_switch: true }
             : {}),
@@ -486,12 +487,12 @@ const checkPaymentStatus = async (req, res) => {
       message: "Payment status fetched successfully",
       data: {
         order_id: order_id,
-        order_status: orderData.order_status,
-        local_status: payment?.order_status || "UNKNOWN",
-        amount: orderData.order_amount,
-        payment_method: orderData.payment_method || null,
-        transaction_id: orderData.cf_order_id,
-        is_paid: orderData.order_status === "PAID",
+        order_status: remoteStatus,
+        local_status: payment.order_status,
+        amount: paymentLink ? remoteData.order_amount ?? payment.orderAmount : remoteData.order_amount,
+        payment_method: payment.payment_method || null,
+        transaction_id: paymentLink ? remoteData.cf_link_id || null : remoteData.cf_order_id,
+        is_paid: mappedStatus === "SUCCESS",
       },
     })
   } catch (error) {
@@ -517,22 +518,32 @@ const cashfreeWebhook = async (req, res) => {
 
     const eventType = req.body.type
     const data = req.body.data
+    const linkId = data?.link?.link_id || data?.payment_link?.link_id || null
+    const orderId = data?.order?.order_id || null
+    const resourceId = linkId || orderId
 
-    if (!data || !data.order) {
+    if (!data || !resourceId) {
       console.log("Invalid webhook payload")
       return res.status(400).json({ success: false, message: "Invalid payload" })
     }
 
-    const orderId = data.order.order_id
+    const payment = await Payment.findOne({ orderId: resourceId })
+    if (!payment) {
+      console.error(`Payment not found for Cashfree resource: ${resourceId}`)
+      return res.status(404).json({ success: false, message: "Payment not found" })
+    }
 
-    // This is the industry-standard approach recommended by Cashfree for PG v3
-    let verifiedOrderData
+    // Do not trust webhook status fields. Verify the corresponding resource
+    // with Cashfree before writing local payment or booking state.
+    const paymentLink = isPaymentLink(payment)
+    let verifiedData
     try {
-      const verifyResponse = await axios.get(`${getCashfreeBaseUrl()}/orders/${orderId}`, { headers: getCashfreeHeaders() })
-      verifiedOrderData = verifyResponse.data
-      console.log(`Verified order ${orderId} via API:`, verifiedOrderData.order_status)
+      verifiedData = paymentLink
+        ? await getCashfreePaymentLink(resourceId)
+        : (await axios.get(`${getCashfreeBaseUrl()}/orders/${encodeURIComponent(resourceId)}`, { headers: getCashfreeHeaders() })).data
+      console.log(`Verified Cashfree ${paymentLink ? "link" : "order"} ${resourceId}:`, paymentLink ? verifiedData.link_status : verifiedData.order_status)
     } catch (verifyError) {
-      console.error(`Failed to verify order ${orderId}:`, verifyError.response?.data || verifyError.message)
+      console.error(`Failed to verify Cashfree ${paymentLink ? "link" : "order"} ${resourceId}:`, verifyError.response?.data || verifyError.message)
       return res.status(401).json({
         success: false,
         message: "Payment verification failed",
@@ -540,55 +551,30 @@ const cashfreeWebhook = async (req, res) => {
     }
 
     // Use verified status from API, not webhook payload (security)
-    const orderStatus = verifiedOrderData.order_status
-    const verifiedPayment = await getVerifiedPaymentDetails(orderId, data.payment || {})
-    const paymentMethodGroup = verifiedPayment.payment_group || "upi"
+    const remoteStatus = paymentLink ? verifiedData.link_status : verifiedData.order_status
+    const verifiedPayment = paymentLink ? {} : await getVerifiedPaymentDetails(resourceId, data.payment || {})
+    const paymentMethodGroup = verifiedPayment.payment_group || payment.payment_method || (paymentLink ? "upi" : null)
     const transactionId = verifiedPayment.cf_payment_id
     const utr = verifiedPayment.payment_group === "upi" ? verifiedPayment.bank_reference : null
+    const mappedStatus = mapCashfreeStatus(remoteStatus)
 
-    console.log(`Webhook: order_id=${orderId}, verified_status=${orderStatus}, event=${eventType}`)
-
-    // Find and update payment
-    const payment = await Payment.findOne({ orderId: orderId })
-
-    if (!payment) {
-      console.error(`Payment not found for order: ${orderId}`)
-      return res.status(404).json({ success: false, message: "Payment not found" })
-    }
-
-    // Map status
-    let mappedStatus = "PENDING"
-    switch (orderStatus) {
-      case "PAID":
-        mappedStatus = "SUCCESS"
-        break
-      case "EXPIRED":
-      case "FAILED":
-        mappedStatus = "FAILED"
-        break
-      case "CANCELLED":
-      case "TERMINATED":
-      case "TERMINATION_REQUESTED":
-        mappedStatus = "CANCELLED"
-        break
-      case "ACTIVE":
-      default:
-        mappedStatus = "PENDING"
-    }
+    console.log(`Webhook: resource_id=${resourceId}, verified_status=${remoteStatus}, event=${eventType}`)
 
     // This exact session was superseded by a later method switch / fresh QR
     // (see cancelPendingPaymentSessions) — a late webhook must not resurrect
     // it into advancing the booking or re-settling the wallet.
     const wasSupersededByDealerSwitch = payment.order_status === "CANCELLED"
 
-    // Update payment record
-    payment.order_status = mappedStatus
+    // A delayed non-success event must never downgrade a confirmed payment.
+    if (payment.order_status !== "SUCCESS" || mappedStatus === "SUCCESS") {
+      payment.order_status = mappedStatus
+    }
     payment.payment_method = paymentMethodGroup
-    payment.cf_payment_id = transactionId?.toString() || null
-    payment.transaction_id = transactionId || utr
+    payment.cf_payment_id = transactionId?.toString() || payment.cf_payment_id
+    payment.transaction_id = transactionId || utr || payment.transaction_id || verifiedData.cf_link_id?.toString()
     payment.utr_number = utr
-    payment.gateway_status = verifiedPayment.payment_status || orderStatus
-    payment.verified_amount = Number(verifiedOrderData.order_amount)
+    payment.gateway_status = verifiedPayment.payment_status || remoteStatus
+    payment.verified_amount = Number(paymentLink ? verifiedData.order_amount ?? payment.orderAmount : verifiedData.order_amount)
     payment.verified_timestamp = new Date()
     payment.metadata = {
       ...payment.metadata,
@@ -597,7 +583,7 @@ const cashfreeWebhook = async (req, res) => {
       utr_number: utr,
       cf_payment_id: transactionId,
       payment_group: data.payment?.payment_group,
-      verified_via: "orders_api",
+      verified_via: paymentLink ? "links_api" : "orders_api",
       verified_at: new Date(),
       ...(wasSupersededByDealerSwitch && mappedStatus === "SUCCESS"
         ? { orphaned_after_method_switch: true }
@@ -605,7 +591,7 @@ const cashfreeWebhook = async (req, res) => {
     }
 
     await payment.save()
-    console.log(`Payment updated: ${orderId} -> ${mappedStatus}`)
+    console.log(`Payment updated: ${resourceId} -> ${mappedStatus}`)
 
     // Update booking if payment successful
     if (mappedStatus === "SUCCESS" && !wasSupersededByDealerSwitch) {
@@ -616,7 +602,7 @@ const cashfreeWebhook = async (req, res) => {
       // Emit socket event for real-time update
       if (io) {
         io.emit("payment:success", {
-          order_id: orderId,
+          order_id: resourceId,
           booking_id: payment.booking_id,
           amount: payment.orderAmount,
           status: "SUCCESS",
@@ -689,6 +675,43 @@ const regenerateQRCode = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Payment already completed",
+      })
+    }
+
+    if (isPaymentLink(payment)) {
+      const linkData = await getCashfreePaymentLink(payment.orderId)
+      const linkStatus =
+        linkData.link_status === "ACTIVE" && new Date(payment.metadata?.expiry_time || 0).getTime() <= Date.now()
+          ? "EXPIRED"
+          : linkData.link_status
+      const mappedStatus = mapCashfreeStatus(linkStatus)
+      if (mappedStatus !== "PENDING") {
+        payment.order_status = mappedStatus
+        payment.gateway_status = linkData.link_status
+        await payment.save()
+        return res.status(400).json({
+          success: false,
+          message: mappedStatus === "EXPIRED" ? "QR Code expired. Please generate a new payment." : "Payment link is no longer active.",
+          expired: mappedStatus === "EXPIRED",
+        })
+      }
+
+      const linkUrl = payment.metadata?.link_url
+      if (typeof linkUrl !== "string" || !linkUrl) {
+        return res.status(500).json({ success: false, message: "Payment link URL is unavailable. Please generate a new payment." })
+      }
+      const generatedDataUrl = await QRCode.toDataURL(linkUrl, { width: 400, margin: 2, errorCorrectionLevel: "M" })
+      const { qrCodeDataUrl, qrCodeBase64 } = normalizeQrCode(generatedDataUrl)
+      return res.status(200).json({
+        success: true,
+        message: "QR Code regenerated successfully",
+        data: {
+          order_id: payment.orderId,
+          qr_code: qrCodeDataUrl,
+          qr_code_raw: qrCodeBase64,
+          amount: payment.orderAmount,
+          status: payment.order_status,
+        },
       })
     }
 
@@ -776,6 +799,8 @@ const cancelPayment = async (req, res) => {
         message: "Cannot cancel completed payment",
       })
     }
+
+    await terminateCashfreeOrder(payment)
 
     // Update local status
     payment.order_status = "CANCELLED"

@@ -28,10 +28,22 @@ function verifiedEventId(req) {
     return `cashfree:${crypto.createHash("sha256").update(headerId).digest("hex")}`;
   }
 
-  const orderId = req.body?.data?.order?.order_id || "unknown-order";
-  const paymentId = req.body?.data?.payment?.cf_payment_id || "unknown-payment";
+  const orderId =
+    req.body?.data?.link?.link_id ||
+    req.body?.data?.payment_link?.link_id ||
+    req.body?.data?.order?.order_id ||
+    "unknown-order";
+  const paymentId =
+    req.body?.data?.payment?.cf_payment_id ||
+    req.body?.data?.link?.cf_link_id ||
+    req.body?.data?.payment_link?.cf_link_id ||
+    "unknown-payment";
   const eventType = req.body?.type || "unknown-event";
-  const paymentStatus = req.body?.data?.payment?.payment_status || "unknown-status";
+  const paymentStatus =
+    req.body?.data?.payment?.payment_status ||
+    req.body?.data?.link?.link_status ||
+    req.body?.data?.payment_link?.link_status ||
+    "unknown-status";
   return `cashfree:legacy:${crypto
     .createHash("sha256")
     .update(`${eventType}:${orderId}:${paymentId}:${paymentStatus}`)
@@ -77,8 +89,17 @@ async function cashfreeWebhookSecurity(req, res, next) {
   const event = new CashfreeWebhookEvent({
     eventId,
     eventType: req.body?.type || null,
-    orderId: req.body?.data?.order?.order_id || null,
-    paymentId: req.body?.data?.payment?.cf_payment_id?.toString() || null,
+    orderId:
+      req.body?.data?.link?.link_id ||
+      req.body?.data?.payment_link?.link_id ||
+      req.body?.data?.order?.order_id ||
+      null,
+    paymentId: (
+      req.body?.data?.payment?.cf_payment_id ||
+      req.body?.data?.link?.cf_link_id ||
+      req.body?.data?.payment_link?.cf_link_id ||
+      null
+    )?.toString(),
     webhookTimestamp: new Date(timestamp),
     expiresAt: new Date(now + PROCESSING_LEASE_MS),
   });
