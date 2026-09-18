@@ -295,6 +295,7 @@ const sensitiveRateLimit = require("./middlewares/rateLimits");
 const mongoose = require("mongoose");
 const Vendor = require("./models/dealerModel");
 const { isDealerBookable } = require("./helper/dealerStatus");
+const { ensureUserBikePlateIndexes } = require("./utils/userBikeIndexes");
 
 const app = express();
 const server = http.createServer(app);
@@ -443,20 +444,31 @@ app.use("/api/v1", require("./v1-api/routes/index"));
    Database
    ============================== */
 const DB = process.env.DATABASE_URL;
+const PORT = process.env.PORT || 8001;
 
 db.mongoose
   .connect(DB, {
     useUnifiedTopology: true,
     useNewUrlParser: true,
   })
-  .then((data) => {
+  .then(async (data) => {
     console.log("Mongodb connected with:", data.connection.host);
+    const bikeIndexResult = await ensureUserBikePlateIndexes(data.connection.db);
+    if (bikeIndexResult.createdPerUserIndex || bikeIndexResult.droppedGlobalIndexes.length) {
+      console.log("UserBike registration indexes reconciled:", bikeIndexResult);
+    }
     bookingExpiryJob.start(io);
     campaignSchedulerJob.start();
     reviewReminderJob.start();
     paymentReconciliationJob.start();
+    server.listen(PORT, () =>
+      console.log(`Server is working on port: ${PORT}`)
+    );
   })
-  .catch((err) => console.log("MongoDB error:", err));
+  .catch((err) => {
+    console.error("Database startup error:", err);
+    process.exitCode = 1;
+  });
 
 /* ==============================
    Errors
@@ -469,11 +481,3 @@ function errHandler(err, req, res, next) {
 }
 app.use(errHandler);
 app.use(errorMiddleware);
-
-/* ==============================
-   Start Server
-   ============================== */
-const PORT = process.env.PORT || 8001;
-server.listen(PORT, () =>
-  console.log(`Server is working on port: ${PORT}`)
-);

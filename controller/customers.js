@@ -254,9 +254,6 @@ const deleteMyBike = async (req, res) => {
     const user_id = req.user_id;
     const { bike_id } = req.params; // Get bike ID from URL params
 
-    console.log("🔹 Received User ID:", user_id);
-    console.log("🔹 Received Bike ID:", bike_id);
-
     if (!user_id) {
       return res.status(200).json({
         status: 200,
@@ -265,35 +262,18 @@ const deleteMyBike = async (req, res) => {
       });
     }
 
-    // Find the bike and ensure it belongs to the user
-    const bike = await UserBike.findOne({ _id: bike_id, user_id });
+    // Ownership check and deletion happen in one database operation. A success
+    // response therefore means the unique plate entry has actually gone and
+    // the same customer can immediately add that registration number again.
+    const deletedBike = await UserBike.findOneAndDelete({ _id: bike_id, user_id });
 
-    console.log("🔹 Found Bike:", bike); // Debugging log
-
-    if (!bike) {
-      return res.status(200).json({
-        status: 200,
+    if (!deletedBike) {
+      return res.status(404).json({
+        status: 404,
         message: "Bike not found!",
         data: [],
       });
     }
-
-    console.log("🔹 Bike Owner ID:", bike.user_id.toString());
-    console.log(
-      "🔹 Checking if User ID matches:",
-      user_id === bike.user_id.toString(),
-    );
-
-    if (bike.user_id.toString() !== user_id) {
-      return res.status(200).json({
-        status: 200,
-        message: "Bike does not belong to the user!",
-        data: [],
-      });
-    }
-
-    // Delete the bike
-    await UserBike.findByIdAndDelete(bike_id);
 
     return res.status(200).json({
       status: 200,
@@ -828,13 +808,12 @@ const addUserBike = async (req, res) => {
   } catch (error) {
     console.error("Error adding user bike:", error);
 
-    // A unique-index race should be a user-facing conflict, not a generic
-    // server failure. This also makes environments that still carry the old
-    // global plate_number_1 index diagnosable until the index repair is run.
+    // Concurrent requests for the same customer's plate can both pass the
+    // readable pre-check; the per-user database index remains authoritative.
     if (error?.code === 11000) {
       return res.status(409).json({
         status: 409,
-        message: "A bike with this registration number is already registered.",
+        message: "You have already added a bike with this plate number!",
         data: [],
       });
     }

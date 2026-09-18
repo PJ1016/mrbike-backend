@@ -22,9 +22,7 @@
 
 const mongoose = require("mongoose");
 require("dotenv").config();
-
-const LEGACY_INDEX_NAME = "plate_number_1";
-const NEW_INDEX_NAME = "user_id_1_plate_number_1";
+const { ensureUserBikePlateIndexes } = require("../utils/userBikeIndexes");
 
 async function fixUserBikePlateIndex() {
   const uri = process.env.DATABASE_URL || process.env.MONGODB_URI;
@@ -37,47 +35,16 @@ async function fixUserBikePlateIndex() {
   try {
     await mongoose.connect(uri);
     const collection = mongoose.connection.db.collection("userbikes");
-    const indexes = await collection.indexes();
-    const legacy = indexes.find((i) => i.name === LEGACY_INDEX_NAME);
-    const compound = indexes.find((i) => i.name === NEW_INDEX_NAME);
+    const result = await ensureUserBikePlateIndexes(mongoose.connection.db);
 
-    if (!legacy && compound) {
+    if (result.createdPerUserIndex) {
+      console.log("✓ Created the unique per-user bike registration index");
+    }
+    result.droppedGlobalIndexes.forEach((name) =>
+      console.log(`✓ Dropped the old global index ${name}`),
+    );
+    if (!result.createdPerUserIndex && result.droppedGlobalIndexes.length === 0) {
       console.log("✓ Nothing to do — the per-user index is already in place.");
-      return;
-    }
-
-    if (!compound) {
-      // The old global index guarantees no two bikes share a plate at all, so
-      // this can only fail on a database where it was already dropped by hand.
-      const duplicates = await collection
-        .aggregate([
-          { $group: { _id: { user_id: "$user_id", plate_number: "$plate_number" }, count: { $sum: 1 } } },
-          { $match: { count: { $gt: 1 } } },
-        ])
-        .toArray();
-
-      if (duplicates.length) {
-        console.error(
-          `✗ ${duplicates.length} rider(s) have the same plate twice in their own garage — ` +
-            "resolve these before the unique index can be built:"
-        );
-        duplicates.forEach((d) =>
-          console.error(`   user ${d._id.user_id} / ${d._id.plate_number} ×${d.count}`)
-        );
-        process.exitCode = 1;
-        return;
-      }
-
-      await collection.createIndex(
-        { user_id: 1, plate_number: 1 },
-        { unique: true, name: NEW_INDEX_NAME }
-      );
-      console.log(`✓ Created the unique compound index ${NEW_INDEX_NAME}`);
-    }
-
-    if (legacy) {
-      await collection.dropIndex(LEGACY_INDEX_NAME);
-      console.log(`✓ Dropped the old global index ${LEGACY_INDEX_NAME}`);
     }
 
     const plates = await collection.distinct("plate_number");
