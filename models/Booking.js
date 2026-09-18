@@ -153,6 +153,7 @@ const bookingSchema = new mongoose.Schema(
     pickupNearbyNotifiedAt: { type: Date, default: null },
     arrivedAt: { type: Date, default: null },
     pickupOtpVerifiedAt: { type: Date, default: null },
+    pickupOtpExpiresAt: { type: Date, default: null, select: false },
     pickupCompletedAt: { type: Date, default: null },
     pickupTrackingActive: { type: Boolean, default: false },
     pickupCurrentLocation: {

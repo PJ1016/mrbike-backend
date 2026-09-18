@@ -1186,8 +1186,9 @@ async function getBookingDetails(req, res) {
       req.auth?.role === "admin" ? { _id: bookingId } :
       { _id: bookingId, user_id: req.user_id };
     const bookingQuery = booking.findOne(ownerFilter);
-    // The intake OTP is customer-visible only. pickupOtp is select:false in
-    // the schema, so a dealer fetching the same booking never receives it.
+    // Legacy SELF_VISIT bookings still use this customer-visible visit OTP.
+    // Tracked PICKUP bookings are sanitized below and use the narrow,
+    // ARRIVED-only customer OTP endpoint instead.
     if (req.auth?.role === "customer") bookingQuery.select("+pickupOtp");
 
     const bookingData = await bookingQuery
@@ -1247,6 +1248,10 @@ async function getBookingDetails(req, res) {
       dropCharges: billData?.drop_charges || bookingData.dropCharges || 0,
       towingCharge: billData?.towing_charge || bookingData.towingCharge || 0,
     };
+    if (isPickupBooking(bookingData)) {
+      delete result.pickupOtp;
+      delete result.pickupOtpExpiresAt;
+    }
 
     console.log("Returning booking details with grandTotal:", grandTotal);
     res.status(200).json({ success: true, data: result });

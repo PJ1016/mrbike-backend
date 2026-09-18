@@ -5,6 +5,7 @@ const { sendBookingNotification } = require("../helper/pushNotification");
 const {
   PICKUP_STATUSES,
   ARRIVAL_RADIUS_METERS,
+  PICKUP_OTP_TTL_MS,
   isPickupBooking,
   normalizeLocation,
   pickupLocation,
@@ -13,7 +14,9 @@ const {
   canStartPickup,
   shouldRecordNearby,
   pickupOtpMatches,
+  pickupOtpIsExpired,
   canCompleteBikePickup,
+  pickupLocationSocketPayload,
 } = require("../services/pickupLifecycle");
 
 function pickupOtp() {
@@ -32,7 +35,7 @@ function locationWasProvided(body = {}) {
 
 async function loadPickupBooking(bookingId) {
   return Booking.findById(bookingId)
-    .select("+pickupOtp")
+    .select("+pickupOtp +pickupOtpExpiresAt")
     .populate("pickupAndDropId", "user_lat user_lng");
 }
 
@@ -197,12 +200,32 @@ async function updatePickupLocation(req, res) {
       );
     }
 
+    // Phase 3 customer tracking consumes the existing booking room. Keep this
+    // payload deliberately minimal: live coordinates and lifecycle metadata,
+    // with no dealer identity, contact details, or other customer data.
+    const effectivePickupStatus = nearbyFirstRecorded
+      ? PICKUP_STATUSES.RIDER_NEARBY
+      : bookingDoc.pickupStatus;
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`booking:${bookingDoc._id}`).emit(
+        "pickup:location",
+        pickupLocationSocketPayload({
+          bookingId: bookingDoc._id,
+          pickupStatus: effectivePickupStatus,
+          location,
+          updatedAt: now,
+          distanceMeters,
+        })
+      );
+    }
+
     return res.status(200).json({
       success: true,
       message: nearbyFirstRecorded ? "Rider location updated; rider is nearby" : "Rider location updated",
       data: {
         bookingId: bookingDoc._id,
-        pickupStatus: nearbyFirstRecorded ? PICKUP_STATUSES.RIDER_NEARBY : bookingDoc.pickupStatus,
+        pickupStatus: effectivePickupStatus,
         distanceMeters: Math.round(distanceMeters),
         nearby: distanceMeters <= ARRIVAL_RADIUS_METERS,
       },
@@ -238,6 +261,7 @@ async function markArrived(req, res) {
     }
 
     const now = new Date();
+    const otpExpiresAt = new Date(now.getTime() + PICKUP_OTP_TTL_MS);
     const firstNearby = bookingDoc.pickupNearbyNotifiedAt == null;
     const updated = await Booking.findOneAndUpdate(
       {
@@ -250,13 +274,15 @@ async function markArrived(req, res) {
           ...locationSet(location, now),
           pickupStatus: PICKUP_STATUSES.ARRIVED,
           arrivedAt: now,
+          pickupOtp: bookingDoc.pickupOtp == null ? pickupOtp() : bookingDoc.pickupOtp,
+          pickupOtpExpiresAt: otpExpiresAt,
           ...(firstNearby
             ? { riderNearbyAt: now, pickupNearbyNotifiedAt: now }
             : {}),
         },
       },
       { new: true }
-    ).select("+pickupOtp");
+    );
     if (!updated) {
       return res.status(409).json({ success: false, message: "Arrival was already recorded or booking state changed" });
     }
@@ -269,8 +295,7 @@ async function markArrived(req, res) {
       updated,
       "arrived",
       "Rider Arrived",
-      "The rider has arrived. Share your pickup OTP only after checking the rider.",
-      updated.pickupOtp == null ? {} : { otp: String(updated.pickupOtp) }
+      "Your rider has arrived. Open the booking to view the pickup OTP."
     );
     return res.status(200).json({
       success: true,
@@ -297,6 +322,9 @@ async function verifyPickupOtp(req, res) {
     if (bookingDoc.pickupOtp == null || bookingDoc.pickupOtpVerifiedAt) {
       return res.status(409).json({ success: false, message: "Pickup OTP is missing or already verified" });
     }
+    if (pickupOtpIsExpired(bookingDoc)) {
+      return res.status(410).json({ success: false, message: "Pickup OTP has expired" });
+    }
     if (!pickupOtpMatches(bookingDoc.pickupOtp, incoming)) {
       return res.status(401).json({ success: false, message: "Invalid pickup OTP" });
     }
@@ -309,10 +337,14 @@ async function verifyPickupOtp(req, res) {
         pickupStatus: PICKUP_STATUSES.ARRIVED,
         pickupOtp: Number(incoming),
         pickupOtpVerifiedAt: null,
+        $or: [
+          { pickupOtpExpiresAt: null },
+          { pickupOtpExpiresAt: { $gt: now } },
+        ],
       },
       {
         $set: { pickupStatus: PICKUP_STATUSES.PICKUP_OTP_VERIFIED, pickupOtpVerifiedAt: now },
-        $unset: { pickupOtp: 1 },
+        $unset: { pickupOtp: 1, pickupOtpExpiresAt: 1 },
       },
       { new: true }
     );
@@ -326,6 +358,35 @@ async function verifyPickupOtp(req, res) {
     });
   } catch (error) {
     console.error("verifyPickupOtp error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+}
+
+async function getPickupOtpForCustomer(req, res) {
+  try {
+    const bookingDoc = await loadPickupBooking(req.params.bookingId);
+    if (!pickupGuard(res, bookingDoc)) return;
+    if (bookingDoc.pickupStatus !== PICKUP_STATUSES.ARRIVED) {
+      return res.status(409).json({
+        success: false,
+        message: "Pickup OTP is available only after the rider has arrived",
+      });
+    }
+    if (bookingDoc.pickupOtp == null || bookingDoc.pickupOtpVerifiedAt) {
+      return res.status(409).json({ success: false, message: "Pickup OTP is unavailable or already used" });
+    }
+    if (pickupOtpIsExpired(bookingDoc)) {
+      return res.status(410).json({ success: false, message: "Pickup OTP has expired" });
+    }
+    return res.status(200).json({
+      success: true,
+      data: {
+        otp: String(bookingDoc.pickupOtp),
+        expiresAt: bookingDoc.pickupOtpExpiresAt,
+      },
+    });
+  } catch (error) {
+    console.error("getPickupOtpForCustomer error:", error.message);
     return res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 }
@@ -360,7 +421,7 @@ async function completeBikePickup(req, res) {
       return res.status(409).json({ success: false, message: "Bike pickup was already completed or booking state changed" });
     }
 
-    await notifyCustomer(req, updated, "completed", "Bike Picked Up", "Your bike has been picked up and the service is now in progress.");
+    await notifyCustomer(req, updated, "completed", "Bike Picked Up Successfully", "Bike Picked Up Successfully. Service is now in progress.");
     return res.status(200).json({
       success: true,
       message: "Bike pickup completed; service is in progress",
@@ -378,4 +439,11 @@ async function completeBikePickup(req, res) {
   }
 }
 
-module.exports = { startPickup, updatePickupLocation, markArrived, verifyPickupOtp, completeBikePickup };
+module.exports = {
+  startPickup,
+  updatePickupLocation,
+  markArrived,
+  getPickupOtpForCustomer,
+  verifyPickupOtp,
+  completeBikePickup,
+};

@@ -41,6 +41,7 @@ const {
     startPickup,
     updatePickupLocation,
     markArrived,
+    getPickupOtpForCustomer,
     verifyPickupOtp,
     completeBikePickup,
 } = require("../controller/pickupLifecycleController");
@@ -85,6 +86,7 @@ router.post('/:bookingId/customer-arrived', requireBookingParticipant(req => req
 router.post('/:bookingId/pickup/start', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), startPickup);
 router.patch('/:bookingId/pickup/location', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), updatePickupLocation);
 router.post('/:bookingId/pickup/arrived', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), markArrived);
+router.get('/:bookingId/pickup/otp', requireBookingParticipant(req => req.params.bookingId), requireActorRole("customer"), getPickupOtpForCustomer);
 router.post('/:bookingId/pickup/verify-otp', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), verifyPickupOtp);
 router.post('/:bookingId/pickup/complete', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), completeBikePickup);
 router.post('/addNote', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), addNoteToBooking);

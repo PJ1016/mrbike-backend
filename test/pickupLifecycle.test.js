@@ -9,6 +9,7 @@ const { requireBookingParticipant, requireActorRole } = require("../middlewares/
 const {
   PICKUP_STATUSES,
   ARRIVAL_RADIUS_METERS,
+  PICKUP_OTP_TTL_MS,
   isPickupBooking,
   distanceToPickupMeters,
   canMarkArrived,
@@ -16,8 +17,10 @@ const {
   canMarkCustomerArrived,
   shouldRecordNearby,
   pickupOtpMatches,
+  pickupOtpIsExpired,
   canVerifyPickupOtp,
   canCompleteBikePickup,
+  pickupLocationSocketPayload,
 } = require("../services/pickupLifecycle");
 
 const CUSTOMER = new mongoose.Types.ObjectId();
@@ -25,7 +28,7 @@ const DEALER = new mongoose.Types.ObjectId();
 const WRONG_DEALER = new mongoose.Types.ObjectId();
 const BOOKING = new mongoose.Types.ObjectId();
 
-async function authorizationResult(actorId, userType = 3) {
+async function authorizationResult(actorId, userType = 3, requiredRole = "dealer") {
   const oldSecret = process.env.JWT_SECRET;
   const oldVendorFind = Vendor.findById;
   const oldAdminFind = Admin.findById;
@@ -53,7 +56,7 @@ async function authorizationResult(actorId, userType = 3) {
   };
 
   await requireBookingParticipant(r => r.params.bookingId)(req, res, () => {
-    requireActorRole("dealer")(req, res, () => { result = { next: true }; });
+    requireActorRole(requiredRole)(req, res, () => { result = { next: true }; });
   });
 
   Vendor.findById = oldVendorFind;
@@ -87,12 +90,34 @@ async function run() {
     false,
     "self-visit arrival cannot be repeated as a new transition",
   );
+
+  const livePayload = pickupLocationSocketPayload({
+    bookingId: BOOKING,
+    pickupStatus: PICKUP_STATUSES.PICKUP_STARTED,
+    location: { latitude: 12.9716, longitude: 77.5946 },
+    updatedAt: new Date("2026-09-18T10:00:00.000Z"),
+    distanceMeters: 125.6,
+  });
+  assert.strictEqual(livePayload.bookingId, String(BOOKING));
+  assert.strictEqual(livePayload.distanceMeters, 126);
+  assert.strictEqual(livePayload.nearby, false);
+  assert.strictEqual(livePayload.dealer, undefined, "location event exposes no dealer PII");
   assert.strictEqual(canMarkCustomerArrived(confirmedPickup), false, "pickup booking must use GPS arrival");
   assert.strictEqual(isPickupBooking({ transportOption: "DROP_ONLY", pickupAndDropId: BOOKING }), false);
 
   assert.deepStrictEqual(await authorizationResult(DEALER), { next: true });
   assert.strictEqual((await authorizationResult(WRONG_DEALER)).statusCode, 404, "wrong dealer cannot modify booking");
   assert.strictEqual((await authorizationResult(CUSTOMER, 4)).statusCode, 403, "customer cannot trigger pickup actions");
+  assert.deepStrictEqual(
+    await authorizationResult(CUSTOMER, 4, "customer"),
+    { next: true },
+    "assigned customer can retrieve the arrived pickup OTP"
+  );
+  assert.strictEqual(
+    (await authorizationResult(DEALER, 3, "customer")).statusCode,
+    403,
+    "dealer cannot retrieve the customer pickup OTP"
+  );
 
   const customerLocation = { latitude: 12.9716, longitude: 77.5946 };
   const over100m = distanceToPickupMeters({ latitude: 12.9730, longitude: 77.5946 }, customerLocation);
@@ -115,8 +140,34 @@ async function run() {
   assert.strictEqual(pickupOtpMatches(4321, "4321"), true, "valid OTP is accepted");
   assert.strictEqual(pickupOtpMatches(null, "4321"), false, "consumed OTP cannot be reused");
   assert.strictEqual(
+    pickupOtpIsExpired(
+      { pickupOtpExpiresAt: new Date("2026-09-18T09:59:59.000Z") },
+      new Date("2026-09-18T10:00:00.000Z")
+    ),
+    true,
+    "expired pickup OTP is rejected"
+  );
+  assert.strictEqual(
+    pickupOtpIsExpired(
+      { pickupOtpExpiresAt: new Date("2026-09-18T10:15:00.000Z") },
+      new Date("2026-09-18T10:00:00.000Z")
+    ),
+    false
+  );
+  assert.strictEqual(PICKUP_OTP_TTL_MS, 15 * 60 * 1000);
+  assert.strictEqual(
     canVerifyPickupOtp({ pickupStatus: PICKUP_STATUSES.ARRIVED, pickupOtp: 4321, pickupOtpVerifiedAt: null }, "4321"),
     true
+  );
+  assert.strictEqual(
+    canVerifyPickupOtp({
+      pickupStatus: PICKUP_STATUSES.ARRIVED,
+      pickupOtp: 4321,
+      pickupOtpVerifiedAt: null,
+      pickupOtpExpiresAt: new Date(Date.now() - 1000),
+    }, "4321"),
+    false,
+    "a matching but expired OTP is rejected"
   );
   assert.strictEqual(
     canCompleteBikePickup({ pickupStatus: PICKUP_STATUSES.PICKUP_OTP_VERIFIED, pickupOtpVerifiedAt: new Date() }),
@@ -126,6 +177,11 @@ async function run() {
   assert.strictEqual(
     canCompleteBikePickup({ pickupStatus: PICKUP_STATUSES.ARRIVED, pickupOtpVerifiedAt: null }),
     false
+  );
+  assert.strictEqual(
+    canCompleteBikePickup({ pickupStatus: PICKUP_STATUSES.BIKE_PICKED_UP, pickupOtpVerifiedAt: new Date() }),
+    false,
+    "duplicate pickup completion is rejected"
   );
 
   assert.strictEqual(
@@ -144,6 +200,16 @@ async function run() {
   assert.strictEqual(normalDoc.validateSync(), undefined, "normal non-pickup booking schema remains valid");
   assert.strictEqual(normalDoc.pickupTrackingActive, false);
   assert.strictEqual(normalDoc.pickupOtp, null);
+  assert.strictEqual(
+    Booking.schema.path("pickupOtp").options.select,
+    false,
+    "pickup OTP is excluded from ordinary booking responses"
+  );
+  assert.strictEqual(
+    Booking.schema.path("pickupOtpExpiresAt").options.select,
+    false,
+    "pickup OTP expiry metadata is excluded from ordinary booking responses"
+  );
 
   console.log("Pickup lifecycle tests passed");
 }

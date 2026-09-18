@@ -11,6 +11,7 @@ const PICKUP_STATUSES = Object.freeze({
 
 const PICKUP_TRANSPORT_OPTIONS = new Set(["PICKUP_ONLY", "PICKUP_AND_DROP"]);
 const ARRIVAL_RADIUS_METERS = 100;
+const PICKUP_OTP_TTL_MS = 15 * 60 * 1000;
 
 function isPickupBooking(booking) {
   if (!booking) return false;
@@ -98,10 +99,16 @@ function pickupOtpMatches(storedOtp, incomingOtp) {
   return storedOtp != null && /^\d{4}$/.test(incoming) && String(storedOtp) === incoming;
 }
 
+function pickupOtpIsExpired(booking, now = new Date()) {
+  if (!booking?.pickupOtpExpiresAt) return false;
+  return new Date(booking.pickupOtpExpiresAt).getTime() <= new Date(now).getTime();
+}
+
 function canVerifyPickupOtp(booking, incomingOtp) {
   return Boolean(
-    booking?.pickupStatus === PICKUP_STATUSES.ARRIVED &&
+      booking?.pickupStatus === PICKUP_STATUSES.ARRIVED &&
       booking.pickupOtpVerifiedAt == null &&
+      !pickupOtpIsExpired(booking) &&
       pickupOtpMatches(booking.pickupOtp, incomingOtp)
   );
 }
@@ -113,9 +120,25 @@ function canCompleteBikePickup(booking) {
   );
 }
 
+function pickupLocationSocketPayload({ bookingId, pickupStatus, location, updatedAt, distanceMeters }) {
+  return {
+    bookingId: String(bookingId),
+    pickupStatus,
+    pickupTrackingActive: true,
+    location: {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      updatedAt,
+    },
+    distanceMeters: Math.round(distanceMeters),
+    nearby: distanceMeters <= ARRIVAL_RADIUS_METERS,
+  };
+}
+
 module.exports = {
   PICKUP_STATUSES,
   ARRIVAL_RADIUS_METERS,
+  PICKUP_OTP_TTL_MS,
   isPickupBooking,
   normalizeLocation,
   pickupLocation,
@@ -125,6 +148,8 @@ module.exports = {
   canMarkCustomerArrived,
   shouldRecordNearby,
   pickupOtpMatches,
+  pickupOtpIsExpired,
   canVerifyPickupOtp,
   canCompleteBikePickup,
+  pickupLocationSocketPayload,
 };
