@@ -36,6 +36,13 @@ const {
     regenerateDeliveryOtp,
     // updateBookingStatusDealer
 } = require("../controller/booking")
+const {
+    startPickup,
+    updatePickupLocation,
+    markArrived,
+    verifyPickupOtp,
+    completeBikePickup,
+} = require("../controller/pickupLifecycleController");
 
 const storage = multer.diskStorage({
     destination: (req, file, callback) => {
@@ -71,6 +78,13 @@ router.post('/sendBookingMobile', requireBookingParticipant(req => req.body.book
 router.post('/verifyBookingOTP', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), verifyBookingOTP)
 router.post('/verifyBookingMobile', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), verifyOtpForMobile)
 router.post("/update-pickup-status", requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), updatePickupStatus);
+// Authenticated dealer pickup lifecycle. Participant lookup deliberately
+// returns 404 to a dealer who does not own the booking.
+router.post('/:bookingId/pickup/start', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), startPickup);
+router.patch('/:bookingId/pickup/location', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), updatePickupLocation);
+router.post('/:bookingId/pickup/arrived', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), markArrived);
+router.post('/:bookingId/pickup/verify-otp', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), verifyPickupOtp);
+router.post('/:bookingId/pickup/complete', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), completeBikePickup);
 router.post('/addNote', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), addNoteToBooking);
 router.get('/getNotes/:bookingId', requireBookingParticipant(req => req.params.bookingId), getNotesFromBooking);
 router.put('/updateNote', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), updateNoteInBooking);

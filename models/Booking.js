@@ -128,7 +128,38 @@ const bookingSchema = new mongoose.Schema(
 
     userBike_id: { type: mongoose.Schema.Types.ObjectId, ref: "UserBike", required: true },
 
-    pickupStatus: { type: String, default: "pending" },
+    // Pickup is a sub-lifecycle of a confirmed booking. Legacy lowercase
+    // values remain accepted so old rows can still be read and completed.
+    pickupStatus: {
+      type: String,
+      enum: [
+        "pending",
+        "arriving",
+        "arrived",
+        "pickedup",
+        "completed",
+        "BOOKING_CONFIRMED",
+        "PICKUP_STARTED",
+        "RIDER_NEARBY",
+        "ARRIVED",
+        "PICKUP_OTP_VERIFIED",
+        "BIKE_PICKED_UP",
+      ],
+      default: "pending",
+    },
+
+    pickupStartedAt: { type: Date, default: null },
+    riderNearbyAt: { type: Date, default: null },
+    pickupNearbyNotifiedAt: { type: Date, default: null },
+    arrivedAt: { type: Date, default: null },
+    pickupOtpVerifiedAt: { type: Date, default: null },
+    pickupCompletedAt: { type: Date, default: null },
+    pickupTrackingActive: { type: Boolean, default: false },
+    pickupCurrentLocation: {
+      latitude: { type: Number, min: -90, max: 90, default: null },
+      longitude: { type: Number, min: -180, max: 180, default: null },
+      updatedAt: { type: Date, default: null },
+    },
 
     serviceDate: { type: Date },
     billGenerated: { type: Boolean, default: false },
@@ -142,7 +173,7 @@ const bookingSchema = new mongoose.Schema(
     ],
 
     // 🔄 replaced single 'otp' with two distinct OTPs
-    pickupOtp: { type: Number, default: null },
+    pickupOtp: { type: Number, default: null, select: false },
     deliveryOtp: { type: Number, default: null },
 
     // Legacy fields — kept for backward compatibility with code that reads
@@ -417,8 +448,9 @@ bookingSchema.virtual("vehicleLifecycleStatus").get(function () {
   if (this.status === "confirmed") {
     // If it's a Pickup & Drop service
     if (this.pickupAndDropId) {
-      if (this.pickupStatus === "pending") return "Pickup Scheduled";
-      if (["pickedup", "completed", "arrived"].includes(this.pickupStatus))
+      if (["pending", "BOOKING_CONFIRMED", "PICKUP_STARTED", "RIDER_NEARBY", "ARRIVED"].includes(this.pickupStatus))
+        return "Pickup Scheduled";
+      if (["pickedup", "completed", "arrived", "PICKUP_OTP_VERIFIED", "BIKE_PICKED_UP"].includes(this.pickupStatus))
         return "Service In Progress";
     } else {
       // If it's a direct customer visit to the shop

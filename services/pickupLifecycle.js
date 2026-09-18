@@ -1,0 +1,120 @@
+const { calculateDistanceKm } = require("../v1-api/helpers/geoAndRatings");
+
+const PICKUP_STATUSES = Object.freeze({
+  BOOKING_CONFIRMED: "BOOKING_CONFIRMED",
+  PICKUP_STARTED: "PICKUP_STARTED",
+  RIDER_NEARBY: "RIDER_NEARBY",
+  ARRIVED: "ARRIVED",
+  PICKUP_OTP_VERIFIED: "PICKUP_OTP_VERIFIED",
+  BIKE_PICKED_UP: "BIKE_PICKED_UP",
+});
+
+const PICKUP_TRANSPORT_OPTIONS = new Set(["PICKUP_ONLY", "PICKUP_AND_DROP"]);
+const ARRIVAL_RADIUS_METERS = 100;
+
+function isPickupBooking(booking) {
+  if (!booking) return false;
+  if (PICKUP_TRANSPORT_OPTIONS.has(booking.transportOption)) return true;
+  if (booking.transportOption === "DROP_ONLY") return false;
+  // Old rows predate transportOption; Mongoose may materialize its SELF_VISIT
+  // default when reading them, so pickupAndDropId is the compatibility signal
+  // only when there is no modern pricing snapshot.
+  if (booking.transportOption === "SELF_VISIT") {
+    return Boolean(booking.pickupAndDropId && booking.priceSnapshotAt == null);
+  }
+  return Boolean(booking.pickupAndDropId);
+}
+
+function normalizeLocation(input = {}) {
+  const source = input.location && typeof input.location === "object" ? input.location : input;
+  const latitude = Number(source.latitude ?? source.lat);
+  const longitude = Number(source.longitude ?? source.lng);
+
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null;
+  }
+  return { latitude, longitude };
+}
+
+function pickupLocation(booking) {
+  const pickup = booking?.pickupAndDropId;
+  const latitude = Number(pickup?.user_lat);
+  const longitude = Number(pickup?.user_lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+function distanceToPickupMeters(riderLocation, customerLocation) {
+  if (!riderLocation || !customerLocation) return null;
+  return (
+    calculateDistanceKm(
+      riderLocation.latitude,
+      riderLocation.longitude,
+      customerLocation.latitude,
+      customerLocation.longitude
+    ) * 1000
+  );
+}
+
+function canMarkArrived(status) {
+  return [PICKUP_STATUSES.PICKUP_STARTED, PICKUP_STATUSES.RIDER_NEARBY].includes(status);
+}
+
+function canStartPickup(booking) {
+  return Boolean(
+    isPickupBooking(booking) &&
+      booking.status === "confirmed" &&
+      [PICKUP_STATUSES.BOOKING_CONFIRMED, "pending"].includes(booking.pickupStatus)
+  );
+}
+
+function shouldRecordNearby(booking, distanceMeters) {
+  return Boolean(
+    booking?.pickupStatus === PICKUP_STATUSES.PICKUP_STARTED &&
+      booking.pickupNearbyNotifiedAt == null &&
+      Number.isFinite(distanceMeters) &&
+      distanceMeters <= ARRIVAL_RADIUS_METERS
+  );
+}
+
+function pickupOtpMatches(storedOtp, incomingOtp) {
+  const incoming = String(incomingOtp ?? "").trim();
+  return storedOtp != null && /^\d{4}$/.test(incoming) && String(storedOtp) === incoming;
+}
+
+function canVerifyPickupOtp(booking, incomingOtp) {
+  return Boolean(
+    booking?.pickupStatus === PICKUP_STATUSES.ARRIVED &&
+      booking.pickupOtpVerifiedAt == null &&
+      pickupOtpMatches(booking.pickupOtp, incomingOtp)
+  );
+}
+
+function canCompleteBikePickup(booking) {
+  return Boolean(
+    booking?.pickupStatus === PICKUP_STATUSES.PICKUP_OTP_VERIFIED &&
+      booking.pickupOtpVerifiedAt
+  );
+}
+
+module.exports = {
+  PICKUP_STATUSES,
+  ARRIVAL_RADIUS_METERS,
+  isPickupBooking,
+  normalizeLocation,
+  pickupLocation,
+  distanceToPickupMeters,
+  canMarkArrived,
+  canStartPickup,
+  shouldRecordNearby,
+  pickupOtpMatches,
+  canVerifyPickupOtp,
+  canCompleteBikePickup,
+};

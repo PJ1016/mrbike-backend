@@ -37,8 +37,11 @@ const { getPricingSettings } = require("../services/appSettingsService");
 const { validatePromoCode } = require("../services/promoService");
 const PromoCode = require("../models/PromoCode");
 const PromoCodeUsage = require("../models/PromoCodeUsage");
+const PickupnDrop = require("../models/PickupnDrop");
 const { ACTIVE_BOOKING_QUERY } = require("../utils/bookingStatus");
 const { isDealerBookable } = require("../helper/dealerStatus");
+const { isPickupBooking, PICKUP_STATUSES } = require("../services/pickupLifecycle");
+const { verifyPickupOtp } = require("./pickupLifecycleController");
 
 async function checkPermission(user_id, requiredPermission) {
   try {
@@ -943,6 +946,27 @@ async function createBooking(req, res) {
       }
     }
 
+    // Pickup distance enforcement depends on a server-owned coordinate record.
+    // Also prevents a customer from attaching another user's pickup request.
+    let pickupRequest = null;
+    if ([TRANSPORT_OPTIONS.PICKUP_ONLY, TRANSPORT_OPTIONS.PICKUP_AND_DROP].includes(transportOption)) {
+      if (!pickupAndDropId || !mongoose.Types.ObjectId.isValid(pickupAndDropId)) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid pickup location is required for PICKUP bookings",
+        });
+      }
+      pickupRequest = await PickupnDrop.findOne({
+        _id: pickupAndDropId,
+        user_id,
+        dealer_id,
+        status: 1,
+      }).select("otp user_lat user_lng");
+      if (!pickupRequest) {
+        return res.status(400).json({ success: false, message: "Pickup location not found for this customer and dealer" });
+      }
+    }
+
     // ── Towing requirement ────────────────────────────────────────────────────
     // Derived only now, because it takes BOTH halves: a bike that cannot be
     // ridden AND a transport option under which the garage collects it. A
@@ -1014,7 +1038,10 @@ async function createBooking(req, res) {
     }
     console.log("[createBooking] Pricing breakdown:", breakdown);
 
-    const pickupOtp = genOtp();
+    // A pickup OTP must never exist on self-drop / drop-only bookings.
+    const pickupOtp = pickupRequest
+      ? (/^\d{4}$/.test(String(pickupRequest.otp ?? "")) ? pickupRequest.otp : genOtp())
+      : null;
     const deliveryOtp = genOtp();
 
     // ── 4. Pre-save payload log ───────────────────────────────────────────────
@@ -1113,12 +1140,13 @@ async function createBooking(req, res) {
       console.error("[BOOKING-CREATED] Dealer notification error:", notifyErr.message);
     }
 
+    const bookingResponse = newBooking.toObject();
+    delete bookingResponse.pickupOtp;
     return res.status(201).json({
       success: true,
       message: "Booking created successfully",
-      data: newBooking,
+      data: bookingResponse,
       pricing: breakdown,
-      pickupOtp,
       deliveryOtp,
       timerExpiresAt: newBooking.timerExpiresAt,
       dealerResponseStatus: newBooking.dealerResponseStatus,
@@ -1587,6 +1615,9 @@ async function updateBookingStatus(req, res) {
           $set: {
             status: status,
             dealerResponseStatus: status === "confirmed" ? "accepted" : "rejected",
+            ...(status === "confirmed" && isPickupBooking(existingBooking)
+              ? { pickupStatus: PICKUP_STATUSES.BOOKING_CONFIRMED }
+              : {}),
           },
         },
         { new: true }
@@ -2082,6 +2113,19 @@ const verifyBookingOTP = async (req, res) => {
       });
     }
 
+    // Keep the legacy URL compatible, but route pickup verification through
+    // the guarded lifecycle so it cannot bypass ARRIVED or ownership checks.
+    if (stage === "pickup") {
+      const pickupCandidate = await booking.findById(bookingId).select("+pickupOtp");
+      if (!pickupCandidate) {
+        return res.status(404).json({ success: false, message: "Booking not found" });
+      }
+      if (isPickupBooking(pickupCandidate)) {
+        req.params.bookingId = bookingId;
+        return verifyPickupOtp(req, res);
+      }
+    }
+
     const incoming = String(otp).trim();
     if (!/^\d{4}$/.test(incoming)) {
       return res.status(400).json({ success: false, message: "OTP must be exactly 4 digits" });
@@ -2092,7 +2136,7 @@ const verifyBookingOTP = async (req, res) => {
     }
 
     // fetch booking
-    const b = await booking.findById(bookingId);
+    const b = await booking.findById(bookingId).select("+pickupOtp");
     if (!b) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
@@ -2145,35 +2189,10 @@ const verifyBookingOTP = async (req, res) => {
 };
 
 const updatePickupStatus = async (req, res) => {
-  try {
-    const { bookingId, status } = req.body;
-
-    // Validate Input
-    if (!bookingId || !status) {
-      return res.status(200).json({ success: false, message: "Booking ID and Status are required" });
-    }
-
-    // Valid Status Values
-    const validStatuses = ["arriving", "arrived"];
-    if (!validStatuses.includes(status)) {
-      return res.status(200).json({ success: false, message: "Invalid status value" });
-    }
-
-    // Fetch Booking
-    const bookingData = await booking.findOne({ _id: bookingId, dealer_id: req.auth.id });
-    if (!bookingData) {
-      return res.status(200).json({ success: false, message: "Booking not found" });
-    }
-
-    // Update Pickup Status
-    bookingData.pickupStatus = status;
-    await bookingData.save();
-
-    res.status(200).json({ success: true, message: "Pickup status updated successfully", data: bookingData });
-  } catch (error) {
-    console.error("Error updating pickup status:", error);
-    res.status(500).json({ success: false, message: error });
-  }
+  return res.status(410).json({
+    success: false,
+    message: "This legacy endpoint cannot safely update pickup state. Use the authenticated pickup lifecycle endpoints.",
+  });
 };
 
 async function addNoteToBooking(req, res) {
@@ -2569,6 +2588,13 @@ const serviceComplete = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Cannot mark service complete. Current status: ${bookingDoc.status}. Expected: confirmed`,
+      });
+    }
+
+    if (isPickupBooking(bookingDoc) && bookingDoc.pickupStatus !== PICKUP_STATUSES.BIKE_PICKED_UP) {
+      return res.status(409).json({
+        success: false,
+        message: "Bike pickup must be completed before the service can be marked complete",
       });
     }
 
