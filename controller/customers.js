@@ -715,8 +715,10 @@ const getMyBikes = async (req, res) => {
 
 const addUserBike = async (req, res) => {
   try {
-    const data = jwt_decode(req.headers.token);
-    const user_id = data.user_id;
+    // requireCustomer has already verified the JWT and confirmed the account.
+    // Re-decoding an unverified header here duplicated that work and could throw
+    // before the request reached any of the useful validation below.
+    const user_id = req.user_id;
 
     console.log(`[addUserBike] Adding new bike for user ID: ${user_id}`);
     console.log(`[addUserBike] Request body:`, req.body);
@@ -743,6 +745,14 @@ const addUserBike = async (req, res) => {
       return res.status(200).json({
         status: 200,
         message: "All fields (variant_id, plate_number) are required!",
+        data: [],
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(variant_id)) {
+      return res.status(400).json({
+        status: 400,
+        message: "Invalid bike variant selected!",
         data: [],
       });
     }
@@ -818,7 +828,18 @@ const addUserBike = async (req, res) => {
   } catch (error) {
     console.error("Error adding user bike:", error);
 
-    res.status(500).json({
+    // A unique-index race should be a user-facing conflict, not a generic
+    // server failure. This also makes environments that still carry the old
+    // global plate_number_1 index diagnosable until the index repair is run.
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        status: 409,
+        message: "A bike with this registration number is already registered.",
+        data: [],
+      });
+    }
+
+    return res.status(500).json({
       status: 500,
       message: "Internal Server Error",
       data: [],

@@ -10,6 +10,7 @@
     "audit:null-wallets": "node scripts/normalizeNullDealerWallets.js",
     "repair:null-wallets": "node scripts/normalizeNullDealerWallets.js --apply",
     "repair:wallet-indexes": "node scripts/fixWalletNullableUniqueIndexes.js",
+    "repair:user-bike-index": "node scripts/fixUserBikePlateIndex.js",
     "backfill-service-detail": "node scripts/backfillServiceDetail.js",
     "create-indexes": "node scripts/createIndexes.js",
     "performance-report": "node scripts/performanceReport.js"
