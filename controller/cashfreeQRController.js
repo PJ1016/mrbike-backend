@@ -1,5 +1,6 @@
 const axios = require("axios")
 const QRCode = require("qrcode")
+const crypto = require("crypto")
 const Payment = require("../models/Payment")
 const Booking = require("../models/Booking")
 const Customer = require("../models/customer_model")
@@ -151,11 +152,12 @@ const advanceBookingAfterOnlinePayment = async (payment, io) => {
 // Cashfree API Configuration
 const getCashfreeBaseUrl = () => "https://api.cashfree.com/pg";
 
-const getCashfreeHeaders = () => ({
+const getCashfreeHeaders = (additionalHeaders = {}) => ({
   "x-client-id": process.env.CASHFREE_APP_ID,
   "x-client-secret": process.env.CASHFREE_SECRET_KEY,
   "x-api-version": "2023-08-01",
   "Content-Type": "application/json",
+  ...additionalHeaders,
 });
 
 const getVerifiedPaymentDetails = async (orderId, fallback = {}) => {
@@ -313,7 +315,10 @@ const generateUPIQRCode = async (req, res) => {
 
     console.log("Creating Cashfree booking payment link:", JSON.stringify({ ...linkPayload, customer_details: { ...customerDetails, customer_phone: "***" } }))
     const linkResponse = await axios.post(`${getCashfreeBaseUrl()}/links`, linkPayload, {
-      headers: getCashfreeHeaders(),
+      // Cashfree uses this key to make a create-link retry safe. It must be
+      // unique for each newly generated QR; without it Payment Links can
+      // reject the request before returning link_url.
+      headers: getCashfreeHeaders({ "x-idempotency-key": crypto.randomUUID() }),
     })
     const linkData = linkResponse.data || {}
     const linkUrl = typeof linkData.link_url === "string" ? linkData.link_url.trim() : ""
@@ -396,9 +401,13 @@ const generateUPIQRCode = async (req, res) => {
         message: error.message,
       })
     }
-    res.status(500).json({
+    // Return Cashfree's validation message to the authenticated dealer app so
+    // a configuration/validation failure is diagnosable, without exposing
+    // credentials or the upstream response body.
+    const upstreamMessage = error.response?.data?.message || error.response?.data?.type
+    res.status(error.response?.status >= 400 && error.response?.status < 500 ? 422 : 500).json({
       success: false,
-      message: "Failed to generate UPI QR Code",
+      message: upstreamMessage || "Failed to generate UPI QR Code",
     })
   } finally {
     if (paymentOrderLockToken && lockedBookingId) {
