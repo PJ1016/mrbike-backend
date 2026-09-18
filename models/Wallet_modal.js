@@ -44,9 +44,12 @@ const walletSchema = new mongoose.Schema({
     performed_by: {
         type: mongoose.Schema.Types.ObjectId,
     },
-    idempotency_key: { type: String, default: null },
+    // Keep optional unique-indexed fields absent rather than explicitly null.
+    // This is also compatible with the legacy sparse indexes that may still
+    // exist while an environment is waiting for the partial-index migration.
+    idempotency_key: { type: String },
     payout_reference: { type: String, default: null },
-    rollback_of: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet", default: null },
+    rollback_of: { type: mongoose.Schema.Types.ObjectId, ref: "Wallet" },
 }, {
     timestamps: true,
 });
