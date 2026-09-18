@@ -75,6 +75,15 @@ function canStartPickup(booking) {
   );
 }
 
+function canMarkCustomerArrived(booking) {
+  return Boolean(
+    booking &&
+      !isPickupBooking(booking) &&
+      booking.status === "confirmed" &&
+      booking.pickupStatus === "pending"
+  );
+}
+
 function shouldRecordNearby(booking, distanceMeters) {
   return Boolean(
     booking?.pickupStatus === PICKUP_STATUSES.PICKUP_STARTED &&
@@ -113,6 +122,7 @@ module.exports = {
   distanceToPickupMeters,
   canMarkArrived,
   canStartPickup,
+  canMarkCustomerArrived,
   shouldRecordNearby,
   pickupOtpMatches,
   canVerifyPickupOtp,

@@ -20,6 +20,7 @@ const {
     verifyBookingOTP,
     sendBookingOTP,
     updatePickupStatus,
+    markCustomerArrived,
     deleteNoteFromBooking,
     updateNoteInBooking,
     getNotesFromBooking,
@@ -78,6 +79,7 @@ router.post('/sendBookingMobile', requireBookingParticipant(req => req.body.book
 router.post('/verifyBookingOTP', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), verifyBookingOTP)
 router.post('/verifyBookingMobile', requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), verifyOtpForMobile)
 router.post("/update-pickup-status", requireBookingParticipant(req => req.body.bookingId), requireActorRole("dealer"), updatePickupStatus);
+router.post('/:bookingId/customer-arrived', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), markCustomerArrived);
 // Authenticated dealer pickup lifecycle. Participant lookup deliberately
 // returns 404 to a dealer who does not own the booking.
 router.post('/:bookingId/pickup/start', requireBookingParticipant(req => req.params.bookingId), requireActorRole("dealer"), startPickup);

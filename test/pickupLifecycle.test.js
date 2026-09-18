@@ -13,6 +13,7 @@ const {
   distanceToPickupMeters,
   canMarkArrived,
   canStartPickup,
+  canMarkCustomerArrived,
   shouldRecordNearby,
   pickupOtpMatches,
   canVerifyPickupOtp,
@@ -80,6 +81,13 @@ async function run() {
   };
   assert.strictEqual(isPickupBooking(normalBooking), false, "non-pickup booking is rejected");
   assert.strictEqual(canStartPickup(normalBooking), false);
+  assert.strictEqual(canMarkCustomerArrived(normalBooking), true, "confirmed self-visit can arrive");
+  assert.strictEqual(
+    canMarkCustomerArrived({ ...normalBooking, pickupStatus: "arrived" }),
+    false,
+    "self-visit arrival cannot be repeated as a new transition",
+  );
+  assert.strictEqual(canMarkCustomerArrived(confirmedPickup), false, "pickup booking must use GPS arrival");
   assert.strictEqual(isPickupBooking({ transportOption: "DROP_ONLY", pickupAndDropId: BOOKING }), false);
 
   assert.deepStrictEqual(await authorizationResult(DEALER), { next: true });

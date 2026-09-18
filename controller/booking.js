@@ -40,7 +40,11 @@ const PromoCodeUsage = require("../models/PromoCodeUsage");
 const PickupnDrop = require("../models/PickupnDrop");
 const { ACTIVE_BOOKING_QUERY } = require("../utils/bookingStatus");
 const { isDealerBookable } = require("../helper/dealerStatus");
-const { isPickupBooking, PICKUP_STATUSES } = require("../services/pickupLifecycle");
+const {
+  isPickupBooking,
+  canMarkCustomerArrived,
+  PICKUP_STATUSES,
+} = require("../services/pickupLifecycle");
 const { verifyPickupOtp } = require("./pickupLifecycleController");
 
 async function checkPermission(user_id, requiredPermission) {
@@ -1181,7 +1185,12 @@ async function getBookingDetails(req, res) {
       req.auth?.role === "dealer" ? { _id: bookingId, dealer_id: req.user_id } :
       req.auth?.role === "admin" ? { _id: bookingId } :
       { _id: bookingId, user_id: req.user_id };
-    const bookingData = await booking.findOne(ownerFilter)
+    const bookingQuery = booking.findOne(ownerFilter);
+    // The intake OTP is customer-visible only. pickupOtp is select:false in
+    // the schema, so a dealer fetching the same booking never receives it.
+    if (req.auth?.role === "customer") bookingQuery.select("+pickupOtp");
+
+    const bookingData = await bookingQuery
       .populate("user_id", "first_name last_name phone email image address city")
       .populate("dealer_id", "shopName fullAddress address city locality shopImages phone averageRating ratingCount status dealerStatus")
       .populate("reviewId", "rating createdAt")
@@ -2141,6 +2150,13 @@ const verifyBookingOTP = async (req, res) => {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
+    if (stage === "pickup" && !isPickupBooking(b) && b.pickupStatus !== "arrived") {
+      return res.status(409).json({
+        success: false,
+        message: "Customer arrival must be recorded before verifying the visit OTP",
+      });
+    }
+
     // pick stored otp explicitly for the requested stage
     const storedOtpRaw = stage === "pickup" ? b.pickupOtp : b.deliveryOtp;
 
@@ -2193,6 +2209,112 @@ const updatePickupStatus = async (req, res) => {
     success: false,
     message: "This legacy endpoint cannot safely update pickup state. Use the authenticated pickup lifecycle endpoints.",
   });
+};
+
+// SELF_VISIT / DROP_ONLY intake transition. Rider pickup has a separate GPS-
+// guarded lifecycle; when the customer brings the bike to the garage we only
+// need an authenticated dealer-owned booking transition plus a fresh visit OTP.
+const markCustomerArrived = async (req, res) => {
+  try {
+    const bookingId = req.params.bookingId;
+    const bookingDoc = await booking
+      .findOne({ _id: bookingId, dealer_id: req.auth.id })
+      .select("+pickupOtp");
+
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+    if (isPickupBooking(bookingDoc)) {
+      return res.status(400).json({
+        success: false,
+        message: "Use the tracked pickup arrival flow for pickup bookings",
+      });
+    }
+    if (bookingDoc.status !== "confirmed") {
+      return res.status(409).json({
+        success: false,
+        message: "Customer arrival can be recorded only for a confirmed booking",
+      });
+    }
+
+    // Idempotent retry: do not rotate the OTP after the customer has already
+    // been shown one.
+    if (bookingDoc.pickupStatus === "arrived" && bookingDoc.pickupOtp != null) {
+      return res.status(200).json({
+        success: true,
+        message: "Customer arrival already recorded",
+        data: { bookingId: bookingDoc._id, pickupStatus: bookingDoc.pickupStatus },
+      });
+    }
+    if (!canMarkCustomerArrived(bookingDoc)) {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot record customer arrival from ${bookingDoc.pickupStatus}`,
+      });
+    }
+
+    const now = new Date();
+    const updated = await booking.findOneAndUpdate(
+      {
+        _id: bookingDoc._id,
+        dealer_id: req.auth.id,
+        status: "confirmed",
+        pickupStatus: "pending",
+      },
+      {
+        $set: {
+          pickupStatus: "arrived",
+          arrivedAt: now,
+          pickupDate: now,
+          pickupOtp: genOtp(),
+        },
+      },
+      { new: true },
+    );
+
+    if (!updated) {
+      return res.status(409).json({
+        success: false,
+        message: "Customer arrival was already recorded or booking state changed",
+      });
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`booking:${updated._id}`).emit("booking:customer-arrived", {
+        bookingId: String(updated._id),
+        pickupStatus: updated.pickupStatus,
+      });
+    }
+
+    try {
+      const customer = await Customer.findById(updated.user_id)
+        .select("device_token ftoken")
+        .lean();
+      await sendBookingNotification({
+        token: customer?.device_token || customer?.ftoken,
+        title: "Bike Check-in Started",
+        body: "The garage recorded your arrival. Open the booking and share the visit OTP.",
+        data: { type: "customer_arrived", bookingId: String(updated._id) },
+        receiverId: updated.user_id,
+        receiverType: "user",
+        bookingId: updated._id,
+      });
+    } catch (error) {
+      // The state transition is already complete; notification delivery must
+      // not turn a successful check-in into an API failure.
+      console.error("customer-arrived notification failed:", error.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Customer arrival recorded",
+      data: { bookingId: updated._id, pickupStatus: updated.pickupStatus },
+    });
+  } catch (error) {
+    console.error("markCustomerArrived error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
 };
 
 async function addNoteToBooking(req, res) {
@@ -3366,6 +3488,7 @@ module.exports = {
   sendBookingOTP,
   verifyBookingOTP,
   updatePickupStatus,
+  markCustomerArrived,
   addNoteToBooking,
   getNotesFromBooking,
   updateNoteInBooking,
