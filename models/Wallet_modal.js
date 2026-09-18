@@ -65,11 +65,19 @@ walletSchema.index(
 );
 walletSchema.index(
     { dealer_id: 1, idempotency_key: 1 },
-    { unique: true, sparse: true, name: "one_wallet_request_per_dealer_idempotency_key" },
+    {
+        unique: true,
+        partialFilterExpression: { idempotency_key: { $type: "string" } },
+        name: "one_wallet_request_per_dealer_idempotency_key",
+    },
 );
 walletSchema.index(
     { rollback_of: 1 },
-    { unique: true, sparse: true, name: "one_wallet_rollback_per_source_transaction" },
+    {
+        unique: true,
+        partialFilterExpression: { rollback_of: { $type: "objectId" } },
+        name: "one_wallet_rollback_per_source_transaction",
+    },
 );
 // A Cashfree wallet top-up order is an idempotency key. This also protects the
 // standalone-Mongo fallback in services/walletTopupService.js.
