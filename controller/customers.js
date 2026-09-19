@@ -11,7 +11,9 @@ const BikeVariant = require("../models/bikeVariantModel");
 const Booking = require("../models/Booking");
 const ReferralSettings = require("../models/ReferralSettings");
 const ReferralTransaction = require("../models/ReferralTransaction");
+const MrBikeMoneyTransaction = require("../models/MrBikeMoneyTransaction");
 const { generateUniqueReferralCode } = require("../utils/referralCodeGenerator");
+const { awardReferralSignupRewardsIfEligible } = require("../services/referralRewardService");
 const { normalizePlateNumber } = require("../utils/plateNumber");
 
 async function getReferralSettingsSingleton() {
@@ -238,6 +240,14 @@ async function addProfile(req, res) {
     }
 
     await user.save();
+
+    if (referralCode) {
+      try {
+        await awardReferralSignupRewardsIfEligible(user._id);
+      } catch (rewardError) {
+        console.error("Referral signup reward error:", rewardError.message);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -561,6 +571,13 @@ async function editcustomer(req, res) {
             };
             return res.status(201).send(response);
           } else {
+            if (referralCode) {
+              try {
+                await awardReferralSignupRewardsIfEligible(docs._id);
+              } catch (rewardError) {
+                console.error("Referral signup reward error:", rewardError.message);
+              }
+            }
             var response = {
               status: 200,
               message: "customer updated successfully",
@@ -890,11 +907,16 @@ async function getCustomerById(req, res) {
 
     const userBike = await fetchBikesForCustomer(customerDoc._id);
 
-    const [totalReferrals, convertedReferredUsers] = await Promise.all([
+    const settings = await getReferralSettingsSingleton();
+    const [totalReferrals, convertedReferredUsers, signupRewardedReferrals] = await Promise.all([
       customers.countDocuments({ referredBy: customerDoc._id }),
       ReferralTransaction.distinct("referredUserId", {
         referrerUserId: customerDoc._id,
         rewardType: "referrer",
+      }),
+      customers.countDocuments({
+        referredBy: customerDoc._id,
+        referralSignupRewardCreditedAt: { $ne: null },
       }),
     ]);
 
@@ -914,8 +936,11 @@ async function getCustomerById(req, res) {
         referralCodeUsed: referrer?.referralCode || null,
         myReferralCode: customerDoc.referralCode || null,
         totalReferrals,
-        successfulReferrals: convertedReferredUsers.length,
+        successfulReferrals: settings.rewardOnReferralSignup !== false
+          ? signupRewardedReferrals
+          : convertedReferredUsers.length,
         referralEarnings: customerDoc.referralEarnings || 0,
+        mrBikeMoneyBalance: customerDoc.mrBikeMoneyBalance || 0,
       },
       image_base_url: process.env.BASE_URL,
     });
@@ -1122,17 +1147,23 @@ async function getReferralSummary(req, res) {
     // user — i.e. how many people they referred that actually converted,
     // not raw transaction count (which could exceed this if firstBookingOnly
     // is ever disabled and a referred user completes multiple bookings).
-    const convertedReferredUsers = await ReferralTransaction.distinct("referredUserId", {
-      referrerUserId: user_id,
-      rewardType: "referrer",
-    });
+    const successfulReferralsCount = settings.rewardOnReferralSignup !== false
+      ? await customers.countDocuments({
+          referredBy: user_id,
+          referralSignupRewardCreditedAt: { $ne: null },
+        })
+      : (await ReferralTransaction.distinct("referredUserId", {
+          referrerUserId: user_id,
+          rewardType: "referrer",
+        })).length;
 
     return res.status(200).json({
       success: true,
       data: {
         referralCode: user.referralCode,
         referralEarnings: user.referralEarnings || 0,
-        successfulReferralsCount: convertedReferredUsers.length,
+        mrBikeMoneyBalance: user.mrBikeMoneyBalance || 0,
+        successfulReferralsCount,
         showRewardsReferralsMenu: !!settings.showRewardsReferralsMenu,
         enableReferralSystem: !!settings.enableReferralSystem,
         enableReferrerReward: !!settings.enableReferrerReward,
@@ -1195,6 +1226,39 @@ async function getReferralTransactions(req, res) {
   }
 }
 
+async function getMrBikeMoneyTransactions(req, res) {
+  try {
+    const user_id = req.user_id;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+    const [transactions, total] = await Promise.all([
+      MrBikeMoneyTransaction.find({ userId: user_id })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate({ path: "bookingId", select: "bookingId" })
+        .lean(),
+      MrBikeMoneyTransaction.countDocuments({ userId: user_id }),
+    ]);
+    return res.status(200).json({
+      success: true,
+      data: transactions.map((txn) => ({
+        type: txn.type,
+        amount: txn.amount,
+        balanceAfter: txn.balanceAfter,
+        description: txn.description,
+        bookingId: txn.bookingId?.bookingId || null,
+        createdDate: txn.createdAt,
+      })),
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error("getMrBikeMoneyTransactions error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
 module.exports = {
   addProfile,
   customerlist,
@@ -1213,4 +1277,5 @@ module.exports = {
   validateReferralCode,
   getReferralSummary,
   getReferralTransactions,
+  getMrBikeMoneyTransactions,
 };

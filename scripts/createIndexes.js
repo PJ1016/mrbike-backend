@@ -59,6 +59,14 @@ async function createIndexes() {
     // (GET /api/v1/services?categoryId=), which the two single-field indexes
     // above can't serve as one.
     await mongoose.connection.db.collection('baseservices').createIndex({ isActive: 1, categoryId: 1 })
+
+    // MR Bike Money ledger: idempotency prevents duplicate booking debits,
+    // refunds and referral credits; the user/date index powers wallet history.
+    await mongoose.connection.db.collection('mrbikemoneytransactions').createIndex(
+      { idempotencyKey: 1 },
+      { unique: true }
+    )
+    await mongoose.connection.db.collection('mrbikemoneytransactions').createIndex({ userId: 1, createdAt: -1 })
     console.log('✓ BaseService indexes created')
 
     // ServiceDetail indexes — 1:1 with BaseService, so the lookup key is

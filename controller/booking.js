@@ -35,6 +35,12 @@ const {
 } = require("../services/pricingEngine");
 const { getPricingSettings } = require("../services/appSettingsService");
 const { validatePromoCode } = require("../services/promoService");
+const {
+  calculateMrBikeMoneyRedemption,
+  getServiceRedemptionLimit,
+  debitForBooking,
+  refundBookingMoney,
+} = require("../services/mrBikeMoneyService");
 const PromoCode = require("../models/PromoCode");
 const PromoCodeUsage = require("../models/PromoCodeUsage");
 const PickupnDrop = require("../models/PickupnDrop");
@@ -801,7 +807,7 @@ async function createBooking(req, res) {
     console.log('[createBooking] Authenticated user_id:', user_id);
 
     // ── 2b. Profile completeness check ───────────────────────────────────────
-    const bookingUser = await customers.findById(user_id).select("first_name phone");
+    const bookingUser = await customers.findById(user_id).select("first_name phone mrBikeMoneyBalance");
     if (!bookingUser) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
@@ -830,6 +836,7 @@ async function createBooking(req, res) {
       bikeCondition,
       towingNote,
     } = req.body;
+    const useMrBikeMoney = req.body.useMrBikeMoney === true;
     // transportOption is optional for backward compatibility with clients
     // that predate this field (see legacy-inference block below).
     let { transportOption } = req.body;
@@ -917,11 +924,12 @@ async function createBooking(req, res) {
       base_service_id: { $in: services },
       dealer_id: dealer_id,
       isActive: true,
-    });
+    }).populate("base_service_id", "mrBikeMoneyMaxRedeem");
 
     // Fallback: IDs may already be AdminService IDs (e.g. other clients)
     if (serviceDocs.length === 0) {
-      serviceDocs = await AdminService.find({ _id: { $in: services } });
+      serviceDocs = await AdminService.find({ _id: { $in: services } })
+        .populate("base_service_id", "mrBikeMoneyMaxRedeem");
     }
 
     if (serviceDocs.length === 0) {
@@ -1025,7 +1033,7 @@ async function createBooking(req, res) {
       // either can never re-price or re-rate this booking.
       const { platformFeeConfig, commissionTaxRate } = await getPricingSettings();
 
-      breakdown = computePriceBreakdown({
+      const baseBreakdown = computePriceBreakdown({
         serviceAmount,
         transportOption,
         dealer,
@@ -1034,6 +1042,25 @@ async function createBooking(req, res) {
         platformFeeConfig,
         commissionTaxRate,
       });
+
+      const redemption = calculateMrBikeMoneyRedemption({
+        balance: bookingUser.mrBikeMoneyBalance || 0,
+        serviceLimit: getServiceRedemptionLimit(serviceDocs),
+        amountDueBeforeMoney: round2(baseBreakdown.customerTotal - baseBreakdown.discountAmount),
+      });
+      const mrBikeMoneyAmount = useMrBikeMoney ? redemption.maxRedeemable : 0;
+
+      breakdown = computePriceBreakdown({
+        serviceAmount,
+        transportOption,
+        dealer,
+        promo,
+        mrBikeMoneyAmount,
+        bikeCondition: resolvedBikeCondition,
+        platformFeeConfig,
+        commissionTaxRate,
+      });
+      breakdown.mrBikeMoneyLimit = redemption.serviceLimit;
     } catch (pricingError) {
       if (pricingError instanceof PricingError) {
         return res.status(400).json({ success: false, message: pricingError.message, code: pricingError.code });
@@ -1083,8 +1110,37 @@ async function createBooking(req, res) {
     // Single sanctioned path for writing the pricing snapshot onto a Booking
     // document — see services/pricingEngine.js#applyBreakdownToBooking().
     applyBreakdownToBooking(newBooking, breakdown);
+    newBooking.mrBikeMoneyLimit = breakdown.mrBikeMoneyLimit || 0;
 
-    await newBooking.save();
+    let moneyDebited = false;
+    try {
+      if (newBooking.mrBikeMoneyUsed > 0) {
+        await debitForBooking({
+          userId: user_id,
+          bookingId: newBooking._id,
+          amount: newBooking.mrBikeMoneyUsed,
+        });
+        moneyDebited = true;
+      }
+      await newBooking.save();
+    } catch (saveError) {
+      if (moneyDebited) {
+        try {
+          await refundBookingMoney(newBooking);
+        } catch (refundError) {
+          console.error("[MR-BIKE-MONEY] Failed to roll back booking debit:", refundError.message);
+        }
+      }
+      if (saveError.code === "INSUFFICIENT_MR_BIKE_MONEY") {
+        return res.status(409).json({
+          success: false,
+          code: saveError.code,
+          errorCode: saveError.code,
+          message: saveError.message,
+        });
+      }
+      throw saveError;
+    }
 
     console.log('[BOOKING-CREATED] Save successful');
     console.log(`[BOOKING-CREATED] _id: ${newBooking._id} | bookingId: ${newBooking.bookingId}`);
@@ -1648,6 +1704,14 @@ async function updateBookingStatus(req, res) {
 
       existingBooking = atomicResult;
 
+      if (status === "rejected") {
+        try {
+          await refundBookingMoney(existingBooking);
+        } catch (refundError) {
+          console.error("[MR-BIKE-MONEY] Rejection refund failed:", refundError.message);
+        }
+      }
+
       if (status === "confirmed") {
         console.log(`[BOOKING-ACCEPTED] Dealer accepted booking: ${bookingId}`);
       } else {
@@ -1779,6 +1843,14 @@ async function updateBookingStatus(req, res) {
       }
 
       await existingBooking.save();
+
+      if (["cancelled", "user_cancelled", "rejected", "expired"].includes(status)) {
+        try {
+          await refundBookingMoney(existingBooking);
+        } catch (refundError) {
+          console.error("[MR-BIKE-MONEY] Status refund failed:", refundError.message);
+        }
+      }
     }
 
     // Handle completion logic if needed
@@ -2598,6 +2670,12 @@ async function cancelBooking(req, res) {
       { $set: { status: "cancelled" } },
       { new: true }
     );
+
+    try {
+      await refundBookingMoney(updatedBooking);
+    } catch (refundError) {
+      console.error("[MR-BIKE-MONEY] Cancellation refund failed:", refundError.message);
+    }
 
     // Update tracking status if exists
     await Tracking.updateOne(

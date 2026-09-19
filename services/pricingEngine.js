@@ -449,6 +449,7 @@ function computePriceBreakdown({
   dealer,
   discountAmount = 0,
   promo = null,
+  mrBikeMoneyAmount = null,
   bikeCondition = BIKE_CONDITIONS.RIDEABLE,
   towingRequiredOverride = null,
   towingChargeOverride = null,
@@ -541,7 +542,12 @@ function computePriceBreakdown({
     promoDiscountValue = promo.discountValue;
   }
 
-  const discount = round2((Number(discountAmount) || 0) + promoDiscountAmount);
+  const normalizedMrBikeMoney = mrBikeMoneyAmount === null || mrBikeMoneyAmount === undefined
+    ? null
+    : Math.max(0, round2(Number(mrBikeMoneyAmount) || 0));
+  const discount = round2(
+    (Number(discountAmount) || 0) + promoDiscountAmount + (normalizedMrBikeMoney || 0)
+  );
 
   return {
     transportOption,
@@ -571,6 +577,7 @@ function computePriceBreakdown({
     promoDiscountType,
     promoDiscountValue,
     promoDiscountAmount,
+    mrBikeMoneyUsed: normalizedMrBikeMoney === null ? undefined : normalizedMrBikeMoney,
   };
 }
 
@@ -610,6 +617,8 @@ const PRICING_SNAPSHOT_FIELDS = Object.freeze([
   "promoDiscountType",
   "promoDiscountValue",
   "promoDiscountAmount",
+  "mrBikeMoneyUsed",
+  "mrBikeMoneyLimit",
   // Legacy mirrors kept for backward-compatible readers (walletSettlement,
   // adminFinance/adminTransactions reporting) — same lock applies to them.
   "totalBill",
@@ -658,6 +667,10 @@ function applyBreakdownToBooking(bookingDoc, breakdown) {
     bookingDoc.promoDiscountType = breakdown.promoDiscountType;
     bookingDoc.promoDiscountValue = breakdown.promoDiscountValue;
     bookingDoc.promoDiscountAmount = breakdown.promoDiscountAmount;
+  }
+
+  if (breakdown.mrBikeMoneyUsed !== undefined) {
+    bookingDoc.mrBikeMoneyUsed = breakdown.mrBikeMoneyUsed;
   }
 
   // Legacy mirrors — kept for backward-compatible readers.

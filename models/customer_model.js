@@ -88,6 +88,13 @@ const CustomerSchema = new mongoose.Schema(
     // referrer or referred user. Separate from reward_points (the unrelated
     // scratch-card system) so referral money is never conflated with it.
     referralEarnings: { type: Number, default: 0, min: 0 },
+    // Spendable referral currency. `referralEarnings` remains the lifetime
+    // earned total; this balance falls when the customer redeems money on a
+    // service booking and rises again if that booking is cancelled/refunded.
+    mrBikeMoneyBalance: { type: Number, default: 0, min: 0 },
+    // Idempotency marker for referral rewards configured to credit as soon as
+    // the referral code is accepted during profile/signup completion.
+    referralSignupRewardCreditedAt: { type: Date, default: null },
     // Google Play Review Test Account
     // Do not remove without replacing the Play Store testing process.
     isPlayStoreTestAccount: { type: Boolean, default: false },

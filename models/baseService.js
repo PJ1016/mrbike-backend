@@ -84,6 +84,13 @@ const baseServiceSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // Maximum MR Bike Money that can be redeemed when this service is part of
+    // a booking. Zero disables redemption for the service.
+    mrBikeMoneyMaxRedeem: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

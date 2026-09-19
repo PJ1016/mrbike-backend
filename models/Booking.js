@@ -276,6 +276,11 @@ const bookingSchema = new mongoose.Schema(
     promoDiscountValue: { type: Number, default: null },
     promoDiscountAmount: { type: Number, default: 0 },
 
+    // MR Bike Money is a customer-funded discount. It never reduces the
+    // garage subtotal or dealer earnings; it only reduces amountDue.
+    mrBikeMoneyUsed: { type: Number, default: 0, min: 0 },
+    mrBikeMoneyLimit: { type: Number, default: 0, min: 0 },
+
     billStatus: {
       type: String,
       enum: ["pending", "paid", "cancelled"],

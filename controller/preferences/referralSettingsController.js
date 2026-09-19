@@ -2,8 +2,7 @@
  * Referral Settings Controller (Preferences module) — Phase 1
  *
  * Singleton document holding the admin-configurable referral toggles and
- * amounts. Referral codes, rewards, transactions, wallet and notifications
- * are out of scope for this phase.
+ * amounts, plus the per-service MR Bike Money redemption limits below.
  *
  * Endpoints (mounted at /bikedoctor/preferences/referral-settings):
  *   GET /   → getReferralSettings  (auto-created on first access)
@@ -11,6 +10,8 @@
  */
 
 const ReferralSettings = require("../../models/ReferralSettings");
+const BaseService = require("../../models/baseService");
+const mongoose = require("mongoose");
 
 const BOOLEAN_FIELDS = [
   "enableReferralSystem",
@@ -19,6 +20,7 @@ const BOOLEAN_FIELDS = [
   "enableReferrerReward",
   "enableNewUserReward",
   "firstBookingOnly",
+  "rewardOnReferralSignup",
 ];
 
 const NUMBER_FIELDS = ["referrerRewardAmount", "newUserRewardAmount", "minimumBookingAmount"];
@@ -69,4 +71,48 @@ const updateReferralSettings = async (req, res) => {
   }
 };
 
-module.exports = { getReferralSettings, updateReferralSettings };
+const getMrBikeMoneyServiceLimits = async (req, res) => {
+  try {
+    const services = await BaseService.find({})
+      .select("name image isActive mrBikeMoneyMaxRedeem")
+      .sort({ name: 1 })
+      .lean();
+    return res.status(200).json({ success: true, data: services });
+  } catch (error) {
+    console.error("getMrBikeMoneyServiceLimits error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+const updateMrBikeMoneyServiceLimit = async (req, res) => {
+  try {
+    const { serviceId } = req.params;
+    const amount = Number(req.body.mrBikeMoneyMaxRedeem);
+    if (!mongoose.Types.ObjectId.isValid(serviceId)) {
+      return res.status(400).json({ success: false, message: "Valid serviceId is required" });
+    }
+    if (!Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({ success: false, message: "MR Bike Money limit must be a non-negative number" });
+    }
+
+    const service = await BaseService.findByIdAndUpdate(
+      serviceId,
+      { $set: { mrBikeMoneyMaxRedeem: Math.round(amount * 100) / 100 } },
+      { new: true, runValidators: true }
+    ).select("name image isActive mrBikeMoneyMaxRedeem");
+    if (!service) {
+      return res.status(404).json({ success: false, message: "Service not found" });
+    }
+    return res.status(200).json({ success: true, message: "MR Bike Money limit updated", data: service });
+  } catch (error) {
+    console.error("updateMrBikeMoneyServiceLimit error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+module.exports = {
+  getReferralSettings,
+  updateReferralSettings,
+  getMrBikeMoneyServiceLimits,
+  updateMrBikeMoneyServiceLimit,
+};

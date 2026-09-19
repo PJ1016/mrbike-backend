@@ -1,6 +1,6 @@
-const jwt_decode = require("jwt-decode");
 const AdminService = require("../models/adminService");
 const Vendor = require("../models/dealerModel");
+const Customer = require("../models/customer_model");
 const {
   computePriceBreakdown,
   computeTransportCharges,
@@ -13,6 +13,10 @@ const {
 const { validatePromoCode } = require("../services/promoService");
 const { getPricingSettings } = require("../services/appSettingsService");
 const { resolveBikeContextById } = require("../v1-api/helpers/serviceEligibility");
+const {
+  calculateMrBikeMoneyRedemption,
+  getServiceRedemptionLimit,
+} = require("../services/mrBikeMoneyService");
 
 // POST /pricing/quote
 //
@@ -38,6 +42,12 @@ const { resolveBikeContextById } = require("../v1-api/helpers/serviceEligibility
 const getPricingQuote = async (req, res) => {
   try {
     const { dealerId, serviceIds, additionalServiceIds, transportOption, bikeCC, bikeId, promoCode, bikeCondition } = req.body;
+    const useMrBikeMoney = req.body.useMrBikeMoney === true;
+
+    const userId = req.user_id || null;
+    if (useMrBikeMoney && !userId) {
+      return res.status(401).json({ success: false, message: "Login is required to use MR Bike Money" });
+    }
 
     if (!dealerId) {
       return res.status(400).json({ success: false, message: "dealerId is required" });
@@ -64,7 +74,8 @@ const getPricingQuote = async (req, res) => {
       dealer_id: dealerId,
       isActive: true,
     })
-      .select("bikes")
+      .select("bikes base_service_id")
+      .populate("base_service_id", "mrBikeMoneyMaxRedeem")
       .lean();
 
     if (services.length === 0) {
@@ -81,12 +92,6 @@ const getPricingQuote = async (req, res) => {
 
     let bikeContext = null;
     if (bikeId) {
-      let userId = null;
-      try {
-        userId = jwt_decode(req.headers.token)?.user_id || null;
-      } catch (_) {
-        userId = null;
-      }
       if (!userId) {
         return res.status(401).json({ success: false, message: "Authentication is required for selected-bike pricing" });
       }
@@ -108,12 +113,6 @@ const getPricingQuote = async (req, res) => {
 
     let promo = null;
     if (promoCode) {
-      let userId;
-      try {
-        userId = jwt_decode(req.headers.token)?.user_id;
-      } catch (_) {
-        userId = undefined;
-      }
       // Resolve the real subtotal (service + pickup/drop + towing) the same way
       // computePriceBreakdown will, so the minOrder/discount check below
       // matches exactly what the breakdown call further down computes.
@@ -133,7 +132,7 @@ const getPricingQuote = async (req, res) => {
     // moment later.
     const { platformFeeConfig, commissionTaxRate } = await getPricingSettings();
 
-    const breakdown = computePriceBreakdown({
+    const baseBreakdown = computePriceBreakdown({
       serviceAmount,
       transportOption,
       dealer,
@@ -143,7 +142,37 @@ const getPricingQuote = async (req, res) => {
       commissionTaxRate,
     });
 
-    return res.status(200).json({ success: true, data: breakdown });
+    const wallet = userId
+      ? await Customer.findById(userId).select("mrBikeMoneyBalance").lean()
+      : null;
+    const serviceLimit = getServiceRedemptionLimit(services);
+    const redemption = calculateMrBikeMoneyRedemption({
+      balance: wallet?.mrBikeMoneyBalance || 0,
+      serviceLimit,
+      amountDueBeforeMoney: round2(baseBreakdown.customerTotal - baseBreakdown.discountAmount),
+    });
+    const mrBikeMoneyAmount = useMrBikeMoney ? redemption.maxRedeemable : 0;
+
+    const breakdown = computePriceBreakdown({
+      serviceAmount,
+      transportOption,
+      dealer,
+      promo,
+      mrBikeMoneyAmount,
+      bikeCondition,
+      platformFeeConfig,
+      commissionTaxRate,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...breakdown,
+        mrBikeMoneyBalance: redemption.balance,
+        mrBikeMoneyLimit: redemption.serviceLimit,
+        mrBikeMoneyMaxRedeemable: redemption.maxRedeemable,
+      },
+    });
   } catch (error) {
     if (error instanceof PricingError) {
       return res.status(400).json({ success: false, message: error.message, code: error.code });

@@ -2,6 +2,7 @@ const Booking = require("../models/Booking");
 const Tracking = require("../models/Tracking");
 const Customer = require("../models/customer_model");
 const { sendBookingNotification } = require("./pushNotification");
+const { refundBookingMoney } = require("../services/mrBikeMoneyService");
 
 const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
 
@@ -23,6 +24,12 @@ async function expireBooking(bookingDoc, io) {
     );
 
     console.log(`[BOOKING-EXPIRY] Booking expired: ${bookingId}`);
+
+    try {
+      await refundBookingMoney(bookingDoc);
+    } catch (refundError) {
+      console.error(`[MR-BIKE-MONEY] Expiry refund failed for ${bookingId}:`, refundError.message);
+    }
 
     // ── 2. FCM push to user ──────────────────────────────────────────────────
     const customer = await Customer.findById(bookingDoc.user_id).select("device_token ftoken").lean();
