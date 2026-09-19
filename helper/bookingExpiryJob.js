@@ -38,7 +38,7 @@ async function expireBooking(bookingDoc, io) {
       await sendBookingNotification({
         token: userToken,
         title: "Booking Expired",
-        body: "The dealer did not respond within 60 seconds.",
+        body: "The dealer did not respond within 2 minutes.",
         data: { type: "booking_expired", bookingId: bookingId.toString() },
         receiverId: bookingDoc.user_id,
         receiverType: "user",
@@ -65,7 +65,7 @@ async function expireBooking(bookingDoc, io) {
 
 /**
  * One poll cycle. Atomically claims and processes every booking whose
- * 60-second dealer-response window has closed.
+ * 2-minute dealer-response window has closed.
  *
  * Uses a do-while loop so a single tick can drain multiple expired bookings
  * without needing to batch-update (which would skip individual side-effects).

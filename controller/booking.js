@@ -1104,7 +1104,7 @@ async function createBooking(req, res) {
       deliveryOtp,
       status: "pending",
       dealerResponseStatus: "awaiting",
-      timerExpiresAt: new Date(Date.now() + 60 * 1000),
+      timerExpiresAt: new Date(Date.now() + 2 * 60 * 1000),
     });
 
     // Single sanctioned path for writing the pricing snapshot onto a Booking
@@ -1641,7 +1641,7 @@ async function updateBookingStatus(req, res) {
     // ── Expiry window guard (confirmed / rejected only) ──────────────────────
     // Transitions like completed / cash received happen after the booking is
     // already confirmed, so timerExpiresAt being in the past is expected there.
-    // Only dealer accept / reject responses must be within the 60-second window.
+    // Only dealer accept / reject responses must be within the 2-minute window.
     if (status === "confirmed" || status === "rejected") {
       if (
         existingBooking.status === "expired" ||
