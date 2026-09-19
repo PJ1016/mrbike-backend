@@ -32,7 +32,43 @@ const SETTINGS_FIELDS = [
   "websiteUrl",
   "playStoreUrl",
   "appStoreUrl",
+  "customerAppLatestVersion",
+  "customerAppUpdateMessage",
+  "customerAppPlayStoreUrl",
+  "customerAppStoreUrl",
+  "providerAppLatestVersion",
+  "providerAppUpdateMessage",
+  "providerAppPlayStoreUrl",
+  "providerAppStoreUrl",
 ];
+
+const UPDATE_BOOLEAN_FIELDS = [
+  "customerAppUpdateEnabled",
+  "customerAppForceUpdate",
+  "providerAppUpdateEnabled",
+  "providerAppForceUpdate",
+];
+
+const VERSION_PATTERN = /^\d+(?:\.\d+){0,3}$/;
+
+function applyAppUpdateSettings(settings, body) {
+  for (const field of UPDATE_BOOLEAN_FIELDS) {
+    if (body[field] !== undefined) settings[field] = Boolean(body[field]);
+  }
+
+  for (const prefix of ["customerApp", "providerApp"]) {
+    const latestVersion = String(body[`${prefix}LatestVersion`] ?? settings[`${prefix}LatestVersion`] ?? "").trim();
+    const updateEnabled = body[`${prefix}UpdateEnabled`] === undefined
+      ? Boolean(settings[`${prefix}UpdateEnabled`])
+      : Boolean(body[`${prefix}UpdateEnabled`]);
+
+    if (updateEnabled && !VERSION_PATTERN.test(latestVersion)) {
+      return `${prefix === "customerApp" ? "Customer" : "Provider"} latest version must look like 1.0.0`;
+    }
+  }
+
+  return null;
+}
 
 // The platform fee and the commission tax rate are money/rates, not display
 // strings, so they are validated and normalised here instead of being copied
@@ -100,6 +136,11 @@ const updateAppSettings = async (req, res) => {
     const settings = await getSingleton();
     for (const field of SETTINGS_FIELDS) {
       if (req.body[field] !== undefined) settings[field] = req.body[field];
+    }
+
+    const appUpdateError = applyAppUpdateSettings(settings, req.body);
+    if (appUpdateError) {
+      return res.status(400).json({ success: false, message: appUpdateError });
     }
 
     const platformFeeError = applyPlatformFee(settings, req.body);

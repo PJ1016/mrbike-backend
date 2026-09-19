@@ -16,6 +16,23 @@ const appSettingsSchema = new mongoose.Schema(
     playStoreUrl: { type: String, default: "" },
     appStoreUrl: { type: String, default: "" },
 
+    // Remote app-version controls. Each mobile app has an independent
+    // release target because customer and partner builds are shipped on
+    // different schedules. `updateEnabled` controls whether an older build
+    // sees the update prompt; `forceUpdate` makes that prompt non-dismissible.
+    customerAppUpdateEnabled: { type: Boolean, default: false },
+    customerAppForceUpdate: { type: Boolean, default: false },
+    customerAppLatestVersion: { type: String, default: "" },
+    customerAppUpdateMessage: { type: String, default: "" },
+    customerAppPlayStoreUrl: { type: String, default: "" },
+    customerAppStoreUrl: { type: String, default: "" },
+    providerAppUpdateEnabled: { type: Boolean, default: false },
+    providerAppForceUpdate: { type: Boolean, default: false },
+    providerAppLatestVersion: { type: String, default: "" },
+    providerAppUpdateMessage: { type: String, default: "" },
+    providerAppPlayStoreUrl: { type: String, default: "" },
+    providerAppStoreUrl: { type: String, default: "" },
+
     // ── Platform / convenience fee ────────────────────────────────────────
     // A flat fee MR Bike charges the customer on top of the garage's own
     // amount. Admin-controlled and global — a dealer can never set or see it
